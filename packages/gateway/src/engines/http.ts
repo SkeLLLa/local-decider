@@ -30,6 +30,23 @@ function isResponse(value: unknown): value is SystemOneResponse {
   );
 }
 
+/** The body as text; stops reading (leaving the loop cancels the stream) once past `max` bytes. */
+async function readLimited(res: Response, max: number): Promise<string> {
+  if (res.body === null) {
+    return '';
+  }
+  const chunks: Uint8Array[] = [];
+  let size = 0;
+  for await (const chunk of res.body) {
+    size += chunk.byteLength;
+    if (size > max) {
+      throw new EngineError('engine response too large');
+    }
+    chunks.push(chunk);
+  }
+  return Buffer.concat(chunks).toString('utf8');
+}
+
 /** POST a request to `<baseUrl>/v1/systemone`. Throws {@link EngineError} on any failure. */
 export async function postSystemOne(
   options: HttpEngineOptions,
@@ -48,10 +65,7 @@ export async function postSystemOne(
   } catch (error) {
     throw new EngineError(`engine unreachable: ${(error as Error).message}`);
   }
-  const text = await res.text();
-  if (text.length > MAX_RESPONSE_BYTES) {
-    throw new EngineError('engine response too large');
-  }
+  const text = await readLimited(res, MAX_RESPONSE_BYTES);
   if (!res.ok) {
     throw new EngineError(`engine HTTP ${String(res.status)}: ${text.slice(0, 300)}`);
   }

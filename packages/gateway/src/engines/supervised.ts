@@ -10,6 +10,8 @@ import { getHealth, postSystemOne } from './http.ts';
 import { EngineError, type Engine, type EngineHealth, type EngineState } from './types.ts';
 
 const MAX_RESTARTS = 5;
+/** Healthy this long before exiting, and the next crash starts a new restart budget. */
+const STABLE_MS = 5 * 60_000;
 
 async function freePort(): Promise<number> {
   return new Promise((resolve, reject) => {
@@ -57,6 +59,8 @@ export class SupervisedEngine implements Engine {
   #detail: string | undefined;
   #maxLength: number | undefined;
   #restarts = 0;
+  /** When the engine last became ready; a long healthy run resets the restart budget. */
+  #readyAt: number | undefined;
   #stopping = false;
 
   constructor(spec: ServerSpec, paths: Paths) {
@@ -139,6 +143,11 @@ export class SupervisedEngine implements Engine {
     }
     this.#child = undefined;
     const reason = `engine exited (${signal ?? `code ${String(code)}`})`;
+    // A crash after a long healthy run is a fresh failure, not part of a crash loop.
+    if (this.#readyAt !== undefined && Date.now() - this.#readyAt >= STABLE_MS) {
+      this.#restarts = 0;
+    }
+    this.#readyAt = undefined;
     if (this.#restarts >= MAX_RESTARTS) {
       this.#fail(`${reason}; giving up after ${String(MAX_RESTARTS)} restarts`);
       return;
@@ -174,6 +183,7 @@ export class SupervisedEngine implements Engine {
 
   #ready(body: Record<string, unknown>): void {
     this.#state = 'ready';
+    this.#readyAt = Date.now();
     this.#detail = undefined;
     this.#maxLength = this.#spec.maxLength?.(body);
   }
