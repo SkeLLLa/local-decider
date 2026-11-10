@@ -82,6 +82,7 @@ lifecycle: { mode: lazy, idleUnloadMinutes: 15 }
 policies:
   permission: { mode: shadow }   # off | shadow | act, overrides the policy file
   routing: { mode: act, variant: routing-budget }   # variant: a policy with variantOf: routing
+  # permission: { thresholds: { verdict.allow: 0.9 } }   # rule thresholds by <question>.<answer>; allow ≥ 0.5
 policyDirs: []                   # extra dirs; ~/.config/local-decider/policies is added automatically
 routing:
   presets:                       # route:<preset> → model, per harness

@@ -153,6 +153,12 @@ See [policies.md](policies.md) for authoring. Defaults: `turn-outcome`, `permiss
 - **Codex**: the same runner and policies. `PreToolUse` is deny-only; approval goes through
   `PermissionRequest`, where printing nothing abstains, leaving the built-in auto-reviewer in
   charge.
+- **Paseo running Claude Code or Codex**: Paseo launches the real CLIs, which load this plugin
+  too. One event gets one decision: the Paseo plugin's `agent.open.before` sets
+  `LOCAL_DECIDER_HOST_POLICIES=turn-outcome,permission,routing`, and the hooks skip those
+  policies, leaving the guard and `command-risk` (Paseo has no pre-tool hook). Without it a
+  Claude hook `allow` would answer the prompt before Paseo saw it, bypassing the Paseo plugin's
+  own mode, and every turn and permission would be logged twice.
 - Every hook fails open: a gateway that is down, slow (1.5 s default budget) or erroring produces
   no output and exit code 0, i.e. the harness's default behaviour.
 

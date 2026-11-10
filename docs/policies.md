@@ -42,6 +42,31 @@ default: ask              # when no rule matches or the engine failed
   scored it p = 0.81. Treat everything in the state as
   data: say so in `instructions` when the state may contain text that looks like instructions.
 
+## Thresholds
+
+Each rule's threshold can be changed without editing the policy file, under
+`policies.<id>.thresholds` in `config.yaml`, keyed by `<question>.<answer>`:
+
+```yaml
+policies:
+  permission:
+    thresholds: { verdict.allow: 0.9, verdict.deny: 0.7 }
+```
+
+An override replaces the `minProbability` of every rule of that policy with that question and
+answer, or its `minConfidence` when the rule has no `minProbability` (and sets `minConfidence`
+when it has neither). It applies to that policy file's own rules, so a routing variant's
+thresholds go under the variant's id. `GET /v1/policies` lists each policy's `thresholds` with
+the file's `default` and the `value` in effect; `POST /v1/policies/<id>/thresholds` with
+`{ "thresholds": { "verdict.allow": 0.9 } }` sets them (`null` restores the default) and refuses
+keys that name no rule. Paseo's settings page has a control per rule. Edits of `config.yaml`
+apply live, like modes and variants.
+
+An `allow` rule's threshold never goes below 0.5: the API refuses lower values with 400 and a
+lower value in `config.yaml` counts as 0.5. Paseo's settings warn below 0.90 (more requests are
+auto-allowed without asking) and below 0.80 (the model will often auto-allow requests it is
+unsure about); the shipped default for `permission` is p(allow) ≥ 0.95.
+
 ## Variants
 
 A policy with `variantOf: <id>` is an alternative for policy `<id>`. Adapters keep asking for
