@@ -31,6 +31,27 @@ What follows from it:
   encoder models (GLiClass measured 99 ms short / 455 ms at ~600 tokens on CPU); see
   [research/engines.md](research/engines.md).
 
+## Linux PoC: FastFlowLM 1.0.12 on the XDNA2 NPU (2026-11-10)
+
+Same machine and benchmark, `flm serve --decision <model>` (portable build, `--pmode
+performance`), measured directly against FLM's `/v1/systemone`:
+
+| target tokens | engine tokens | d3:lite p50 / p95 | d3:nano p50 / p95 | Strands 2B CPU p50 |
+|---:|---:|---:|---:|---:|
+| 256 | 370 | 228 / 237 ms | 325 / 346 ms | 2,426 ms |
+| 1,024 | 978 | 532 / 541 ms | 764 / 887 ms | 5,468 ms |
+| 2,048 | 1,787 | 929 / 960 ms | 1,351 / 1,379 ms | 11,127 ms |
+| 3,800 | 3,173 | 1,646 / 1,678 ms | 2,367 / 2,400 ms | 19,310 ms |
+
+- 7–11× faster than the 2B on CPU at every size; a lazy load of the model takes ~5 s.
+- Through the gateway (redaction, state shaping, queue, rules) a short decision on d3:nano took
+  250 ms and on d3:mini ~600 ms.
+- d3:mini answered all six integration cases correctly with p ≥ 0.91 (turn outcome done /
+  needs_input, command risk dangerous / safe, permission allow / deny), including
+  `cat README.md` at p(allow) = 0.97, above the 0.95 auto-allow bar the 2B missed (0.93).
+- Model choice is in [research/flm-decision-models.md](research/flm-decision-models.md):
+  d3:mini is the recommended default (Decision Index 50.0, ECE ≈ 0.05), d3:nano the fast one.
+
 ## macOS (MLX)
 
 Pending: to be run on the Apple M5 Pro (`--device mlx`). Upstream reports 113 ms at 222 tokens

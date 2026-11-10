@@ -34,6 +34,23 @@ local-decider decide turn-outcome lastMessage="All tests pass; the PR is open."
 local-decider stats
 ```
 
+### AMD Ryzen AI NPU (Linux): FastFlowLM
+
+```sh
+node packages/gateway/dist/cli.js engine install --engine fastflowlm   # portable FLM, sha256-checked
+```
+
+This downloads the pinned upstream FastFlowLM portable build into
+`~/.local/share/local-decider/engines/fastflowlm/<version>/`, verifies it against GitHub's
+published SHA-256, runs `flm validate` and pulls `d3:nano`. Then pick the engine and model in
+Settings → Local decider (Paseo) or `POST /v1/engine {"engine":"fastflowlm","model":"d3:mini"}`;
+the choice is saved in `~/.local/share/local-decider/state.json` and survives restarts. An
+`flm` already on `PATH` is found automatically; any tool path or model directory can be
+overridden in settings or under `tools:` / `dirs:` in `config.yaml`.
+
+The engine loads lazily: the first decision starts it (~5 s on FLM), and it unloads after 15
+idle minutes (`lifecycle: {mode: lazy|eager, idleUnloadMinutes}`).
+
 ## 2. Configuration
 
 `~/.config/local-decider/config.yaml` (all keys optional):
