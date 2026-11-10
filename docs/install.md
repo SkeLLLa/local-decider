@@ -1,66 +1,151 @@
-# Install and configure
+# Install and try it
+
+You need the gateway with one engine, then the plugin for each harness you use. Every policy
+starts in `shadow`, so nothing changes until you switch one to `act`. The commands are
+fish-compatible.
+
+```mermaid
+flowchart TD
+  S["Clone, mise install, mise run setup, mise run build"] --> Q1{"Which hardware?"}
+  Q1 -->|"AMD Ryzen AI NPU, Linux"| F["engine install --engine fastflowlm --model d3:mini"]
+  Q1 -->|"Apple Silicon"| M["engine install (mlx flavour)"]
+  Q1 -->|"NVIDIA GPU"| C["engine install --flavor cuda"]
+  Q1 -->|"Any CPU"| P["engine install (cpu flavour)"]
+  F --> G["gateway start"]
+  M --> G
+  C --> G
+  P --> G
+  G --> Q2{"Which harness?"}
+  Q2 -->|Paseo| PA["paseo plugin install"]
+  Q2 -->|"Claude Code"| CC["claude plugin install"]
+  Q2 -->|Codex| CX["codex plugin add, then trust in /hooks"]
+  PA --> V["Verify, then shadow for a week"]
+  CC --> V
+  CX --> V
+```
 
 ## 1. Gateway
 
-Requirements: Node >= 24 and [uv](https://docs.astral.sh/uv/) (for the strands-decider engine).
-From a checkout (`mise install` provides both):
+Requirements: Node >= 24 and [uv](https://docs.astral.sh/uv/). `mise install` provides both. The
+packages are not on npm yet, so install from a checkout:
 
 ```sh
-mise run setup; and mise run build
-node packages/gateway/dist/cli.js engine install            # cpu on Linux, mlx on Apple Silicon
-node packages/gateway/dist/cli.js gateway start             # systemd user unit / launchd agent
-node packages/gateway/dist/cli.js gateway status
+git clone https://github.com/SkeLLLa/local-decider.git; and cd local-decider
+mise trust; and mise install; and mise run setup; and mise run build
+alias local-decider "node $PWD/packages/gateway/dist/cli.js"
 ```
 
-Once published: `npm install -g local-decider`, then the same `local-decider ...` commands.
+## 2. Engine
 
-- `engine install` syncs a pinned uv project into
-  `~/.local/share/local-decider/venvs/strands-decider` and downloads the adapter and base weights
-  into the Hugging Face cache (2B: ~4.8 GB; E4B: ~16 GB). `--flavor cpu|mlx|cuda`,
-  `--model <id>`, `--no-download`.
-- `gateway start` writes `~/.config/systemd/user/local-decider.service` (Linux) or
-  `~/Library/LaunchAgents/dev.local-decider.gateway.plist` (macOS) and starts it. Without
-  systemd it falls back to a detached process with a pid file. `gateway stop`,
-  `gateway uninstall`. `gateway run` stays in the foreground.
-- The gateway listens on `127.0.0.1:8765` at once and reports `degraded` on `/health` while the
-  engine loads (about 10 s for the 2B model from a warm cache on CPU). Logs:
-  `~/.local/share/local-decider/logs/` (`gateway.log`, `engine-strands-decider.log`,
-  `decisions-YYYY-MM-DD.jsonl`).
+Pick one. You can switch later in Paseo's settings or with `POST /v1/engine`.
 
-Check it:
+| Hardware | Command | Default model | Notes |
+|---|---|---|---|
+| Any CPU (Linux default) | `local-decider engine install` | 2B, ~4.8 GB download | 1.2–2.5 s per short decision |
+| Apple Silicon (macOS default) | `local-decider engine install` | 2B on MLX | `--flavor mlx` is picked for you |
+| NVIDIA GPU | `local-decider engine install --flavor cuda` | 2B | `device: auto` lets strands-decider pick; or set `engine.device: cuda` |
+| AMD Ryzen AI NPU (Linux) | `local-decider engine install --engine fastflowlm --model d3:mini` | `d3:nano` without `--model` | 0.25–0.6 s per short decision (measured on one machine) |
+
+- **strands-decider** syncs a pinned uv project into
+  `~/.local/share/local-decider/venvs/strands-decider` and downloads the weights into the Hugging
+  Face cache. Flags: `--flavor cpu|mlx|cuda`, `--model <id>`, `--no-download`.
+- **FastFlowLM** downloads the pinned portable build (1.0.12) into
+  `~/.local/share/local-decider/engines/fastflowlm/`, checks it against GitHub's published
+  SHA-256, runs `flm validate` and pulls the model. Then select it in **Settings → Local
+  decider**, or run:
+
+  ```sh
+  curl -s -H 'content-type: application/json' -d '{"engine":"fastflowlm","model":"d3:mini"}' http://127.0.0.1:8765/v1/engine
+  ```
+
+  An `flm` already on `PATH` is found automatically. Tool paths and model directories can be set
+  under `tools:` and `dirs:` in `config.yaml` or in the settings page.
+
+## 3. Start the gateway
 
 ```sh
+local-decider gateway start       # systemd user unit (Linux) or launchd agent (macOS)
+local-decider gateway status
+```
+
+- `gateway start` writes `~/.config/systemd/user/local-decider.service` or
+  `~/Library/LaunchAgents/dev.local-decider.gateway.plist` and starts it. It is a no-op when the
+  gateway already runs. Without systemd it starts a detached process with a pid file.
+- Also: `gateway restart`, `gateway stop`, `gateway uninstall`, and `gateway run` in the
+  foreground.
+- The engine loads lazily on the first decision (about 5 s on FastFlowLM, longer on CPU) and
+  unloads after 15 idle minutes. Set `lifecycle: {mode: eager}` to keep it loaded.
+- Logs: `~/.local/share/local-decider/logs/` (`gateway.log`, `engine-<id>.log`,
+  `decisions-YYYY-MM-DD.jsonl`).
+
+## 4. Harness plugins
+
+**Paseo.** Enable plugins on the daemon (**Settings → Plugins → Enable plugins**), then:
+
+```sh
+paseo plugin install github:SkeLLLa/local-decider:packages/paseo-plugin
+paseo plugin ls                   # local-decider should show "running"
+```
+
+Details: [Paseo plugin README](../packages/paseo-plugin/README.md).
+
+**Claude Code.**
+
+```sh
+claude plugin marketplace add SkeLLLa/local-decider; and claude plugin install local-decider@local-decider
+```
+
+**Codex.** Codex runs plugin hooks only after you trust them: open the TUI and run `/hooks`.
+
+```sh
+codex plugin marketplace add SkeLLLa/local-decider; and codex plugin add local-decider@local-decider
+```
+
+Details: [Claude Code and Codex plugin README](../plugins/local-decider/README.md).
+
+## Verify it works
+
+```sh
+local-decider gateway status      # service active, gateway "status":"ok"
 local-decider decide turn-outcome lastMessage="All tests pass; the PR is open."
+local-decider policies eval permission policies/fixtures/permission.jsonl
 local-decider stats
 ```
 
-### AMD Ryzen AI NPU (Linux): FastFlowLM
+- `decide` prints the answers, the action and `"enforced": false` (shadow).
+- `policies eval` prints one line per fixture: expected action, returned action, probability.
+- `stats` shows one block per policy once a harness has sent decisions. Use a harness for a few
+  minutes and run it again.
 
-```sh
-node packages/gateway/dist/cli.js engine install --engine fastflowlm   # portable FLM, sha256-checked
-```
+In Paseo, a decision row appears in the chat after each agent turn. If nothing happens, check
+`local-decider gateway status` and `paseo plugin logs local-decider`.
 
-This downloads the pinned upstream FastFlowLM portable build into
-`~/.local/share/local-decider/engines/fastflowlm/<version>/`, verifies it against GitHub's
-published SHA-256, runs `flm validate` and pulls `d3:nano`. Then pick the engine and model in
-Settings → Local decider (Paseo) or `POST /v1/engine {"engine":"fastflowlm","model":"d3:mini"}`;
-the choice is saved as `selection:` in `config.yaml` and survives restarts. An `flm` already on
-`PATH` is found automatically; any tool path or model directory can be set in settings or under
-`tools:` / `dirs:` in `config.yaml`.
+## Your first week
 
-The engine loads lazily: the first decision starts it (~5 s on FLM), and it unloads after 15
-idle minutes (`lifecycle: {mode: lazy|eager, idleUnloadMinutes}`).
+1. **Shadow.** Leave every policy in `shadow` and work normally. Every decision is logged with
+   what it *would* have done.
+2. **Label.** In Paseo, answer permission prompts as usual and use the "Right answer?" buttons
+   on turn rows. Those are the ground truth for stats. (The Claude Code and Codex hooks cannot
+   report outcomes.)
+3. **Read stats.** `local-decider stats`, or the statistics screen in Paseo. Look at accuracy in
+   the high-confidence buckets, the calibration hints, and the would-allow prompt time.
+4. **Act.** When the high-confidence buckets are accurate, switch one policy:
 
-## 2. Configuration
+   ```sh
+   local-decider policies mode permission act
+   ```
 
-Every setting lives in `~/.config/local-decider/config.yaml` (all keys optional;
-`local-decider config path` prints the location). Paseo's settings page and the
-`local-decider policies|routing` commands write to it, keeping your comments, and the gateway
-applies edits to it and to `policies/` as they happen; only `host`, `port`, `engine` and
-`decisionTimeoutMs` need a restart. The gateway writes JSON Schemas for this file and for policy
-files to `~/.config/local-decider/schemas/` (`local-decider config schema`; repository copies in
-`schemas/`), so editors and agents can validate edits. `local-decider config check` validates
-the file and every policy. A `state.json` from older versions is folded in once and renamed.
+   In Paseo also set that policy to `act` in **Settings → Local decider**. Lower
+   `verdict.allow` (for example to 0.9) only if stats support it.
+
+## Configuration
+
+Every setting lives in `~/.config/local-decider/config.yaml`; all keys are optional.
+`local-decider config path` prints the location and `local-decider config check` validates it
+and every policy. The gateway applies edits live; only `host`, `port`, `engine` and
+`decisionTimeoutMs` need a restart. It writes JSON Schemas for `config.yaml` and policy files to
+`~/.config/local-decider/schemas/` (`local-decider config schema`), so editors and agents can
+validate edits.
 
 ```yaml
 # yaml-language-server: $schema=schemas/config.schema.json
@@ -68,58 +153,34 @@ host: 127.0.0.1          # anything else requires LOCAL_DECIDER_TOKEN (>= 16 cha
 port: 8765
 decisionTimeoutMs: 30000 # per decision, queue wait included
 engine:
-  type: strands-decider
+  type: strands-decider  # or fastflowlm, or systemone-remote with url and tokenEnv
   model: StrandsAgents/strands-decider-2B-qwen3.5-v1-2610
   device: auto           # auto | cpu | mlx | mps | cuda
-  maxBatch: 8
-  # url: http://127.0.0.1:8000   # attach to a running `strands-decider serve` instead
-# engine:
-#   type: systemone-remote       # any /v1/systemone server (another machine, laya-serve, GLiClass)
-#   url: http://gpu-box:8000
-#   tokenEnv: REMOTE_DECIDER_TOKEN
+  # url: http://127.0.0.1:8000   # attach to a running server instead of spawning one
 selection: { engine: fastflowlm, model: d3:mini }   # set by the settings page; beats engine.type/model
 lifecycle: { mode: lazy, idleUnloadMinutes: 15 }
 policies:
-  permission: { mode: shadow }   # off | shadow | act, overrides the policy file
-  routing: { mode: act, variant: routing-budget }   # variant: a policy with variantOf: routing
-  # permission: { thresholds: { verdict.allow: 0.9 } }   # rule thresholds by <question>.<answer>; allow ≥ 0.5
-policyDirs: []                   # extra dirs; ~/.config/local-decider/policies is added automatically
+  permission: { mode: shadow, thresholds: { verdict.allow: 0.95 } }
+  routing: { mode: act, variant: routing-budget }
+policyDirs: []           # extra dirs; ~/.config/local-decider/policies is added automatically
 routing:
-  presets:                       # route:<preset> → model, per harness
+  presets:
     paseo:
-      cheap: { model: claude/haiku }              # provider/model, optional mode: <mode id>
+      cheap: { model: claude/haiku }
       premium: { model: codex/gpt-5.5, mode: full-access }
-      fast: { model: codex/gpt-6-luna, thinking: xhigh }   # thinking/reasoning level
-      deep: { profile: design-opus }              # Paseo only: a Paseo agent profile id
+      deep: { profile: design-opus }   # Paseo only: an agent profile id
     claude-code:
-      cheap: { model: haiku }                     # named in the hook's hint; Claude Code passes it to subagents
-    codex:
-      premium: { model: gpt-5.5 }
-pricing:                         # optional, USD per million tokens (example values); savings stay in tokens without it
-  claude/claude-opus-4-6: { input: 5, cachedInput: 0.5, output: 25 }
-  claude-haiku-4-5: { input: 1, cachedInput: 0.1, output: 5 }   # a bare id matches any provider
+      cheap: { model: haiku }
+pricing:                 # optional, USD per million tokens; never fetched, copy list prices
+  claude-haiku-4-5: { input: 1, cachedInput: 0.1, output: 5 }
 ```
 
-`pricing` is never fetched or updated for you: copy current list prices from your provider.
-`cachedInput` defaults to `input`.
+See [policies.md](policies.md) for thresholds, variants and routing presets.
 
-Secrets never go in this file. For a remote gateway, put `LOCAL_DECIDER_TOKEN=...` in
-`~/.config/local-decider/env` (mode 0600), which the systemd unit reads if present; clients read
-`LOCAL_DECIDER_TOKEN` and `LOCAL_DECIDER_URL` from their environment.
+### Remote gateway
 
-## 3. Rolling out a policy
-
-1. Leave it in `shadow` (the default) for a while. Every decision is logged with what it
-   *would* have done.
-2. Adapters report outcomes where they can see them (e.g. what the user answered to a
-   permission prompt). `local-decider stats` shows agreement, Brier score and reliability per
-   confidence bucket, the time you spent on prompts a policy would have allowed, and for routing
-   the tokens that ran (or would have run) on another model, in dollars when `pricing` is set.
-   Shadow savings are an upper bound: they assume the routed model would have used the same
-   tokens and succeeded.
-3. When the high-confidence buckets are accurate, switch that policy to `act`:
-   `local-decider policies mode <policy> act`, Paseo's settings page, or `mode: act` under
-   `policies:` in `config.yaml`. The gateway applies it immediately.
-
-For supervised child-agent setup, see [Supervised child agents](supervised-subagents.md), including
-Paseo's parent-answer flow and the limits of standalone CLI hooks.
+Secrets never go in `config.yaml`. To bind a non-loopback address, put
+`LOCAL_DECIDER_TOKEN=...` (at least 16 characters) in `~/.config/local-decider/env` with mode
+0600; the systemd unit reads it if present. Clients read `LOCAL_DECIDER_TOKEN` and
+`LOCAL_DECIDER_URL` from their environment and send the token only over https or to a loopback
+address. Read [security.md](security.md) first.

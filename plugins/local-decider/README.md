@@ -2,13 +2,13 @@
 
 Hooks that send routine decisions to a local decision-model gateway: a deterministic command
 guard, command-risk checks, permission triage, routing hints and turn-outcome logging. One plugin
-directory serves both harnesses (see [ADR-0004](../../docs/adr/0004-marketplace-layout.md)).
+directory serves both harnesses ([ADR-0004](../../docs/adr/0004-marketplace-layout.md)).
 
 ## Requirements
 
 - Node.js 20 or newer on `PATH` for the hook processes.
-- A running `local-decider` gateway, by default at `http://127.0.0.1:8765`. Without it the hooks
-  only run the deterministic guard and otherwise do nothing.
+- A running `local-decider` gateway, by default at `http://127.0.0.1:8765`
+  ([install](../../docs/install.md)). Without it the hooks run only the deterministic guard.
 
 ## Install
 
@@ -27,24 +27,26 @@ codex plugin add local-decider@local-decider
 ```
 
 Then open the Codex TUI and run `/hooks` to review and trust the plugin hooks. Codex does not run
-untrusted plugin hooks, and asks again whenever the hooks change.
+untrusted plugin hooks, and asks again whenever they change.
 
 ## What each hook does
 
-| Event | Claude Code | Codex |
-|---|---|---|
-| `PreToolUse` | Guard deny; `command-risk` deny or ask when enforced | Guard deny; `command-risk` deny when enforced |
-| `PermissionRequest` | `permission` allow when enforced; otherwise the normal prompt | `permission` allow when enforced; otherwise the auto-reviewer or user |
-| `UserPromptSubmit` | `routing` hint as extra context when enforced, naming the mapped model | Same |
-| `Stop` | `turn-outcome`, logged only | Same |
+| Event | Policy | Claude Code, when enforced | Codex, when enforced |
+|---|---|---|---|
+| `PreToolUse` | guard, then `command-risk` | deny or ask | deny only |
+| `PermissionRequest` | `permission` | allow; otherwise the normal prompt | allow; otherwise the auto-reviewer or user |
+| `UserPromptSubmit` | `routing` | add a hint naming the mapped model | same |
+| `Stop` | `turn-outcome` | nothing: logged only | same |
 
 Policies ship in `shadow` mode: the gateway records what it would have done and the hooks change
 nothing until you switch a policy to `act`. The hooks never allow a tool call from `PreToolUse`
-and never deny a permission request from the model.
+and never deny a permission request from the model. They also cannot see your answer to a
+prompt, so they report no outcomes: stats agreement and precedent need Paseo.
 
-The guard denies a short list of clearly destructive shell commands without asking the gateway:
-recursive deletes of `/`, `~`, `$HOME` or system directories, deleting `.git`, `mkfs`, `dd` or
-redirects onto disk devices, fork bombs, `chmod -R 777 /`, piping `curl` or `wget` into a shell,
+The guard runs on shell commands before any gateway call, including Codex argv arrays,
+`bash -lc` scripts and commands behind `sudo`, `env` or `nice`. It denies recursive deletes of
+`/`, `~`, `$HOME` or system directories, deleting `.git`, `mkfs`, `dd` or redirects onto disk
+devices, fork bombs, `chmod -R 777` on system paths, piping `curl` or `wget` into a shell,
 force-pushing to `main` or `master`, and `shutdown` or `reboot`.
 
 ## Fail-open
@@ -55,39 +57,37 @@ has a 1500 ms budget; the hook timeout is 5 s.
 
 ## Configuration
 
-Decision settings are shared with Paseo and live in the gateway's
-`~/.config/local-decider/config.yaml`, which the gateway applies as it changes:
+Decision settings live in the gateway's `~/.config/local-decider/config.yaml`, shared with Paseo:
 
-- `local-decider policies mode <policy> off|shadow|act` and
-  `local-decider policies use routing <variant>` set policy modes and the routing policy;
-- `local-decider routing map claude-code <preset> <model> [--thinking <level>]` (`haiku`,
-  `sonnet`, `opus` or a full id) and `local-decider routing map codex <preset> <model>
-  [--thinking <level>]` map routing presets to a model and, optionally, a thinking level (`low`,
-  `medium`, `high`, `xhigh`, `max`). Hooks cannot switch the session model, so the routing hint
-  names the model and level; Claude Code can pass the model to the subagents it starts, and you
-  can switch with `/model` and Claude Code's effort control or Codex's reasoning level.
+```sh
+local-decider policies mode permission act
+local-decider policies use routing routing-budget
+local-decider routing map claude-code cheap haiku --thinking low
+local-decider routing map codex premium gpt-5.5 --thinking high
+```
 
-The file has a JSON Schema (`local-decider config schema`), so agents can edit it directly. The
-plugin ships two skills for that: `local-decider-settings` (view and change settings) and
-`local-decider-routing-policy` (interview you and write a routing policy for your models, the
-same flow as Paseo's "Write with an agent" button).
+Hooks cannot switch the session model, so the routing hint names the model and thinking level.
+Claude Code can pass the model to subagents it starts, and you can switch with `/model`. See
+[policies.md](../../docs/policies.md#routing-presets).
+
+The plugin ships two skills: `local-decider-settings` (view and change settings) and
+`local-decider-routing-policy` (interview you and write a routing policy for your models).
 
 Environment variables read by the hook process:
 
 | Variable | Default | Meaning |
 |---|---|---|
 | `LOCAL_DECIDER_URL` | `http://127.0.0.1:8765` | Gateway base URL |
-| `LOCAL_DECIDER_TOKEN` | unset | Bearer token for a remote gateway; never logged |
+| `LOCAL_DECIDER_TOKEN` | unset | Bearer token for a remote gateway; sent only over https or to loopback, never logged |
 | `LOCAL_DECIDER_TIMEOUT_MS` | `1500` | Gateway call budget |
 | `LOCAL_DECIDER_GUARD` | on | Set to `off` to disable the deterministic guard |
 | `LOCAL_DECIDER_DEBUG` | unset | Set to `1` for diagnostics on stderr |
-| `LOCAL_DECIDER_HOST_POLICIES` | unset | Comma list of policies a host runs itself; the hooks skip them (set by the Paseo plugin) |
+| `LOCAL_DECIDER_HOST_POLICIES` | unset | Comma list of policies a host runs itself; the hooks skip them |
 
-Inside Paseo, the Claude Code or Codex CLI loads this plugin too. To avoid deciding each event
-twice, the Paseo plugin sets `LOCAL_DECIDER_HOST_POLICIES=turn-outcome,permission,routing` on the
-agents it launches, so there the hooks run only the guard and `command-risk`, which Paseo has no
-hook for. The skip applies to processes that inherit the agent's environment, including a
-`claude -p` or `codex exec` the agent starts itself.
+Inside Paseo, the Paseo plugin sets `LOCAL_DECIDER_HOST_POLICIES=turn-outcome,permission,routing`
+on the agents it launches, so there the hooks run only the guard and `command-risk`. The skip
+also applies to a `claude -p` or `codex exec` the agent starts itself, since it inherits the
+environment.
 
 `dist/hook.mjs` is generated from `packages/hooks` by `pnpm --filter @local-decider/hooks build`.
 Do not edit it by hand.

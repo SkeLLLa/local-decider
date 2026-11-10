@@ -1,185 +1,184 @@
 # Architecture
 
 local-decider puts a small local decision model in front of routine, fixed-choice decisions in
-coding-agent harnesses. Research notes behind every choice here are in [research/](research/);
-the decisions themselves are recorded as ADRs in [adr/](adr/).
+coding-agent harnesses. This page shows the pieces and how one decision flows through them. The
+reasons behind each choice are in the [ADRs](adr/) and [research notes](research/).
 
-```text
- engines                        gateway (127.0.0.1:8765)                 harness adapters
-┌────────────────────┐   ┌──────────────────────────────────────┐   ┌──────────────────────────┐
-│ strands-decider    │◄──┤ engine pool (one request in flight   │◄──┤ Paseo plugin (HTTP)      │
-│  serve (uv venv)   │   │   per engine, health, restart)       │   │ Claude Code hooks (node) │
-│ systemone-remote   │◄──┤ policies (YAML) → state → questions  │◄──┤ Codex hooks (node)       │
-│ llm-logprobs       │◄──┤ redaction, 4k truncation, key sort   │◄──┤ MCP `decide` tool        │
-│ (later) ONNX enc.  │   │ rules → action, mode off/shadow/act  │   │ `local-decider` CLI      │
-└────────────────────┘   │ shadow log (JSONL) → stats           │   └──────────────────────────┘
-                         └──────────────────────────────────────┘
+## Components
+
+```mermaid
+flowchart LR
+  subgraph Harnesses
+    PA["Paseo daemon + local-decider plugin"]
+    CC["Claude Code + hooks"]
+    CX["Codex + hooks"]
+    MC["MCP clients"]
+    CLI["local-decider CLI"]
+  end
+  subgraph Gateway["Gateway (Node, 127.0.0.1:8765)"]
+    HTTP["HTTP routes + MCP server"]
+    DEC["Decider: redact, state, cache, rules, precedent"]
+    POL["Policies (YAML) + config.yaml (live reload)"]
+    Q["Engine queue (one at a time, by priority)"]
+    LOG[("Shadow log JSONL")]
+    ST["Stats: agreement, calibration, savings"]
+  end
+  subgraph Engines
+    SD["strands-decider serve (uv venv)"]
+    FL["FastFlowLM flm serve (NPU)"]
+    RM["Any /v1/systemone server"]
+  end
+  PA --> HTTP
+  CC --> HTTP
+  CX --> HTTP
+  MC --> HTTP
+  CLI --> HTTP
+  HTTP --> DEC
+  POL --> DEC
+  DEC --> Q
+  Q --> SD
+  Q --> FL
+  Q --> RM
+  DEC --> LOG
+  LOG --> ST
 ```
 
-## Packages
-
-| path | what | ships as |
+| Piece | Path | What it does |
 |---|---|---|
-| `packages/core` | `/v1/systemone` types and normalisation, policy schema/loader/rules, redaction, truncation, gateway client | `@local-decider/core` (npm) |
-| `packages/gateway` | HTTP service, engine adapters, engine supervisor, MCP server, `local-decider` CLI, service units | `local-decider` (npm, `bin`) |
-| `packages/gateway/engines/strands-decider` | uv project pinning strands-decider; synced into `~/.local/share/local-decider/venvs/` | inside the npm package |
-| `packages/paseo-plugin` | Paseo plugin `local-decider` (TS source; Paseo bundles it) | `paseo-plugin-local-decider` (npm) |
-| `packages/hooks` | Claude Code + Codex hook runner, bundled to one zero-dependency file | `plugins/local-decider/dist/hook.mjs` |
-| `plugins/local-decider` | the Claude Code **and** Codex plugin directory (both manifests) | git marketplace |
-| `policies/` | default policies | inside the gateway package |
+| Core | `packages/core` | `/v1/systemone` types and answer normalisation, policy schema and rules, redaction, truncation, gateway client |
+| Gateway | `packages/gateway` | HTTP service, engine supervisor, decider, shadow log, stats, MCP server, `local-decider` CLI, service units |
+| Hooks | `packages/hooks` → `plugins/local-decider/dist/hook.mjs` | One zero-dependency hook runner for Claude Code and Codex, with the deterministic guard |
+| Paseo plugin | `packages/paseo-plugin` | Hooks, decision rows, settings and status screens; never runs a model in-process |
+| Policies | `policies/` | Default policies and eval fixtures |
 
-Claude Code and Codex share one plugin directory and one hook runner (ADR-0004), so the planned
-`claude-plugin`/`codex-plugin` packages became `packages/hooks` plus `plugins/local-decider`.
+## One decision
 
-## Gateway
-
-A long-running Node service (ADR-0001), started with `local-decider gateway start` (a systemd
-user unit on Linux, a launchd agent on macOS) or `local-decider gateway run` in the foreground.
-
-| route | purpose |
-|---|---|
-| `POST /v1/systemone` | Strands/Jev/Laya-compatible pass-through to the active engine (keys sorted, secrets redacted) |
-| `POST /v1/decide/:policy` | run a policy on structured harness input → `DecideResponse` (`packages/core/src/decision.ts`) |
-| `POST /v1/outcomes` | adapters report what actually happened, for agreement and calibration |
-| `POST /v1/usage` | adapters report one agent turn's token counts for the decision that applied to the agent, for savings |
-| `GET /health`, `GET /ping` | engine state, model, p50/p95 latency |
-| `GET /models` | known decision models (`StrandsAgents/*`), the active model and device, and whether the engine can switch |
-| `POST /v1/engine` | `{engine?, model, device?}`: switch a spawned engine to another known model; saved as `selection` in `config.yaml`; 409 for a remote or `engine.url` engine |
-| `GET /v1/policies` | loaded policies with effective modes, routes, and variants |
-| `POST /v1/policies/:id/mode`, `/variant`, `POST /v1/policies/reload` | change a policy's mode or variant (written to `config.yaml`), re-read policy files |
-| `GET /v1/policies/:id/prompt` | `{prompt, cwd}`: the prompt that has an agent write a variant of `:id` (routing) |
-| `GET /v1/config`, `POST /v1/config/reload` | `config.yaml`'s path, schema paths and applied content; re-read it after an outside edit |
-| `POST /v1/routing/presets` | `{harness, preset, model, mode?}`: map a preset in `config.yaml` (`model: null` removes it) |
-| `POST /mcp` | MCP (streamable HTTP) with a `decide` tool; `local-decider mcp` is the stdio form |
-
-- Binds `127.0.0.1:8765` with no auth. Binding any other address requires
-  `LOCAL_DECIDER_TOKEN` in the environment; requests must then send `Authorization: Bearer`.
-  The token is never logged or written to config.
-- Request bodies are capped (256 KiB) and treated as untrusted data: they are only ever rendered
-  into the model's state string. Nothing derived from them is executed, used as a path, or used
-  as a URL.
-- One request in flight per engine; concurrent decisions queue (strands-decider's concurrency is
-  unverified upstream). Each queued request carries its caller's deadline and is dropped once it
-  has expired.
-- An engine error never becomes an enforced action: the response carries `error`, the policy
-  default, and `enforced: false`.
-
-### Decision pipeline (`/v1/decide/:policy`)
-
-1. Look up the policy and its effective mode (config overrides beat the YAML). `off` → return
-   `abstain` without calling an engine.
-2. Redact secrets in every input string (`core/redact.ts`).
-3. Render `state.sections` from the input in policy order (least to most relevant), objects as
-   key-sorted JSON, and fit them into `state.maxTokens` from the end (`core/truncate.ts`).
-4. Look up the decision cache (`inputHash` of policy id + version + state, TTL per policy).
-5. Send `{state, questions}` with sorted keys to the engine; normalise answers so every engine
-   reports the same `probabilities` and `confidence` (`core/systemone.ts`).
-6. First matching rule → action, else the policy default (`core/policy.ts`). A precedent allow
-   rule also requires a current model allow with p(allow) ≥ 0.6, enough recent exact-subject allows,
-   and no deny; precedent never bypasses the model.
-7. `enforced = mode === 'act' && no error`. Append a shadow record; return.
-
-### Modes and the shadow log
-
-`off` / `shadow` / `act` per policy, the equivalent of the Amazon `BEDROCK`/`DUAL`/`DECIDER`
-rollout. Every policy ships in `shadow`. Adapters change harness behaviour only when
-`enforced` is true.
-
-Records go to `~/.local/share/local-decider/logs/decisions-YYYY-MM-DD.jsonl`:
-`{kind: "decision", ts, decisionId, harness, sessionId?, policy, mode, inputHash, precedentKey?,
-precedent?, stateTokens, requestedModel?, routedModel?, answers, action, enforced, engine, model,
-latencyMs, error?}`. `precedentKey` is a hash of policy, project, and redacted normalized subject;
-the subject itself is never logged. Adapters later append
-`{kind: "outcome", decisionId, outcome, source}` through `/v1/outcomes`; sources include `user`,
-`supervised`, `harness`, and `heuristic`.
-and `{kind: "usage", decisionId, turnId?, model?, inputTokens, cachedInputTokens,
-outputTokens, costUsd?}` through `/v1/usage`. No state text is logged, only its hash, so the log
-never holds prompts, code or (unredacted) secrets. `local-decider stats` joins the three kinds
-and reports agreement, Brier score and reliability per confidence bucket, plus savings
-(`gateway/src/savings.ts`):
-
-- **Routing**: a decide request may carry `models: {requested, routes, profiles}`, the model the
-  agent uses unchanged, the model each route action switches to, and each harness agent
-  profile's model. The gateway fills missing routes from `config.yaml` presets, resolving a
-  `profile` preset through `profiles` (the Paseo plugin sends its agent profiles). With usage
-  reported for the agent,
-  stats sum the tokens of tasks routed to another model: `potential` for shadow decisions (the
-  task ran on the requested model), `realized` for enforced ones. The optional `pricing` table
-  in `config.yaml` prices both sides; without it savings stay in tokens. Shadow figures are an
-  upper bound: a cheaper model may need more turns or fail.
-- **Prompts**: shadow `allow` decisions the user answered, and the time from the decision to
-  the answer (capped at 10 minutes each).
-
-The Paseo plugin reports usage from the agent's `lastUsage` after each turn, for agents a
-routing decision created (linked by cwd and title between `agent.create.before` and `.after`, in
-memory).
-
-## Engines (ADR-0002)
-
-```ts
-interface Engine {
-  readonly id: string;
-  start(signal: AbortSignal): Promise<void>; // spawn/attach; resolves when /health is ok
-  health(): Promise<EngineHealth>;
-  decide(req: SystemOneRequest, signal: AbortSignal): Promise<SystemOneResponse>;
-  stop(): Promise<void>;
-}
+```mermaid
+sequenceDiagram
+  participant H as Harness
+  participant A as Hook or plugin
+  participant G as Gateway
+  participant E as Engine
+  participant L as Shadow log
+  H->>A: event (tool call, permission, turn end, new agent)
+  opt Claude Code or Codex PreToolUse
+    A->>A: deterministic guard, deny on a hit
+  end
+  A->>G: POST /v1/decide/:policy
+  G->>G: policy and mode, off returns abstain
+  G->>G: redact secrets, build state within maxTokens
+  G->>G: precedent key from the redacted subject
+  G->>E: state + questions (queued, cached by input hash)
+  E-->>G: probabilities per option
+  G->>G: first matching rule, else policy default
+  G->>L: append decision record (hashes, answers, action)
+  G-->>A: action, answers, enforced
+  alt enforced and supported for this event
+    A->>H: allow, ask, deny, route or highlight
+  else shadow, error, timeout or gateway down
+    A->>H: no output, harness default
+  end
 ```
 
-| engine | status | notes |
+Step by step:
+
+1. **Policy and mode.** The gateway looks up the policy and its effective mode (`config.yaml`
+   beats the YAML file). A selected variant answers with its own questions and rules. `off`
+   returns `abstain` without calling an engine.
+2. **Redact and shape.** Every input string is redacted (`core/redact.ts`). The state sections
+   are rendered in policy order, objects as key-sorted JSON, and trimmed to `state.maxTokens`
+   (`core/truncate.ts`).
+3. **Engine.** Answers are cached by input hash for the policy's `cache.ttlSeconds`. Otherwise the
+   request joins the engine queue: one request at a time, `high` priority policies first, at most
+   8 waiting. A full queue, an engine error or the deadline (`decisionTimeoutMs`, 30 s) returns an
+   `error` with the policy default and `enforced: false`.
+4. **Rules.** The first matching rule wins. A precedent rule also needs enough recent allows of
+   the exact subject and no deny ([policies.md](policies.md#precedent)).
+5. **Log and answer.** `enforced = mode is act and no error`. A shadow decision keeps running
+   after the caller gives up, so it is still logged.
+
+Adapters change behaviour only when `enforced` is true, and only in ways their event allows:
+
+| Adapter | Event → policy | What an enforced action can do |
 |---|---|---|
-| `strands-decider` | MVP | spawns `strands-decider serve <model> --device cpu\|mlx\|mps\|cuda --port <free>` from the managed venv, or attaches to a URL |
-| `systemone-remote` | M5 | any `/v1/systemone` URL: another machine, `laya-serve`, the GLiClass example server |
-| `llm-logprobs` | M5 | OpenAI-compatible server; one constrained completion per question, top-k logprobs of the option tokens → probabilities. Verified per server at start; disabled if no logprobs |
-| `onnx-encoder` | spike | Laya / GLiClass through onnxruntime-node; VitisAI EP for the NPU later |
+| Paseo | `agent.turn.after` → `turn-outcome` | Highlight `notify` in the chat row; never sends a prompt |
+| Paseo | `agent.permission.before` → `permission` | Auto-allow a tool request; never denies |
+| Paseo | `agent.create.before` → `routing` | Switch provider, model, mode and thinking, or start from a profile (~2 s budget) |
+| Claude Code | `PreToolUse` → guard, then `command-risk` | `deny` or `ask` |
+| Codex | `PreToolUse` → guard, then `command-risk` | `deny` only |
+| Claude Code, Codex | `PermissionRequest` → `permission` | `allow` only |
+| Claude Code, Codex | `UserPromptSubmit` → `routing` | Add a hint that names the mapped model |
+| Claude Code, Codex | `Stop` → `turn-outcome` | Nothing: logged only, since Stop output would continue the turn |
 
-Linux PoC (this machine, Ryzen AI 9 365): `strands-decider` with
-`StrandsAgents/strands-decider-2B-qwen3.5-v1-2610` on `--device cpu`. Mac: the same model, or E4B,
-on `--device mlx`. See [research/engines.md](research/engines.md) for latency expectations and
-the llama.cpp Vulkan route for the iGPU.
+The Paseo plugin needs both the gateway mode and its own setting at `act`. Inside Paseo, Claude
+Code and Codex agents also load the hooks. The Paseo plugin sets
+`LOCAL_DECIDER_HOST_POLICIES=turn-outcome,permission,routing` on agents it opens, so the hooks
+skip those and run only the guard and `command-risk`.
 
-## Policies (ADR-0003)
+## Outcomes, usage and stats
 
-YAML, one file per decision type, validated by `policySchema` in `packages/core/src/policy.ts`.
-See [policies.md](policies.md) for authoring. Defaults: `turn-outcome`, `permission`,
-`routing`, `command-risk`.
+```mermaid
+flowchart LR
+  D["Decision record"] --> LOG[("Shadow log JSONL")]
+  U["Your Accept or Deny on a Paseo prompt"] -->|"POST /v1/outcomes, source user"| LOG
+  P["Parent agent's answer to a child"] -->|"source supervised"| LOG
+  F["Right answer? buttons on Paseo rows"] -->|"source user"| LOG
+  T["Token usage of agents a Paseo routing decision created"] -->|"POST /v1/usage"| LOG
+  LOG --> S["local-decider stats"]
+  S --> A["Agreement, Brier, reliability buckets"]
+  S --> C["Calibration hints (advisory)"]
+  S --> SV["Savings: potential (shadow), realized (act)"]
+  LOG -->|"rebuilt at start and on policy reload"| PR["Precedent store"]
+  PR --> R["Precedent rule in the next decision"]
+```
 
-## Harness adapters
+- **Records.** `decision` records hold the input hash, a precedent key (a hash of policy,
+  project and redacted subject), answers, action, model and latency. `outcome` and `usage`
+  records join them by `decisionId`. No state text is logged. Files:
+  `~/.local/share/local-decider/logs/decisions-YYYY-MM-DD.jsonl`.
+- **Who reports.** Only the Paseo plugin reports outcomes and usage today. The Claude Code and
+  Codex hooks cannot see the user's answer.
+- **Calibration hints.** For probability-based allow rules, `stats` may suggest a lower threshold
+  when at least 100 escalated, labelled decisions meet it and the Wilson 95% upper bound on the
+  deny rate is at most 2%. It never changes the config.
+- **Savings.** A routing request may carry `models: {requested, routes, profiles}`. The gateway
+  fills missing routes from `config.yaml` presets and resolves a `profile` preset through
+  `profiles`. With usage reported, stats sum the tokens of tasks routed to another model, priced
+  when `pricing` is set. Shadow savings are an upper bound.
+- **Prompt time.** For allow policies, stats show prompts you answered that the policy would have
+  allowed, and how long they waited (capped at 10 minutes each).
 
-- **Paseo** ([research/paseo-plugin-api.md](research/paseo-plugin-api.md)): a thin client; no
-  models in-process, no runtime dependencies. `agent.turn.after` → `turn-outcome` (first);
-  `agent.permission.before` → `permission` (auto-allow only when enforced, never auto-deny in
-  v1, "already resolved" races swallowed); `agent.create.before` → `routing` with a ~2 s budget,
-  skipped when the gateway is not ready; `agent.open.before` → optional MCP injection. Targets
-  Paseo `>=0.15.3`.
-- **Claude Code** ([research/claude-codex-hooks.md](research/claude-codex-hooks.md)):
-  `PreToolUse` runs the deterministic deny layer, then `command-risk` (ask/deny only);
-  `PermissionRequest` runs `permission` (allow, or nothing); `Stop` runs `turn-outcome` (log
-  only: a Stop hook that adds context would keep the turn going); `UserPromptSubmit` runs
-  `routing` as a hint. Under Claude auto mode a hook `allow` does not override the classifier
-  (anthropics/claude-code#94740, open), so there the decider can only add `ask`/`deny`.
-- **Codex**: the same runner and policies. `PreToolUse` is deny-only; approval goes through
-  `PermissionRequest`, where printing nothing abstains, leaving the built-in auto-reviewer in
-  charge.
-- **Paseo running Claude Code or Codex**: Paseo launches the real CLIs, which load this plugin
-  too. One event gets one decision: the Paseo plugin's `agent.open.before` sets
-  `LOCAL_DECIDER_HOST_POLICIES=turn-outcome,permission,routing`, and the hooks skip those
-  policies, leaving the guard and `command-risk` (Paseo has no pre-tool hook). Without it a
-  Claude hook `allow` would answer the prompt before Paseo saw it, bypassing the Paseo plugin's
-  own mode, and every turn and permission would be logged twice.
-- Every hook fails open: a gateway that is down, slow (1.5 s default budget) or erroring produces
-  no output and exit code 0, i.e. the harness's default behaviour.
+## Engines
 
-## Open questions, settled
-
-| question | decision |
+| Engine | What it runs |
 |---|---|
-| Gateway language | Node/TS gateway supervising Python engine processes (ADR-0001) |
-| One marketplace for Claude Code and Codex? | Yes: one plugin dir with both manifests, two marketplace files (ADR-0004) |
-| Which local servers expose logprobs? | llama.cpp server and Ollama (`top_logprobs`) yes; FastFlowLM from 1.0.12; LM Studio only on `/v1/responses`; Lemonade unverified. The `llm-logprobs` engine probes at start-up |
-| Default thresholds | Auto-allow only at p(allow) ≥ 0.95; everything ships in `shadow`; tune from `local-decider stats` |
-| Reuse auto-mode-for-paseo for routing? | No dependency: it registers itself as a whole provider. Our gateway serves `/v1/systemone`, so it can be that plugin's Jev/Laya-style backend unchanged; routing presets are our own small map |
+| `strands-decider` | Spawns `strands-decider serve <model> --device cpu\|mlx\|mps\|cuda` from the managed uv venv, or attaches to `engine.url` |
+| `fastflowlm` | Spawns `flm serve --decision <model>` on the AMD XDNA NPU (Linux), or attaches to `engine.url` |
+| `systemone-remote` | Any `/v1/systemone` server at `engine.url`, with an optional bearer token from `tokenEnv` |
 
-## Threat model and known limits
+- **Supervision.** A spawned engine runs on a free loopback port and logs to
+  `logs/engine-<id>.log`. After a crash it restarts with exponential backoff, at most 5 times; a
+  5-minute healthy run resets that budget.
+- **Lifecycle.** `lazy` (default) loads the model on the first decision and unloads it after
+  `idleUnloadMinutes` (15). `eager` loads it at start. A decision that arrives while the model
+  loads waits for it.
+- **Limits.** Engine responses over 1 MiB are rejected while streaming.
+- **Switching.** `POST /v1/engine`, `local-decider engine install` and the Paseo settings page
+  switch strands-decider and FastFlowLM models at runtime; the choice is saved as `selection`.
+  A remote or `engine.url` engine cannot switch (409).
 
-See [security.md](security.md).
+## HTTP routes
+
+| Route | Purpose |
+|---|---|
+| `POST /v1/decide/:policy` | Run a policy on harness input |
+| `POST /v1/systemone`, `POST /invocations` | Pass-through to the active engine (keys sorted, secrets redacted) |
+| `POST /v1/outcomes`, `POST /v1/usage` | Report what happened, and token usage, for a decision |
+| `GET /health`, `GET /ping`, `GET /v1/stats` | Engine state and latency; stats as JSON |
+| `GET /models`, `GET /v1/engines`, `POST /v1/engine`, `/v1/engine/load`, `/unload`, `/lifecycle` | Model catalogue, engine status, switching and lifecycle |
+| `POST /v1/models/download`, `/v1/engines/validate`, `/v1/paths` | Downloads, `flm validate`, tool paths (loopback gateway only) |
+| `GET /v1/policies`, `POST /v1/policies/:id/mode`, `/variant`, `/thresholds`, `/v1/policies/reload` | Policy settings, written to `config.yaml` |
+| `GET /v1/policies/:id/prompt`, `GET /v1/config`, `POST /v1/config/reload`, `POST /v1/routing/presets` | Authoring prompt, config view and reload, preset mapping |
+| `POST /mcp` | MCP over streamable HTTP with `decide` and `policies` tools; `local-decider mcp` is the stdio form |
+
+Security controls on these routes are in [security.md](security.md).

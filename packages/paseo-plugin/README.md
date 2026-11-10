@@ -1,92 +1,68 @@
 # paseo-plugin-local-decider
 
 A [Paseo](https://paseo.sh) plugin that uses a small **local decision model** for routine,
-fixed-choice calls: did an agent's turn finish, get stuck, need you, or fail; can a permission
-request be allowed; which model tier fits a new task. Everything runs on your machine, and
-everything starts in **shadow mode**: decisions are shown and logged, nothing is changed until
-you switch a policy to "act".
+fixed-choice calls: did an agent's turn finish, get stuck, need you, or fail; can a tool
+permission request be allowed; which model fits a new agent. Everything runs on your machine,
+and every policy starts in **shadow mode**: decisions are shown and logged, and nothing changes
+until you switch a policy to `act`.
 
 > Unofficial. Not affiliated with Paseo, Strands Agents, AWS, AMD or FastFlowLM.
 
 ## Requirements
 
-The plugin is a thin client of the **local-decider gateway**, which runs the model:
-
-- Linux with an AMD Ryzen AI NPU: FastFlowLM `d3` models (~0.25–0.6 s per decision), or
-- any Linux/macOS machine: Strands Decider (PyTorch; CPU, Apple MLX/MPS or CUDA).
-
-Install and start the gateway first:
-[github.com/SkeLLLa/local-decider](https://github.com/SkeLLLa/local-decider#quick-start).
+- Paseo `>=0.15.3 <0.17.0`, with plugins enabled on the daemon (**Settings → Plugins → Enable
+  plugins**).
+- The **local-decider gateway** running on the daemon machine. The plugin is a thin client and
+  never runs a model itself. Install the gateway first:
+  [docs/install.md](../../docs/install.md).
 
 ## Install
 
-Plugins must be enabled on the daemon first (**Settings → Plugins → Enable plugins**). Plugins
-are trusted, unsandboxed code, so read the source before you install. Pick one of these:
-
-**From npm:**
-
-```sh
-paseo plugin install npm:paseo-plugin-local-decider
-```
-
-**From GitHub.** The plugin is in the `packages/paseo-plugin` directory of the monorepo, so add
-that path after a `:` at the end of the source:
+Plugins are trusted, unsandboxed code, so read the source before you install.
 
 ```sh
 paseo plugin install github:SkeLLLa/local-decider:packages/paseo-plugin
-# or as a full Git URL
-paseo plugin install https://github.com/SkeLLLa/local-decider.git:packages/paseo-plugin
 # pin a branch, tag or commit
 paseo plugin install github:SkeLLLa/local-decider:packages/paseo-plugin --ref main
-```
-
-**From a local checkout.** Give the absolute path to the plugin directory, not the repository
-root:
-
-```sh
-git clone https://github.com/SkeLLLa/local-decider.git
+# or from a local checkout: the plugin directory, not the repository root
 paseo plugin install (pwd)/local-decider/packages/paseo-plugin
 ```
 
-The plugin imports only modules Paseo provides, so none of these need `pnpm install` or a build.
-Run `paseo plugin ls` and check that `local-decider` shows `running`. To upgrade, run
-`paseo plugin update local-decider`. A local directory install loads the files in place, so use
-`paseo plugin reload local-decider` after you pull.
+Once the package is published to npm, `paseo plugin install npm:paseo-plugin-local-decider`
+works too. The plugin imports only modules Paseo provides, so no install step or build is
+needed.
 
-Then open **Settings → Local decider** to pick the engine and model (with download buttons),
-check the NPU, choose each policy's mode, and control the gateway service.
+Run `paseo plugin ls` and check that `local-decider` shows `running`. Upgrade with
+`paseo plugin update local-decider`; after pulling a local checkout, use
+`paseo plugin reload local-decider`.
+
+Then open **Settings → Local decider** to pick the engine and model, choose each policy's mode,
+and control the gateway service. What each setting does: [OVERVIEW.md](OVERVIEW.md).
 
 ## Permissions and agent modes
 
-The permission policy only sees requests that the agent's provider shows to Paseo as a prompt.
-Which requests those are depends on the agent's mode:
+The permission policy only sees requests that the agent's provider shows to Paseo as a prompt:
 
-- **Always Ask (`default`) or Accept File Edits:** every prompt goes to the local model first.
-  When it is confident, the request is allowed without asking you. Otherwise it stays pending
-  for you. This is where the plugin saves time and model calls.
-- **Auto mode:** the provider's own classifier reviews each action first, and it runs on a
-  hosted model, not on your machine. For Claude, that is a Sonnet model by default. The plugin
-  only sees what the classifier passes on as a prompt, so the classifier's calls still happen
-  and are still billed. You save nothing over auto mode alone, and the local model only adds a
-  second opinion on what is left.
-- **Bypass:** nothing is asked, so the plugin has nothing to decide.
+- **Always Ask (`default`) or Accept File Edits:** every tool prompt goes to the local model
+  first. When it is confident, the request is allowed without asking you. Otherwise it stays
+  pending for you. This is where the plugin saves time.
+- **Auto mode:** the provider's hosted classifier reviews each action first, and the plugin only
+  sees what it passes on. You save nothing over auto mode alone.
+- **Bypass:** nothing is asked, so there is nothing to decide.
 
-To have the local model handle routine permissions instead of a hosted model, run agents in
-Always Ask with the permission policy in `act`, and lower the auto-allow threshold in settings
-if it asks too often. The shipped threshold is 0.95; 0.9 is a reasonable user override. Paseo can
-also let a parent answer an escalated child request, and those answers can become exact-match
-precedent. See the [supervised child agent guide](../../docs/supervised-subagents.md).
+The plugin never denies a request. Parent agents can answer a child's pending request, and those
+answers can become exact-match precedent: see
+[supervised child agents](../../docs/supervised-subagents.md).
 
 ## Privacy and what it runs
 
-- Agent transcripts and tool requests are sent only to the gateway URL in settings (default
+- Transcripts and tool requests go only to the gateway URL in settings (default
   `http://127.0.0.1:8765`). The gateway redacts secrets before the model sees them and logs
   hashes, never text.
-- A bearer token (`LOCAL_DECIDER_TOKEN`, read from the daemon's environment, never stored in
-  settings) is only sent over https or to loopback.
-- The only processes the plugin starts are the gateway service commands behind the Start / Stop /
-  Restart buttons (`systemctl --user … local-decider.service` or `launchctl …`), shown next to each
-  button. See [OVERVIEW.md](OVERVIEW.md).
+- A bearer token (`LOCAL_DECIDER_TOKEN` in the daemon's environment, never stored in settings)
+  is sent only over https or to loopback.
+- The only processes the plugin starts are the gateway service commands behind the Start, Stop
+  and Restart buttons. See [OVERVIEW.md](OVERVIEW.md#what-this-plugin-runs).
 
 ## Licence
 
