@@ -2,10 +2,17 @@
  * Event → policy mapping. Each hook event becomes one gateway policy call whose input keys match
  * the policy's `state.sections[].from` (see policies/*.yaml).
  */
-import { PERMISSION_MODES, type DecideCall, type PermissionMode } from '@local-decider/core';
+import {
+  commandOf,
+  permissionSubject,
+  PERMISSION_MODES,
+  str,
+  type DecideCall,
+  type HookInput,
+  type PermissionMode,
+} from '@local-decider/core';
 import { basename } from 'node:path';
 
-import { commandOf, permissionSubject, str, type HookInput } from './subject.ts';
 import {
   firstUserText,
   historyText,

@@ -89,6 +89,103 @@ var PERMISSION_MODES = [
   "bypassPermissions"
 ];
 
+// ../core/src/subject.ts
+function str(value) {
+  return typeof value === "string" && value !== "" ? value : void 0;
+}
+function commandOf(hook) {
+  const toolInput = hook["tool_input"];
+  if (typeof toolInput !== "object" || toolInput === null) {
+    return void 0;
+  }
+  const command = toolInput["command"];
+  if (Array.isArray(command)) {
+    return command.filter((c) => typeof c === "string").map(shellQuote).join(" ");
+  }
+  return str(command);
+}
+var SHELL_SAFE = /^[\w@%+=:,./-]+$/;
+function shellQuote(word) {
+  return SHELL_SAFE.test(word) ? word : `'${word.replaceAll("'", String.raw`'\''`)}'`;
+}
+function isShellTool(hook) {
+  const tool = str(hook["tool_name"]) ?? "";
+  return tool !== "apply_patch" && !/^(?:Edit|Write|MultiEdit|NotebookEdit)$/.test(tool);
+}
+function permissionSubject(hook) {
+  const tool = str(hook["tool_name"]);
+  if (tool === void 0) {
+    return void 0;
+  }
+  const input = hook["tool_input"];
+  const fields = asRecord(input);
+  return subjectLine({
+    tool,
+    cwd: str(hook["cwd"]) ?? "",
+    input,
+    command: isShellTool(hook) ? commandOf(hook) : void 0,
+    path: firstString(fields, ["file_path", "filePath", "path"]),
+    url: firstString(fields, ["url"])
+  });
+}
+function subjectLine(parts) {
+  const { tool, cwd, input, command, path, url } = parts;
+  const value = command !== void 0 ? stripCwd(command, cwd) : path !== void 0 ? posixRelative(cwd, path).replaceAll("\\", "/") : url ?? stableToolInput(input);
+  return collapse(`${tool}: ${value}`);
+}
+function asRecord(value) {
+  return typeof value === "object" && value !== null && !Array.isArray(value) ? value : void 0;
+}
+function firstString(value, keys) {
+  for (const key of keys) {
+    const candidate = value?.[key];
+    if (typeof candidate === "string" && candidate !== "") {
+      return candidate;
+    }
+  }
+  return void 0;
+}
+function stableToolInput(value) {
+  const fields = asRecord(value);
+  if (fields === void 0) {
+    return canonicalJson(value) ?? "";
+  }
+  const input = { ...fields };
+  delete input["description"];
+  return canonicalJson(input);
+}
+function stripCwd(command, cwd) {
+  const line = collapse(command);
+  const prefix = `cd ${collapse(cwd)} && `;
+  return line.startsWith(prefix) ? line.slice(prefix.length) : line;
+}
+function collapse(value) {
+  return value.replace(/\s+/g, " ").trim();
+}
+function normalizeSegments(path) {
+  const out = [];
+  for (const part of path.split("/")) {
+    if (part === "..") {
+      out.pop();
+    } else if (part !== "" && part !== ".") {
+      out.push(part);
+    }
+  }
+  return out;
+}
+function resolveSegments(base, path) {
+  return normalizeSegments(path.startsWith("/") ? path : `/${base}/${path}`);
+}
+function posixRelative(base, path) {
+  const from = resolveSegments("", base);
+  const to = resolveSegments(base.startsWith("/") ? base : `/${base}`, path);
+  let common = 0;
+  while (common < from.length && common < to.length && from[common] === to[common]) {
+    common += 1;
+  }
+  return [...from.slice(common).map(() => ".."), ...to.slice(common)].join("/");
+}
+
 // src/shell.ts
 var SEPARATORS = /* @__PURE__ */ new Set([";", "&", "|", "\n", "(", ")", "`"]);
 function endWord(s) {
@@ -359,96 +456,6 @@ function guardCommand(command) {
 
 // src/mapping.ts
 import { basename } from "node:path";
-
-// src/subject.ts
-function str(value) {
-  return typeof value === "string" && value !== "" ? value : void 0;
-}
-function commandOf(hook) {
-  const toolInput = hook["tool_input"];
-  if (typeof toolInput !== "object" || toolInput === null) {
-    return void 0;
-  }
-  const command = toolInput["command"];
-  if (Array.isArray(command)) {
-    return command.filter((c) => typeof c === "string").map(shellQuote).join(" ");
-  }
-  return str(command);
-}
-var SHELL_SAFE = /^[\w@%+=:,./-]+$/;
-function shellQuote(word) {
-  return SHELL_SAFE.test(word) ? word : `'${word.replaceAll("'", String.raw`'\''`)}'`;
-}
-function isShellTool(hook) {
-  const tool = str(hook["tool_name"]) ?? "";
-  return tool !== "apply_patch" && !/^(?:Edit|Write|MultiEdit|NotebookEdit)$/.test(tool);
-}
-function permissionSubject(hook) {
-  const tool = str(hook["tool_name"]);
-  if (tool === void 0) {
-    return void 0;
-  }
-  const input = hook["tool_input"];
-  const fields = asRecord(input);
-  const command = isShellTool(hook) ? commandOf(hook) : void 0;
-  const path = firstString(fields, ["file_path", "filePath", "path"]);
-  const url = firstString(fields, ["url"]);
-  const cwd = str(hook["cwd"]) ?? "";
-  const value = command !== void 0 ? stripCwd(command, cwd) : path !== void 0 ? posixRelative(cwd, path).replaceAll("\\", "/") : url ?? stableToolInput(input);
-  return collapse(`${tool}: ${value}`);
-}
-function asRecord(value) {
-  return typeof value === "object" && value !== null && !Array.isArray(value) ? value : void 0;
-}
-function firstString(value, keys) {
-  for (const key of keys) {
-    const candidate = value?.[key];
-    if (typeof candidate === "string" && candidate !== "") {
-      return candidate;
-    }
-  }
-  return void 0;
-}
-function stableToolInput(value) {
-  const fields = asRecord(value);
-  if (fields === void 0) {
-    return canonicalJson(value) ?? "";
-  }
-  const input = { ...fields };
-  delete input["description"];
-  return canonicalJson(input);
-}
-function stripCwd(command, cwd) {
-  const line = collapse(command);
-  const prefix = `cd ${collapse(cwd)} && `;
-  return line.startsWith(prefix) ? line.slice(prefix.length) : line;
-}
-function collapse(value) {
-  return value.replace(/\s+/g, " ").trim();
-}
-function normalizeSegments(path) {
-  const out = [];
-  for (const part of path.split("/")) {
-    if (part === "..") {
-      out.pop();
-    } else if (part !== "" && part !== ".") {
-      out.push(part);
-    }
-  }
-  return out;
-}
-function resolveSegments(base, path) {
-  return normalizeSegments(path.startsWith("/") ? path : `/${base}/${path}`);
-}
-function posixRelative(base, path) {
-  const from = resolveSegments("", base);
-  const to = resolveSegments(base.startsWith("/") ? base : `/${base}`, path);
-  let common = 0;
-  while (common < from.length && common < to.length && from[common] === to[common]) {
-    common += 1;
-  }
-  return [...from.slice(common).map(() => ".."), ...to.slice(common)].join("/");
-}
 
 // src/transcript.ts
 import { closeSync, fstatSync, openSync, readSync } from "node:fs";

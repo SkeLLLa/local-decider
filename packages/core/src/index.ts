@@ -65,6 +65,17 @@ export {
   type WireAnswer,
 } from './systemone.ts';
 export {
+  asRecord,
+  commandOf,
+  firstString,
+  isShellTool,
+  permissionSubject,
+  str,
+  subjectLine,
+  type HookInput,
+  type SubjectParts,
+} from './subject.ts';
+export {
   buildState,
   CHARS_PER_TOKEN,
   cutText,

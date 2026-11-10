@@ -3,10 +3,14 @@
  * here; `main.ts` wires stdin/stdout/env. Every failure path returns empty stdout and exit 0.
  */
 import {
+  commandOf,
   DEFAULT_GATEWAY_URL,
   GatewayClient,
+  isShellTool,
+  str,
   type DecideRequest,
   type DecideResponse,
+  type HookInput,
 } from '@local-decider/core';
 
 import { guardCommand } from './guard.ts';
@@ -21,7 +25,6 @@ import {
   type ReadTranscript,
 } from './mapping.ts';
 import { guardDeny, translate } from './output.ts';
-import { commandOf, isShellTool, str, type HookInput } from './subject.ts';
 import { readSlice } from './transcript.ts';
 
 export type Env = Readonly<Record<string, string | undefined>>;

@@ -1,10 +1,10 @@
-import { canonicalJson } from '@local-decider/core';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { relative, resolve } from 'node:path';
 import { describe, it } from 'node:test';
 
 import { commandOf, isShellTool, permissionSubject, str, type HookInput } from '../src/subject.ts';
+import { canonicalJson } from '../src/canonical.ts';
 
 const collapse = (v: string): string => v.replace(/\s+/g, ' ').trim();
 

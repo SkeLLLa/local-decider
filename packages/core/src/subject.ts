@@ -1,10 +1,9 @@
-// fallow-ignore-file code-duplication -- the Paseo plugin bundles its own copy (server/history.ts)
 /**
  * What a tool call is, as one stable line (`Bash: npm test`, `Edit: src/a.ts`): the precedent
  * subject and the shell-command helpers behind it. No `node:` imports, so a Claude Code mod can
  * bundle it; paths use the small POSIX helpers below.
  */
-import { canonicalJson } from '@local-decider/core';
+import { canonicalJson } from './canonical.ts';
 
 export type HookInput = Readonly<Record<string, unknown>>;
 
@@ -51,10 +50,29 @@ export function permissionSubject(hook: HookInput): string | undefined {
   }
   const input = hook['tool_input'];
   const fields = asRecord(input);
-  const command = isShellTool(hook) ? commandOf(hook) : undefined;
-  const path = firstString(fields, ['file_path', 'filePath', 'path']);
-  const url = firstString(fields, ['url']);
-  const cwd = str(hook['cwd']) ?? '';
+  return subjectLine({
+    tool,
+    cwd: str(hook['cwd']) ?? '',
+    input,
+    command: isShellTool(hook) ? commandOf(hook) : undefined,
+    path: firstString(fields, ['file_path', 'filePath', 'path']),
+    url: firstString(fields, ['url']),
+  });
+}
+
+export interface SubjectParts {
+  readonly tool: string;
+  readonly cwd: string;
+  /** The raw tool input, used only when there is no command, path or url. */
+  readonly input: unknown;
+  readonly command?: string | undefined;
+  readonly path?: string | undefined;
+  readonly url?: string | undefined;
+}
+
+/** `Tool: value` from already-extracted parts: command (cwd prefix dropped), cwd-relative path, url, else stable input. */
+export function subjectLine(parts: SubjectParts): string {
+  const { tool, cwd, input, command, path, url } = parts;
   const value =
     command !== undefined
       ? stripCwd(command, cwd)
@@ -64,13 +82,13 @@ export function permissionSubject(hook: HookInput): string | undefined {
   return collapse(`${tool}: ${value}`);
 }
 
-function asRecord(value: unknown): Record<string, unknown> | undefined {
+export function asRecord(value: unknown): Record<string, unknown> | undefined {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
     ? (value as Record<string, unknown>)
     : undefined;
 }
 
-function firstString(
+export function firstString(
   value: Record<string, unknown> | undefined,
   keys: readonly string[],
 ): string | undefined {
