@@ -1,0 +1,41 @@
+# yaml-language-server: $schema=../schemas/policy.schema.json
+# Routing variant: pick a model by the kind of work, not its size, for setups where different
+# models are good at different things (a writing model for docs, a vision-capable one for UI).
+# Select it with `local-decider policies use routing routing-task-kind`.
+id: routing-task-kind
+version: 1
+description: Pick a model by the kind of task (docs, UI, code, debugging, planning).
+variantOf: routing
+mode: shadow
+priority: high
+cache:
+  ttlSeconds: 600
+state:
+  maxTokens: 1500
+  sections:
+    - { label: Project, from: project, keep: head }
+    - { label: Task prompt, from: prompt, keep: middle }
+questions:
+  kind:
+    type: choice
+    instructions: Choose the kind of work the coding task in the prompt is mainly about.
+    criteria:
+      docs: Writing or editing documentation, READMEs, comments, changelogs or commit messages.
+      ui: Frontend work such as components, styling, layout, accessibility or screenshots.
+      code: Implementing a feature, a clear bug fix, tests, or a refactor with known scope.
+      debug: >-
+        Finding the cause of a failure: a crash, a flaky test, wrong output, or performance, where
+        the fix is not yet known.
+      plan: Designing or reviewing an approach, architecture, or comparing options before coding.
+rules:
+  - when: { question: kind, answer: docs, minConfidence: 0.5 }
+    action: route:docs
+  - when: { question: kind, answer: ui, minConfidence: 0.5 }
+    action: route:ui
+  - when: { question: kind, answer: debug, minConfidence: 0.5 }
+    action: route:debug
+  - when: { question: kind, answer: plan, minConfidence: 0.5 }
+    action: route:plan
+  - when: { question: kind, answer: code, minConfidence: 0.4 }
+    action: route:code
+default: abstain

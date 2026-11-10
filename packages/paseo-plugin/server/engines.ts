@@ -6,9 +6,17 @@ import {
   type EngineCatalog,
   type Validation,
 } from '../shared/engines.ts';
-/** Daemon-side RPC handlers for engines, models, downloads, validation and tool paths. */
+/** Daemon-side RPC handlers for engines, models, downloads, validation, tool paths, policies. */
 import type { PostResult } from '../shared/gateway.ts';
 import { parsePaths, type PathEntry } from '../shared/paths.ts';
+import {
+  parsePolicyPrompt,
+  parsePolicyVariants,
+  parseRoutingSettings,
+  type PolicyPrompt,
+  type PolicyVariants,
+  type RoutingSettings,
+} from '../shared/policies.ts';
 import type { HookDeps } from './deps.ts';
 
 type Deps = Pick<HookDeps, 'gateway' | 'log'>;
@@ -139,4 +147,86 @@ export async function setPolicyMode(
     () => null,
   );
   return { ok, error };
+}
+
+/** Policy `id` and the variants that can answer for it. */
+export async function listPolicyVariants(
+  deps: Pick<HookDeps, 'gateway'>,
+  id: string,
+): Promise<PolicyVariants> {
+  const gateway = await deps.gateway();
+  if (gateway === null) {
+    return { ok: false, error: BAD_URL, active: null, variants: [] };
+  }
+  return parsePolicyVariants(await gateway.policies({ timeoutMs: 3000 }), id);
+}
+
+/** Answer policy `policy` with `variant` (the policy itself = the default). */
+export async function setPolicyVariant(
+  deps: Deps,
+  input: { policy: string; variant: string },
+): Promise<{ ok: boolean; error: string | null }> {
+  const { ok, error } = await call(
+    deps,
+    `policy ${input.policy} variant ${input.variant}`,
+    async (gw) => gw.setPolicyVariant(input.policy, input.variant, { timeoutMs: 10_000 }),
+    () => null,
+  );
+  return { ok, error };
+}
+
+/** Re-read the gateway's policy files; reports the number of policies loaded. */
+export async function reloadPolicies(
+  deps: Deps,
+): Promise<{ ok: boolean; error: string | null; count: number }> {
+  const { ok, error, value } = await call(
+    deps,
+    'reload policies',
+    async (gw) => gw.reloadPolicies({ timeoutMs: 10_000 }),
+    (body) => {
+      const list = field(body, 'policies');
+      return Array.isArray(list) ? list.length : 0;
+    },
+  );
+  return { ok, error, count: value ?? 0 };
+}
+
+/** Paseo's presets from config.yaml (`routing.presets.paseo`). */
+export async function routingSettings(deps: Pick<HookDeps, 'gateway'>): Promise<RoutingSettings> {
+  const gateway = await deps.gateway();
+  if (gateway === null) {
+    return { ok: false, error: BAD_URL, file: null, presets: {} };
+  }
+  return parseRoutingSettings(await gateway.config({ timeoutMs: 3000 }));
+}
+
+/** Map one Paseo preset in config.yaml, or remove it with a null model. */
+export async function setRoutingPreset(
+  deps: Deps,
+  input: { preset: string; model: string | null; mode?: string | undefined },
+): Promise<{ ok: boolean; error: string | null }> {
+  const update = {
+    harness: 'paseo' as const,
+    preset: input.preset,
+    model: input.model,
+    ...(input.mode === undefined || input.mode === '' ? {} : { mode: input.mode }),
+  };
+  const { ok, error } = await call(
+    deps,
+    `route:${input.preset} → ${input.model ?? 'unmapped'}`,
+    async (gw) => gw.setRoutingPreset(update, { timeoutMs: 10_000 }),
+    () => null,
+  );
+  return { ok, error };
+}
+
+export async function policyPrompt(
+  deps: Pick<HookDeps, 'gateway'>,
+  policy: string,
+): Promise<PolicyPrompt> {
+  const gateway = await deps.gateway();
+  if (gateway === null) {
+    return { ok: false, error: BAD_URL, prompt: '', cwd: '' };
+  }
+  return parsePolicyPrompt(await gateway.policyPrompt(policy, { timeoutMs: 5000 }));
 }

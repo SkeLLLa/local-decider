@@ -1,3 +1,4 @@
+# yaml-language-server: $schema=../schemas/policy.schema.json
 # Permission triage: may a pending tool/permission request be auto-approved?
 # v1 never auto-denies through this policy's adapters' permission hooks; `deny` is a flag.
 id: permission

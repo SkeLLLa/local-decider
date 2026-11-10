@@ -1,5 +1,7 @@
 # local-decider
 
+![local-decider logo](docs/assets/logo.svg)
+
 Local decision models ("System One" models) for coding-agent harnesses: Paseo, Claude Code and
 Codex. A small local model answers routine fixed-choice questions — is this turn done or stuck,
 can this permission be allowed, which model should this task get, is this command risky — in one
@@ -25,6 +27,32 @@ engines (strands-decider, any /v1/systemone server) ─► gateway 127.0.0.1:876
 - **Harness adapters** are thin, fail-open clients: a Paseo plugin, and one plugin directory
   serving both Claude Code and Codex.
 
+<details>
+<summary>Screenshots: the Paseo plugin</summary>
+
+Quick status from the sidebar: engine state, latency and each policy's mode.
+
+![Quick-status popover](docs/assets/screenshots/quick-status.png)
+
+A decision row in the chat after a turn ends, with the answer, confidence, action, model and
+latency, and your feedback.
+
+![Turn-outcome decision row](docs/assets/screenshots/chat-decision.png)
+
+Engine and model picker with download sizes, memory, latency and the FastFlowLM NPU check.
+
+![Engine and model settings](docs/assets/screenshots/settings-models.png)
+
+Policy modes, how decisions show in chat, and the sidebar item.
+
+![Policy and display settings](docs/assets/screenshots/settings-policies.png)
+
+Gateway service controls and shadow statistics.
+
+![Gateway service and shadow statistics](docs/assets/screenshots/status.png)
+
+</details>
+
 ## Quick start
 
 ```sh
@@ -36,8 +64,9 @@ node packages/gateway/dist/cli.js gateway start      # systemd user unit / launc
 Then add one or more harnesses:
 
 ```sh
-# Paseo
-paseo plugin install ./packages/paseo-plugin
+# Paseo, from this checkout or straight from GitHub (the path after ':' is the plugin directory)
+paseo plugin install (pwd)/packages/paseo-plugin
+paseo plugin install github:SkeLLLa/local-decider:packages/paseo-plugin
 # Claude Code
 claude plugin marketplace add SkeLLLa/local-decider; and claude plugin install local-decider@local-decider
 # Codex (then trust the hooks with /hooks in the TUI)

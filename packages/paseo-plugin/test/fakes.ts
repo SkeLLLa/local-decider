@@ -1,7 +1,7 @@
 import type { AgentTimelineItem } from '@getpaseo/protocol/agent-types';
 
 import type { AgentRefLike, AppendItem, HookDeps, PaseoLike } from '../server/deps.ts';
-import type { DecideResponse } from '../shared/decision.ts';
+import type { DecideResponse, UsageReport } from '../shared/decision.ts';
 import type { Gateway } from '../shared/gateway.ts';
 import type { DeciderSettings } from '../shared/settings.ts';
 
@@ -53,6 +53,7 @@ export interface FakeGateway extends Gateway {
     sessionId?: string;
   }[];
   readonly outcomes: { decisionId: string; outcome: string; source: string }[];
+  readonly usage: UsageReport[];
   /** Every mutating engine call, by name, with its input. */
   readonly posts: { name: string; input: unknown }[];
 }
@@ -62,6 +63,7 @@ export function fakeGateway(
 ): FakeGateway {
   const calls: FakeGateway['calls'] = [];
   const outcomes: FakeGateway['outcomes'] = [];
+  const usage: UsageReport[] = [];
   const posts: FakeGateway['posts'] = [];
   const record =
     (name: string) =>
@@ -73,6 +75,7 @@ export function fakeGateway(
     baseUrl: 'http://127.0.0.1:8765',
     calls,
     outcomes,
+    usage,
     posts,
     async decide(policy, request) {
       calls.push({
@@ -86,6 +89,10 @@ export function fakeGateway(
       outcomes.push({ decisionId, outcome, source });
       return true;
     },
+    async reportUsage(report) {
+      usage.push(report);
+      return true;
+    },
     health: async () => ({ status: 'ok', engine: 'strands-decider', model: 'm', p50Ms: 100 }),
     engines: async () => ({}),
     stats: async () => ({}),
@@ -96,6 +103,37 @@ export function fakeGateway(
     engineLoad: record('engineLoad'),
     setLifecycle: record('setLifecycle'),
     setPolicyMode: record('setPolicyMode'),
+    policies: async () => [
+      { id: 'permission', mode: 'shadow', description: 'p', routes: [], variants: ['permission'] },
+      {
+        id: 'routing',
+        mode: 'act',
+        description: 'Tiers.',
+        routes: ['fast', 'deep'],
+        variant: 'routing-budget',
+        variants: ['routing', 'routing-budget'],
+      },
+      {
+        id: 'routing-budget',
+        description: 'Cheap first.',
+        routes: ['cheap'],
+        variantOf: 'routing',
+      },
+    ],
+    setPolicyVariant: async (policy, variant) => record('setPolicyVariant')({ policy, variant }),
+    config: async () => ({
+      file: '/home/u/.config/local-decider/config.yaml',
+      config: { routing: { presets: { paseo: { cheap: { model: 'claude/haiku' } } } } },
+    }),
+    setRoutingPreset: async (update) => record('setRoutingPreset')(update),
+    policyPrompt: async (policy) =>
+      policy === 'routing'
+        ? { prompt: '# Write a policy', cwd: '/home/u/.config/local-decider' }
+        : null,
+    reloadPolicies: async () => {
+      posts.push({ name: 'reloadPolicies', input: {} });
+      return { ok: true, body: { policies: ['permission', 'routing', 'routing-budget'] } };
+    },
   };
 }
 

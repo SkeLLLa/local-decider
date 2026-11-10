@@ -6,9 +6,15 @@ import {
   downloadModel,
   engineLoad,
   listEngines,
+  listPolicyVariants,
+  policyPrompt,
+  routingSettings,
+  setRoutingPreset,
+  reloadPolicies,
   selectEngine,
   setLifecycle,
   setPolicyMode,
+  setPolicyVariant,
   setPath,
   validateEngine,
 } from './server/engines.ts';
@@ -19,6 +25,7 @@ import { createRoutingHandler } from './server/routing.ts';
 import { createStatusHandler, manualDecide, recordFeedback, statsText } from './server/rpc.ts';
 import { defaultServiceEnv, runService, serviceInfo } from './server/service.ts';
 import { createTurnHandler } from './server/turn.ts';
+import { UsageLinks } from './server/usage.ts';
 import { createGateway, type Gateway } from './shared/gateway.ts';
 import {
   decideRpc,
@@ -28,6 +35,12 @@ import {
   feedbackRpc,
   lifecycleRpc,
   policyModeRpc,
+  policyVariantRpc,
+  policyVariantsRpc,
+  policyPromptRpc,
+  routingPresetRpc,
+  routingSettingsRpc,
+  reloadPoliciesRpc,
   selectEngineRpc,
   serviceInfoRpc,
   serviceRpc,
@@ -117,10 +130,15 @@ export default function contribute(server: PluginServerContext): () => void {
   });
   const onTurn = createTurnHandler(deps, { background });
   const permission = createPermissionHandlers(deps, background);
-  const onCreate = createRoutingHandler(deps);
+  const usage = new UsageLinks();
+  const onCreate = createRoutingHandler(deps, undefined, usage);
   const onOpen = createMcpHandler(deps, token);
 
-  server.addHook('agent.turn.after', async (event, ctx) => onTurn(event, ctx));
+  server.addHook('agent.turn.after', async (event, ctx) => {
+    void usage.turnEnded(deps, event, ctx.paseo);
+    return onTurn(event, ctx);
+  });
+  server.addHook('agent.create.after', async ({ agent }) => usage.created(agent));
   server.addHook('agent.permission.before', async (event, ctx) => permission.before(event, ctx));
   server.addHook('agent.permission.after', async (event) => permission.after(event));
   server.addHook('agent.create.before', async (payload, ctx) => onCreate(payload, ctx));
@@ -139,6 +157,12 @@ export default function contribute(server: PluginServerContext): () => void {
   server.handle(engineLoadRpc, async ({ action }) => engineLoad(deps, action));
   server.handle(lifecycleRpc, async (input) => setLifecycle(deps, input));
   server.handle(policyModeRpc, async (input) => setPolicyMode(deps, input));
+  server.handle(policyVariantsRpc, async ({ policy }) => listPolicyVariants(deps, policy));
+  server.handle(policyVariantRpc, async (input) => setPolicyVariant(deps, input));
+  server.handle(reloadPoliciesRpc, async () => reloadPolicies(deps));
+  server.handle(routingSettingsRpc, async () => routingSettings(deps));
+  server.handle(routingPresetRpc, async (input) => setRoutingPreset(deps, input));
+  server.handle(policyPromptRpc, async ({ policy }) => policyPrompt(deps, policy));
   server.handle(serviceInfoRpc, async () => serviceInfo(defaultServiceEnv()));
   server.handle(serviceRpc, async ({ action }) => {
     const res = await runService(defaultServiceEnv(), action);

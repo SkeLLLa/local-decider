@@ -7,7 +7,6 @@ import type { GatewayConfig } from './config.ts';
 import { managedFlm } from './engines/fastflowlm.ts';
 import { strandsBinary } from './engines/strands.ts';
 import type { Paths } from './paths.ts';
-import type { GatewayState } from './state.ts';
 
 const ANSI = new RegExp(`${String.fromCharCode(27)}\\[[0-9;]*m`, 'g');
 
@@ -25,7 +24,7 @@ export const PATH_KEYS = [
 ] as const;
 export type PathKey = (typeof PATH_KEYS)[number];
 
-export type PathSource = 'settings' | 'config' | 'managed' | 'path' | 'default' | 'missing';
+export type PathSource = 'config' | 'managed' | 'path' | 'default' | 'missing';
 
 export interface PathEntry {
   readonly key: PathKey;
@@ -142,26 +141,23 @@ function present(def: PathDef, path: string): boolean {
   return def.kind === 'directory' ? true : isExecutable(path);
 }
 
-/** One entry: settings override, else config.yaml, else the first automatic candidate found. */
+/** One entry: config.yaml (where the settings pages write too), else automatic discovery. */
 export function resolveEntry(
   key: PathKey,
   config: GatewayConfig,
-  state: GatewayState,
   paths: Paths,
   env: NodeJS.ProcessEnv = process.env,
 ): PathEntry {
   const def = DEFS[key];
-  const value = state.paths?.[key] ?? null;
+  const value = configValue(config, key) ?? null;
   const base = { key, label: def.label, kind: def.kind, value };
   const chosen: [PathSource, string | undefined] =
     value !== null
-      ? ['settings', value]
-      : configValue(config, key) !== undefined
-        ? ['config', configValue(config, key)]
-        : (def.auto(paths, env).find(([, p]) => p !== undefined && present(def, p)) ?? [
-            'missing',
-            undefined,
-          ]);
+      ? ['config', value]
+      : (def.auto(paths, env).find(([, p]) => p !== undefined && present(def, p)) ?? [
+          'missing',
+          undefined,
+        ]);
   const [source, effective] = chosen;
   if (effective === undefined) {
     return {
@@ -178,11 +174,10 @@ export function resolveEntry(
 
 export function resolveAll(
   config: GatewayConfig,
-  state: GatewayState,
   paths: Paths,
   env?: NodeJS.ProcessEnv,
 ): PathEntry[] {
-  return PATH_KEYS.map((key) => resolveEntry(key, config, state, paths, env));
+  return PATH_KEYS.map((key) => resolveEntry(key, config, paths, env));
 }
 
 /** Resolved locations the engines and downloads use. */
@@ -194,18 +189,13 @@ export interface Toolchain {
   readonly env: Readonly<Record<string, string>>;
 }
 
-export function toolchain(
-  config: GatewayConfig,
-  state: GatewayState,
-  paths: Paths,
-  env?: NodeJS.ProcessEnv,
-): Toolchain {
+export function toolchain(config: GatewayConfig, paths: Paths, env?: NodeJS.ProcessEnv): Toolchain {
   const get = (key: PathKey): string | undefined => {
-    const entry = resolveEntry(key, config, state, paths, env);
+    const entry = resolveEntry(key, config, paths, env);
     return entry.ok && entry.effective !== null ? entry.effective : undefined;
   };
-  const flmModels = resolveEntry('dirs.flmModels', config, state, paths, env);
-  const hfCache = resolveEntry('dirs.hfCache', config, state, paths, env);
+  const flmModels = resolveEntry('dirs.flmModels', config, paths, env);
+  const hfCache = resolveEntry('dirs.hfCache', config, paths, env);
   return {
     flm: get('tools.flm'),
     strandsDecider: get('tools.strandsDecider'),

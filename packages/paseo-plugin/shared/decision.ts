@@ -25,13 +25,46 @@ export interface DecideRequest {
   readonly harness: 'paseo';
   readonly sessionId?: string;
   readonly input: Readonly<Record<string, unknown>>;
+  readonly models?: DecisionModels;
+}
+
+/** Models for savings stats (`provider/model`). Logged, never sent to the engine. */
+export interface DecisionModels {
+  /** The model the harness uses when the decision changes nothing. */
+  readonly requested?: string;
+  /** Action (`route:fast`) → the model the harness switches to when it is enforced. */
+  readonly routes?: Readonly<Record<string, string>>;
+}
+
+/** `POST /v1/usage`: one agent turn's tokens, for the decision that applied to the agent. */
+export interface UsageReport {
+  readonly decisionId: string;
+  readonly turnId?: string;
+  readonly model?: string;
+  readonly inputTokens: number;
+  readonly cachedInputTokens: number;
+  readonly outputTokens: number;
+  readonly costUsd?: number;
+}
+
+/** A routing preset resolved for one harness (`routing.presets.<harness>.<preset>`). */
+export interface RouteTarget {
+  readonly preset: string;
+  /** Paseo: `provider/model`; Claude Code and Codex: a model name or id. */
+  readonly model: string;
+  /** Paseo only: provider mode id. */
+  readonly mode?: string;
 }
 
 export interface DecideResponse {
   readonly decisionId: string;
   readonly policy: string;
+  /** The policy that answered when the user selected a variant of `policy`. */
+  readonly variant?: string;
   readonly mode: Mode;
   readonly action: Action;
+  /** Where `action` (`route:<preset>`) sends this harness, from config.yaml; absent if unmapped. */
+  readonly route?: RouteTarget;
   readonly enforced: boolean;
   readonly answers: Answers;
   readonly rule: number;

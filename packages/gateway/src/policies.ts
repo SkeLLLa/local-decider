@@ -4,12 +4,18 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import type { GatewayConfig } from './config.ts';
+import type { Paths } from './paths.ts';
 
 /** Default policies: `policies/` next to `dist/` when installed, the repo root in development. */
 export function defaultPolicyDir(): string {
   const here = dirname(fileURLToPath(import.meta.url));
   const candidates = [join(here, '..', 'policies'), join(here, '..', '..', '..', 'policies')];
   return candidates.find((dir) => existsSync(dir)) ?? candidates[0] ?? 'policies';
+}
+
+/** Defaults, configured dirs, then `<config>/policies`, read even when created after start. */
+export function policyDirs(config: GatewayConfig, paths: Paths): string[] {
+  return [...new Set([defaultPolicyDir(), ...config.policyDirs, join(paths.config, 'policies')])];
 }
 
 export interface LoadedPolicy {

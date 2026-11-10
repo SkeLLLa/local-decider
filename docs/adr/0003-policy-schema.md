@@ -12,7 +12,11 @@ errors). A policy holds:
   each with a `keep` side for truncation, within `state.maxTokens`;
 - ordered `rules` (`when: {question, answer, minConfidence?, minProbability?}` → `action`), first
   match wins, else `default`;
-- `mode` (`off`/`shadow`/`act`, default `shadow`) and an optional cache TTL.
+- `mode` (`off`/`shadow`/`act`, default `shadow`) and an optional cache TTL;
+- an optional `variantOf: <id>`: the policy can answer for `<id>` when the user selects it
+  (amended 2026-11-10). Adapters keep one policy id per decision; the gateway resolves the
+  variant and keeps `<id>`'s mode, so preset names and questions can change without adapter
+  changes.
 
 Actions are `allow`, `ask`, `deny`, `log`, `notify`, `abstain` and `route:<preset>`. All keys are
 sorted before anything is sent to an engine or hashed (the Amazon study saw key order move

@@ -1,5 +1,4 @@
-/** Routing presets (`route:fast|standard|deep`) → a Paseo provider/model/mode, and model lists. */
-import { ROUTING_PRESETS, type RoutingPreset } from './constants.ts';
+/** Routing presets (`route:<preset>`) → a Paseo provider/model/mode, and model lists. */
 
 export interface PresetTarget {
   readonly provider: string;
@@ -13,13 +12,13 @@ export interface PresetSetting {
   readonly modeId: string;
 }
 
-/** `route:deep` → `deep`; anything else (or an unknown preset) → null. */
-export function presetFromAction(action: string): RoutingPreset | null {
+/** `route:deep` → `deep`; anything else → null. */
+export function presetFromAction(action: string): string | null {
   if (!action.startsWith('route:')) {
     return null;
   }
   const name = action.slice('route:'.length);
-  return (ROUTING_PRESETS as readonly string[]).includes(name) ? (name as RoutingPreset) : null;
+  return name === '' ? null : name;
 }
 
 /** `provider/model-id` (model ids may contain `/`) → parts, or null when unmapped/malformed. */
@@ -32,16 +31,23 @@ export function parsePresetModel(value: string): { provider: string; model: stri
 }
 
 export function presetTarget(
-  presets: Readonly<Record<RoutingPreset, PresetSetting>>,
+  presets: Readonly<Record<string, PresetSetting>>,
   action: string,
 ): PresetTarget | null {
   const preset = presetFromAction(action);
-  if (preset === null) {
+  const setting = preset === null || !Object.hasOwn(presets, preset) ? undefined : presets[preset];
+  if (setting === undefined) {
     return null;
   }
-  const setting = presets[preset];
   const parsed = parsePresetModel(setting.model.trim());
   return parsed === null ? null : { ...parsed, modeId: setting.modeId.trim() };
+}
+
+/** The gateway's resolved `route` (`provider/model`, optional mode) as a target, or null. */
+export function routeTarget(route: { model: unknown; mode?: unknown }): PresetTarget | null {
+  const parsed = typeof route.model === 'string' ? parsePresetModel(route.model.trim()) : null;
+  const modeId = typeof route.mode === 'string' ? route.mode.trim() : '';
+  return parsed === null ? null : { ...parsed, modeId };
 }
 
 interface ConfigLike {

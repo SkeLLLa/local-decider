@@ -4,7 +4,9 @@
  */
 import type {
   AgentPermissionResponse,
+  AgentRuntimeInfo,
   AgentTimelineItem,
+  AgentUsage,
   JsonValue,
 } from '@getpaseo/protocol/agent-types';
 
@@ -33,6 +35,10 @@ export interface AgentRefLike {
     requestId: string;
     response: AgentPermissionResponse;
   }): Promise<void>;
+  /** Fetch a fresh snapshot, which fills `lastUsage` and `runtimeInfo`. Absent in some fakes. */
+  refresh?(): Promise<unknown>;
+  readonly lastUsage?: AgentUsage | null;
+  readonly runtimeInfo?: Pick<AgentRuntimeInfo, 'provider' | 'model'> | null;
 }
 
 export interface PaseoLike {

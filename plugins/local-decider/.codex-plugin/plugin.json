@@ -8,6 +8,7 @@
   "license": "Apache-2.0",
   "keywords": ["permissions", "hooks", "decision-model", "local"],
   "hooks": "./hooks/codex-hooks.json",
+  "skills": "./skills/",
   "interface": {
     "displayName": "Local Decider",
     "shortDescription": "Local decision-model approvals and command guard",

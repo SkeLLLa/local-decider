@@ -1,11 +1,11 @@
-import type { LogRecord, ShadowRecord } from '@local-decider/core';
+import type { LogRecord, ShadowRecord, UsageRecord } from '@local-decider/core';
 import assert from 'node:assert/strict';
 import { appendFileSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, it } from 'node:test';
 
 import { ShadowLog } from '../src/shadow.ts';
-import { computeStats, formatStats } from '../src/stats.ts';
+import { computeStats, formatStats, type PolicyStats } from '../src/stats.ts';
 import { tempPaths } from './helpers.ts';
 
 function decision(
@@ -68,6 +68,99 @@ describe('computeStats', () => {
 
   it('reports an empty log', () => {
     assert.equal(formatStats(computeStats([])), 'No decisions logged yet.');
+  });
+});
+
+function usage(decisionId: string, turnId: string, extra: Partial<UsageRecord> = {}): UsageRecord {
+  return {
+    kind: 'usage',
+    ts: '2026-11-10T00:01:00.000Z',
+    decisionId,
+    turnId,
+    inputTokens: 1_000_000,
+    cachedInputTokens: 0,
+    outputTokens: 100_000,
+    ...extra,
+  };
+}
+
+function routing(id: string, extra: Partial<ShadowRecord>): ShadowRecord {
+  return decision(id, 'allow', 0.9, { policy: 'routing', action: 'route:fast', ...extra });
+}
+
+describe('savings', () => {
+  const records: LogRecord[] = [
+    routing('a', { requestedModel: 'claude/opus', routedModel: 'claude/haiku' }),
+    // No requested model: the usage report's model stands in for it in shadow.
+    routing('b', { routedModel: 'claude/haiku' }),
+    routing('c', { requestedModel: 'claude/opus', routedModel: 'claude/opus' }),
+    routing('d', { requestedModel: 'claude/opus', routedModel: 'claude/haiku', enforced: true }),
+    routing('e', { requestedModel: 'claude/opus', routedModel: 'claude/haiku' }),
+    usage('a', '1'),
+    usage('a', '1'),
+    usage('a', '2'),
+    usage('b', '1', { model: 'claude/opus' }),
+    usage('c', '1'),
+    usage('d', '1', { model: 'claude/haiku' }),
+  ];
+
+  it('reports tokens moved without a price table', () => {
+    const [s] = computeStats(records);
+    const potential = s?.savings?.potential;
+    assert.equal(potential?.tasks, 3, 'e has no usage');
+    assert.equal(potential.moved, 2);
+    assert.deepEqual(potential.tokens, { input: 3_000_000, cachedInput: 0, output: 300_000 });
+    assert.equal(potential.savedUsd, undefined);
+    assert.equal(s?.savings?.realized.moved, 1);
+    assert.match(
+      formatStats(computeStats(records)),
+      /potential .*2\/3 tasks on another model, 3\.3M tokens$/m,
+    );
+  });
+
+  it('prices moves when a price table is configured', () => {
+    const pricing = { 'claude/opus': { input: 5, output: 25 }, 'haiku': { input: 1, output: 5 } };
+    const [s] = computeStats(records, pricing);
+    // (5 - 1) * 3 + (25 - 5) * 0.3 = 18
+    assert.ok(Math.abs((s?.savings?.potential.savedUsd ?? 0) - 18) < 1e-9);
+    assert.ok(Math.abs((s?.savings?.realized.savedUsd ?? 0) - 6) < 1e-9);
+    assert.match(formatStats([s as PolicyStats]), /\$18\.00 saved/);
+  });
+
+  it('counts time spent on prompts the policy would have allowed', () => {
+    const [s] = computeStats([
+      decision('p', 'allow', 0.99),
+      decision('q', 'allow', 0.99),
+      decision('r', 'ask', 0.9),
+      {
+        kind: 'outcome',
+        ts: '2026-11-10T00:00:04.000Z',
+        decisionId: 'p',
+        outcome: 'allow',
+        source: 'user',
+      },
+      {
+        kind: 'outcome',
+        ts: '2026-11-10T00:00:10.000Z',
+        decisionId: 'q',
+        outcome: 'deny',
+        source: 'user',
+      },
+      {
+        kind: 'outcome',
+        ts: '2026-11-10T00:00:10.000Z',
+        decisionId: 'r',
+        outcome: 'allow',
+        source: 'user',
+      },
+    ]);
+    assert.deepEqual(s?.promptTime, {
+      answered: 2,
+      userAllowed: 1,
+      waitTotalMs: 14_000,
+      waitP50Ms: 4000,
+    });
+    assert.equal(s?.savings, undefined);
   });
 });
 

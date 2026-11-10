@@ -1,4 +1,20 @@
-import type { Answer, LogRecord, OutcomeRecord, ShadowRecord } from '@local-decider/core';
+import type {
+  Answer,
+  LogRecord,
+  OutcomeRecord,
+  ShadowRecord,
+  UsageRecord,
+} from '@local-decider/core';
+
+import {
+  computePromptTime,
+  computeSavings,
+  groupUsage,
+  type Pricing,
+  type PromptTime,
+  type Savings,
+  type SavingsTotals,
+} from './savings.ts';
 
 const BUCKETS = [0, 0.5, 0.7, 0.8, 0.9, 0.95, 1.000_001] as const;
 
@@ -24,6 +40,10 @@ export interface PolicyStats {
   /** Mean multi-class Brier score over labelled decisions (0 = perfect, 2 = worst). */
   readonly brier?: number;
   readonly reliability: readonly Bucket[];
+  /** Routing policies: tokens moved between models, priced when a price table is configured. */
+  readonly savings?: Savings;
+  /** Policies that allow: time spent on prompts they would have answered. */
+  readonly promptTime?: PromptTime;
 }
 
 function percentile(sorted: readonly number[], p: number): number | undefined {
@@ -80,11 +100,27 @@ function countActions(decisions: readonly ShadowRecord[]): Record<string, number
   return actions;
 }
 
+interface Joined {
+  readonly outcomes: ReadonlyMap<string, OutcomeRecord>;
+  readonly usage: ReadonlyMap<string, readonly UsageRecord[]>;
+  readonly pricing: Pricing;
+}
+
+function extras(decisions: readonly ShadowRecord[], joined: Joined): Partial<PolicyStats> {
+  const savings = computeSavings(decisions, joined.usage, joined.pricing);
+  const promptTime = computePromptTime(decisions, joined.outcomes);
+  return {
+    ...(savings === undefined ? {} : { savings }),
+    ...(promptTime === undefined ? {} : { promptTime }),
+  };
+}
+
 function policyStats(
   policy: string,
   decisions: readonly ShadowRecord[],
-  outcomes: Map<string, OutcomeRecord>,
+  joined: Joined,
 ): PolicyStats {
+  const { outcomes } = joined;
   const latencies = decisions
     .filter((d) => d.error === undefined)
     .map((d) => d.latencyMs)
@@ -115,16 +151,23 @@ function policyStats(
           brier: labelled.reduce((acc, l) => acc + brier(l.answer, l.outcome), 0) / labelled.length,
         }),
     reliability: reliability(labelled),
+    ...extras(decisions, joined),
   };
 }
 
-/** Agreement and calibration per policy from shadow-log records. The latest outcome wins. */
-export function computeStats(records: readonly LogRecord[]): PolicyStats[] {
+/**
+ * Agreement, calibration and savings per policy from shadow-log records. The latest outcome
+ * wins; `pricing` (optional) adds dollar estimates to token savings.
+ */
+export function computeStats(records: readonly LogRecord[], pricing: Pricing = {}): PolicyStats[] {
   const outcomes = new Map<string, OutcomeRecord>();
+  const usage: UsageRecord[] = [];
   const byPolicy = new Map<string, ShadowRecord[]>();
   for (const record of records) {
     if (record.kind === 'outcome') {
       outcomes.set(record.decisionId, record);
+    } else if (record.kind === 'usage') {
+      usage.push(record);
     } else {
       const list = byPolicy.get(record.policy) ?? [];
       list.push(record);
@@ -133,7 +176,9 @@ export function computeStats(records: readonly LogRecord[]): PolicyStats[] {
   }
   return [...byPolicy.entries()]
     .toSorted(([a], [b]) => a.localeCompare(b))
-    .map(([policy, decisions]) => policyStats(policy, decisions, outcomes));
+    .map(([policy, decisions]) =>
+      policyStats(policy, decisions, { outcomes, usage: groupUsage(usage), pricing }),
+    );
 }
 
 function pct(x: number | undefined): string {
@@ -160,6 +205,50 @@ export function formatStats(stats: readonly PolicyStats[]): string {
         `    conf ${b.range}: n=${String(b.n)} mean conf ${b.meanConfidence.toFixed(2)} accuracy ${pct(b.accuracy)}`,
       );
     }
+    lines.push(...savingsLines(s));
   }
   return lines.join('\n');
+}
+
+function tokens(n: number): string {
+  return n >= 1e6 ? `${(n / 1e6).toFixed(1)}M` : n >= 1e3 ? `${(n / 1e3).toFixed(1)}k` : String(n);
+}
+
+function usd(x: number): string {
+  return `${x < 0 ? '-' : ''}$${Math.abs(x).toFixed(2)}`;
+}
+
+function totalsLine(label: string, t: SavingsTotals): string[] {
+  if (t.tasks === 0) {
+    return [];
+  }
+  const moved = t.tokens.input + t.tokens.cachedInput + t.tokens.output;
+  const money =
+    t.savedUsd === undefined
+      ? ''
+      : `, ${usd(t.savedUsd)} saved${t.unpricedMoves > 0 ? ` (${String(t.unpricedMoves)} model pairs unpriced)` : ''}`;
+  return [
+    `  ${label}: ${String(t.moved)}/${String(t.tasks)} tasks on another model, ${tokens(moved)} tokens${money}`,
+    ...t.moves.map(
+      (m) =>
+        `    ${m.from} → ${m.to}: ${String(m.tasks)} tasks${m.savedUsd === undefined ? '' : `, ${usd(m.savedUsd)}`}`,
+    ),
+  ];
+}
+
+function savingsLines(s: PolicyStats): string[] {
+  const lines: string[] = [];
+  if (s.savings !== undefined) {
+    lines.push(
+      ...totalsLine('potential (shadow, upper bound)', s.savings.potential),
+      ...totalsLine('realized', s.savings.realized),
+    );
+  }
+  const p = s.promptTime;
+  if (p !== undefined) {
+    lines.push(
+      `  would-allow prompts you answered: ${String(p.answered)} (${String(p.userAllowed)} allowed), ${(p.waitTotalMs / 1000).toFixed(0)} s total, p50 ${((p.waitP50Ms ?? 0) / 1000).toFixed(1)} s`,
+    );
+  }
+  return lines;
 }

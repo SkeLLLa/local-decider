@@ -35,7 +35,7 @@ untrusted plugin hooks, and asks again whenever the hooks change.
 |---|---|---|
 | `PreToolUse` | Guard deny; `command-risk` deny or ask when enforced | Guard deny; `command-risk` deny when enforced |
 | `PermissionRequest` | `permission` allow when enforced; otherwise the normal prompt | `permission` allow when enforced; otherwise the auto-reviewer or user |
-| `UserPromptSubmit` | `routing` hint as extra context when enforced | Same |
+| `UserPromptSubmit` | `routing` hint as extra context when enforced, naming the mapped model | Same |
 | `Stop` | `turn-outcome`, logged only | Same |
 
 Policies ship in `shadow` mode: the gateway records what it would have done and the hooks change
@@ -54,6 +54,21 @@ nothing and exits 0, so the harness behaves as if the plugin were not installed.
 has a 1500 ms budget; the hook timeout is 5 s.
 
 ## Configuration
+
+Decision settings are shared with Paseo and live in the gateway's
+`~/.config/local-decider/config.yaml`, which the gateway applies as it changes:
+
+- `local-decider policies mode <policy> off|shadow|act` and
+  `local-decider policies use routing <variant>` set policy modes and the routing policy;
+- `local-decider routing map claude-code <preset> <model>` (`haiku`, `sonnet`, `opus` or a full
+  id) and `local-decider routing map codex <preset> <model>` map routing presets. Hooks cannot
+  switch the session model, so the routing hint names the model; Claude Code can pass it to the
+  subagents it starts, and you can switch with `/model`.
+
+The file has a JSON Schema (`local-decider config schema`), so agents can edit it directly. The
+plugin ships two skills for that: `local-decider-settings` (view and change settings) and
+`local-decider-routing-policy` (interview you and write a routing policy for your models, the
+same flow as Paseo's "Write with an agent" button).
 
 Environment variables read by the hook process:
 

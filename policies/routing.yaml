@@ -1,5 +1,7 @@
+# yaml-language-server: $schema=../schemas/policy.schema.json
 # Routing: which model tier should a new agent or task get? `route:<preset>` names a preset the
-# harness adapter maps to provider/model/mode (Paseo settings, or the gateway config).
+# harness maps to a model in config.yaml (`routing.presets.<harness>`). This is the
+# default; `routing-*.yaml` (and user policies with `variantOf: routing`) are selectable variants.
 id: routing
 version: 1
 description: Pick a model tier for a new task from its prompt.

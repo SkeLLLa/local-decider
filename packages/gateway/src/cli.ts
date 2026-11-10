@@ -4,12 +4,22 @@ import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { parseArgs } from 'node:util';
 
+import { authoringPrompt } from './authoring.ts';
 import { bench } from './bench.ts';
+import {
+  configCommand,
+  routingCommand,
+  setMode,
+  SettingsUsageError,
+  useVariant,
+} from './cli-settings.ts';
+import { ConfigFile } from './config-file.ts';
 import { DEFAULT_FLM_MODEL, DEFAULT_PORT, loadConfig, type GatewayConfig } from './config.ts';
 import { defaultFlavor, installStrandsEngine, type InstallFlavor } from './engine-install.ts';
 import { FLM_VERSION, installFlm } from './flm-install.ts';
 import { serveMcpStdio, type McpBackend } from './mcp.ts';
 import { resolvePaths, type Paths } from './paths.ts';
+import { loadPolicies, policyDirs } from './policies.ts';
 import { startGateway } from './runtime.ts';
 import {
   detectManager,
@@ -30,7 +40,17 @@ Usage:
   local-decider engine install --engine fastflowlm [--model d3:nano]  AMD NPU (Linux)
   local-decider decide <policy> [--input JSON] [key=value ...]
   local-decider stats [--json]                      agreement and calibration from the shadow log
-  local-decider policies [check <file>]
+  local-decider policies [check <file>]             list policies, or validate a policy file
+  local-decider policies use <policy> <variant>     answer <policy> with one of its variants
+  local-decider policies mode <policy> off|shadow|act
+  local-decider policies reload                     re-read policy files without a restart
+  local-decider policies prompt [policy]            AI prompt for writing your own variant (routing)
+  local-decider routing                             preset → model per harness
+  local-decider routing map <harness> <preset> <model> [mode] | unmap <harness> <preset>
+  local-decider config [path|schema [dir]|check|reload]  config.yaml location, JSON Schemas, validation
+
+Settings live in config.yaml (\`local-decider config path\`); the gateway applies edits to it and
+to policy files as they happen.
   local-decider bench [--sizes 256,1024,4096] [--runs N]
   local-decider mcp                                 MCP over stdio (proxies to the gateway)
 
@@ -62,12 +82,18 @@ async function gatewayRun(ctx: Context): Promise<void> {
     args: [...ctx.args],
     options: { host: { type: 'string' }, port: { type: 'string' } },
   });
+  const store = ConfigFile.open(ctx.paths);
   const config: GatewayConfig = {
-    ...ctx.config,
+    ...store.current,
     ...(values.host === undefined ? {} : { host: values.host }),
     ...(values.port === undefined ? {} : { port: Number.parseInt(values.port, 10) }),
   };
-  const gateway = await startGateway({ config, paths: ctx.paths });
+  const gateway = await startGateway({
+    config,
+    store,
+    paths: ctx.paths,
+    log: (line) => console.log(line),
+  });
   console.log(
     `local-decider gateway on ${gateway.url} (engine ${config.engine.type}, model ${config.engine.model})`,
   );
@@ -176,23 +202,61 @@ async function decide(ctx: Context): Promise<void> {
 }
 
 async function stats(ctx: Context): Promise<void> {
-  const result = computeStats(new ShadowLog(ctx.paths.logs).read());
+  const result = computeStats(new ShadowLog(ctx.paths.logs).read(), ctx.config.pricing);
   console.log(ctx.args.includes('--json') ? JSON.stringify(result, null, 2) : formatStats(result));
 }
 
-async function policies(ctx: Context): Promise<void> {
-  const [sub, file] = ctx.args;
-  if (sub === 'check' && file !== undefined) {
-    const policy = parsePolicy(readFileSync(file, 'utf8'), file);
-    console.log(
-      `${file}: ok (${policy.id}, ${String(Object.keys(policy.questions).length)} questions, ${String(policy.rules.length)} rules)`,
-    );
-    return;
-  }
-  const res = await fetch(`${gatewayUrl(ctx.config)}/v1/policies`, {
-    signal: AbortSignal.timeout(3000),
+function checkPolicy(file: string): void {
+  const policy = parsePolicy(readFileSync(file, 'utf8'), file);
+  const variant = policy.variantOf === undefined ? '' : `, variant of ${policy.variantOf}`;
+  console.log(
+    `${file}: ok (${policy.id}${variant}, ${String(Object.keys(policy.questions).length)} questions, ${String(policy.rules.length)} rules)`,
+  );
+}
+
+/** POST a control route and print the answer; a gateway error becomes the exit message. */
+async function gatewayPost(ctx: Context, path: string, body: unknown): Promise<void> {
+  const token = process.env['LOCAL_DECIDER_TOKEN'];
+  const res = await fetch(`${gatewayUrl(ctx.config)}${path}`, {
+    method: 'POST',
+    headers: {
+      'content-type': 'application/json',
+      ...(token === undefined ? {} : { authorization: `Bearer ${token}` }),
+    },
+    body: JSON.stringify(body),
+    signal: AbortSignal.timeout(10_000),
   });
-  console.log(JSON.stringify(await res.json(), null, 2));
+  const answer: unknown = await res.json().catch(() => null);
+  if (!res.ok) {
+    const message = (answer as { error?: unknown } | null)?.error;
+    throw new Error(
+      typeof message === 'string' ? message : `gateway answered ${String(res.status)}`,
+    );
+  }
+  console.log(JSON.stringify(answer, null, 2));
+}
+
+async function policies(ctx: Context): Promise<void> {
+  const [sub, first, second] = ctx.args;
+  if (sub === 'check' && first !== undefined) {
+    checkPolicy(first);
+  } else if (sub === 'prompt') {
+    const loaded = loadPolicies(ctx.config, policyDirs(ctx.config, ctx.paths));
+    process.stdout.write(authoringPrompt(first ?? 'routing', loaded, ctx.paths));
+  } else if (sub === 'use' && first !== undefined && second !== undefined) {
+    console.log(useVariant(ctx.paths, first, second));
+  } else if (sub === 'mode' && first !== undefined && second !== undefined) {
+    console.log(setMode(ctx.paths, first, second));
+  } else if (sub === 'reload') {
+    await gatewayPost(ctx, '/v1/policies/reload', {});
+  } else if (sub === undefined) {
+    const res = await fetch(`${gatewayUrl(ctx.config)}/v1/policies`, {
+      signal: AbortSignal.timeout(3000),
+    });
+    console.log(JSON.stringify(await res.json(), null, 2));
+  } else {
+    throw new UsageError();
+  }
 }
 
 async function benchCmd(ctx: Context): Promise<void> {
@@ -257,6 +321,11 @@ async function dispatch(command: string | undefined, ctx: Context): Promise<void
     policies,
     bench: benchCmd,
     mcp,
+    config: async (c) =>
+      c.args[0] === 'reload'
+        ? gatewayPost(c, '/v1/config/reload', {})
+        : console.log(configCommand(c.paths, c.args)),
+    routing: async (c) => console.log(routingCommand(c.paths, c.args)),
   };
   const handler = command === undefined ? undefined : commands[command];
   if (handler === undefined) {
@@ -275,8 +344,8 @@ async function main(argv: readonly string[]): Promise<void> {
   try {
     await dispatch(command, { paths, config: loadConfig(paths), args });
   } catch (error) {
-    if (error instanceof UsageError) {
-      console.error(USAGE);
+    if (error instanceof UsageError || error instanceof SettingsUsageError) {
+      console.error(error.message === '' ? USAGE : `local-decider: ${error.message}`);
       process.exitCode = 2;
       return;
     }

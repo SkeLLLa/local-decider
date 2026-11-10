@@ -44,18 +44,26 @@ This downloads the pinned upstream FastFlowLM portable build into
 `~/.local/share/local-decider/engines/fastflowlm/<version>/`, verifies it against GitHub's
 published SHA-256, runs `flm validate` and pulls `d3:nano`. Then pick the engine and model in
 Settings → Local decider (Paseo) or `POST /v1/engine {"engine":"fastflowlm","model":"d3:mini"}`;
-the choice is saved in `~/.local/share/local-decider/state.json` and survives restarts. An
-`flm` already on `PATH` is found automatically; any tool path or model directory can be
-overridden in settings or under `tools:` / `dirs:` in `config.yaml`.
+the choice is saved as `selection:` in `config.yaml` and survives restarts. An `flm` already on
+`PATH` is found automatically; any tool path or model directory can be set in settings or under
+`tools:` / `dirs:` in `config.yaml`.
 
 The engine loads lazily: the first decision starts it (~5 s on FLM), and it unloads after 15
 idle minutes (`lifecycle: {mode: lazy|eager, idleUnloadMinutes}`).
 
 ## 2. Configuration
 
-`~/.config/local-decider/config.yaml` (all keys optional):
+Every setting lives in `~/.config/local-decider/config.yaml` (all keys optional;
+`local-decider config path` prints the location). Paseo's settings page and the
+`local-decider policies|routing` commands write to it, keeping your comments, and the gateway
+applies edits to it and to `policies/` as they happen; only `host`, `port`, `engine` and
+`decisionTimeoutMs` need a restart. The gateway writes JSON Schemas for this file and for policy
+files to `~/.config/local-decider/schemas/` (`local-decider config schema`; repository copies in
+`schemas/`), so editors and agents can validate edits. `local-decider config check` validates
+the file and every policy. A `state.json` from older versions is folded in once and renamed.
 
 ```yaml
+# yaml-language-server: $schema=schemas/config.schema.json
 host: 127.0.0.1          # anything else requires LOCAL_DECIDER_TOKEN (>= 16 chars)
 port: 8765
 decisionTimeoutMs: 30000 # per decision, queue wait included
@@ -69,10 +77,28 @@ engine:
 #   type: systemone-remote       # any /v1/systemone server (another machine, laya-serve, GLiClass)
 #   url: http://gpu-box:8000
 #   tokenEnv: REMOTE_DECIDER_TOKEN
+selection: { engine: fastflowlm, model: d3:mini }   # set by the settings page; beats engine.type/model
+lifecycle: { mode: lazy, idleUnloadMinutes: 15 }
 policies:
   permission: { mode: shadow }   # off | shadow | act, overrides the policy file
+  routing: { mode: act, variant: routing-budget }   # variant: a policy with variantOf: routing
 policyDirs: []                   # extra dirs; ~/.config/local-decider/policies is added automatically
+routing:
+  presets:                       # route:<preset> → model, per harness
+    paseo:
+      cheap: { model: claude/haiku }              # provider/model, optional mode: <mode id>
+      premium: { model: codex/gpt-5.5, mode: full-access }
+    claude-code:
+      cheap: { model: haiku }                     # named in the hook's hint; Claude Code passes it to subagents
+    codex:
+      premium: { model: gpt-5.5 }
+pricing:                         # optional, USD per million tokens (example values); savings stay in tokens without it
+  claude/claude-opus-4-6: { input: 5, cachedInput: 0.5, output: 25 }
+  claude-haiku-4-5: { input: 1, cachedInput: 0.1, output: 5 }   # a bare id matches any provider
 ```
+
+`pricing` is never fetched or updated for you: copy current list prices from your provider.
+`cachedInput` defaults to `input`.
 
 Secrets never go in this file. For a remote gateway, put `LOCAL_DECIDER_TOKEN=...` in
 `~/.config/local-decider/env` (mode 0600), which the systemd unit reads if present; clients read
@@ -84,6 +110,10 @@ Secrets never go in this file. For a remote gateway, put `LOCAL_DECIDER_TOKEN=..
    *would* have done.
 2. Adapters report outcomes where they can see them (e.g. what the user answered to a
    permission prompt). `local-decider stats` shows agreement, Brier score and reliability per
-   confidence bucket.
-3. When the high-confidence buckets are accurate, set `mode: act` for that policy in
-   `config.yaml` and restart the gateway (`local-decider gateway start`).
+   confidence bucket, the time you spent on prompts a policy would have allowed, and for routing
+   the tokens that ran (or would have run) on another model, in dollars when `pricing` is set.
+   Shadow savings are an upper bound: they assume the routed model would have used the same
+   tokens and succeeded.
+3. When the high-confidence buckets are accurate, switch that policy to `act`:
+   `local-decider policies mode <policy> act`, Paseo's settings page, or `mode: act` under
+   `policies:` in `config.yaml`. The gateway applies it immediately.

@@ -1,13 +1,17 @@
 import {
   HARNESSES,
+  policyRoutes,
   type DecideRequest,
+  type DecisionModels,
   type OutcomeRecord,
   type SystemOneRequest,
+  type UsageRecord,
 } from '@local-decider/core';
 import { timingSafeEqual } from 'node:crypto';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import { totalmem } from 'node:os';
 
+import type { GatewayConfig } from './config.ts';
 import { UnknownPolicyError, type Decider } from './decider.ts';
 import { DownloadError } from './downloads.ts';
 import {
@@ -16,10 +20,14 @@ import {
   parseMode,
   parsePathUpdate,
   parseSelection,
+  parseVariant,
   type EngineControl,
 } from './engine-control.ts';
 import { handleMcpHttp } from './mcp.ts';
 import { KNOWN_MODELS, modelFits } from './models.ts';
+import { withConfiguredRoutes, withRoute } from './routing.ts';
+import type { Pricing } from './savings.ts';
+import { settingsHandler } from './settings-routes.ts';
 import type { ShadowLog } from './shadow.ts';
 import { computeStats } from './stats.ts';
 
@@ -32,6 +40,10 @@ export interface ServerOptions {
   readonly token?: string | undefined;
   /** Runtime model switching; absent in tests that inject an engine. */
   readonly engineControl?: EngineControl | undefined;
+  /** Optional price table: stats then add dollar estimates to token savings. */
+  readonly pricing?: Pricing | undefined;
+  /** Live settings (config.yaml as last loaded): routing presets and pricing. */
+  readonly settings?: (() => GatewayConfig) | undefined;
 }
 
 class HttpError extends Error {
@@ -87,11 +99,42 @@ function parseDecideRequest(body: unknown): DecideRequest {
   }
   const sessionId =
     typeof body['sessionId'] === 'string' ? body['sessionId'].slice(0, 200) : undefined;
+  const models = parseModels(body['models']);
   return {
     harness: harness as DecideRequest['harness'],
     input: body['input'],
     ...(sessionId === undefined ? {} : { sessionId }),
+    ...(models === undefined ? {} : { models }),
   };
+}
+
+/** `provider/model` ids: logged and matched against the price table, never used otherwise. */
+const MODEL_ID = /^[\w.:@+/[\]-]{1,200}$/;
+const MAX_ROUTES = 20;
+
+function modelId(value: unknown): string | undefined {
+  return typeof value === 'string' && MODEL_ID.test(value) ? value : undefined;
+}
+
+/** Tolerant: an invalid `models` field is dropped, never a 400, so decisions still run. */
+function parseModels(value: unknown): DecisionModels | undefined {
+  if (!isRecord(value)) {
+    return undefined;
+  }
+  const requested = modelId(value['requested']);
+  const routes: Record<string, string> = {};
+  const rawRoutes = isRecord(value['routes']) ? value['routes'] : {};
+  for (const [action, model] of Object.entries(rawRoutes).slice(0, MAX_ROUTES)) {
+    const id = modelId(model);
+    if (id !== undefined && action.length <= 100) {
+      routes[action] = id;
+    }
+  }
+  const hasRoutes = Object.keys(routes).length > 0;
+  if (requested === undefined && !hasRoutes) {
+    return undefined;
+  }
+  return { ...(requested === undefined ? {} : { requested }), ...(hasRoutes ? { routes } : {}) };
 }
 
 function parseSystemOne(body: unknown): SystemOneRequest {
@@ -116,6 +159,45 @@ function parseOutcome(body: unknown): OutcomeRecord {
     decisionId: body['decisionId'].slice(0, 100),
     outcome: body['outcome'].slice(0, 100),
     source: source === 'harness' || source === 'heuristic' ? source : 'user',
+  };
+}
+
+/** A token count: a finite, non-negative integer below 10^12. */
+function count(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isInteger(value) && value >= 0 && value < 1e12
+    ? value
+    : undefined;
+}
+
+function parseUsage(body: unknown): UsageRecord {
+  const input = isRecord(body) ? count(body['inputTokens']) : undefined;
+  const output = isRecord(body) ? count(body['outputTokens']) : undefined;
+  if (
+    !isRecord(body) ||
+    typeof body['decisionId'] !== 'string' ||
+    input === undefined ||
+    output === undefined
+  ) {
+    throw new HttpError(
+      400,
+      'expected {decisionId, inputTokens, outputTokens, cachedInputTokens?, turnId?, model?, costUsd?}',
+    );
+  }
+  const turnId = typeof body['turnId'] === 'string' ? body['turnId'].slice(0, 200) : undefined;
+  const model = modelId(body['model']);
+  const cost = body['costUsd'];
+  return {
+    kind: 'usage',
+    ts: new Date().toISOString(),
+    decisionId: body['decisionId'].slice(0, 100),
+    ...(turnId === undefined ? {} : { turnId }),
+    ...(model === undefined ? {} : { model }),
+    inputTokens: input,
+    cachedInputTokens: count(body['cachedInputTokens']) ?? 0,
+    outputTokens: output,
+    ...(typeof cost === 'number' && Number.isFinite(cost) && cost >= 0 && cost < 1e6
+      ? { costUsd: cost }
+      : {}),
   };
 }
 
@@ -211,9 +293,9 @@ type ControlHandler = (
   decider: Decider,
 ) => Promise<[number, unknown]>;
 
-const policyModeRoute = /^\/v1\/policies\/([a-z][a-z0-9_-]{0,63})\/mode$/;
+const policyRoute = /^\/v1\/policies\/([a-z][a-z0-9_-]{0,63})\/(mode|variant)$/;
 
-/** Engine, model, lifecycle, download, validation, path and policy-mode routes. */
+/** Engine, model, lifecycle, download, validation, path and policy routes. */
 const CONTROL_ROUTES: Readonly<Record<string, ControlHandler>> = {
   'GET /v1/engines': async (_req, c) => [200, await c.status()],
   'POST /v1/engine': async (req, c, d) => {
@@ -245,19 +327,40 @@ const CONTROL_ROUTES: Readonly<Record<string, ControlHandler>> = {
     const { key, value } = parsePathUpdate(await readJson(req));
     return [200, await c.setPath(key, value)];
   },
+  'POST /v1/policies/reload': async (_req, c) => [200, { policies: c.reloadPolicies() }],
 };
 
+/** `POST /v1/policies/:id/mode` and `/variant`. */
+function policyHandler(id: string, field: string): ControlHandler {
+  if (field === 'mode') {
+    return async (req, c) => {
+      const mode = parseMode(await readJson(req));
+      c.setPolicyMode(id, mode);
+      return [200, { id, mode }];
+    };
+  }
+  return async (req, c) => {
+    const variant = parseVariant(await readJson(req));
+    c.setPolicyVariant(id, variant);
+    return [200, { id, variant }];
+  };
+}
+
+/** Settings routes (settings-routes.ts) take the parsed body instead of the request. */
+function fromSettings(key: string, path: string): ControlHandler | undefined {
+  const settings = settingsHandler(key, path);
+  return settings === undefined
+    ? undefined
+    : async (req, c, d) =>
+        settings(key.startsWith('POST ') ? await readJson(req) : undefined, c, d);
+}
+
 function controlRoute(key: string, path: string): Handler | undefined {
-  const modeMatch = key.startsWith('POST ') ? policyModeRoute.exec(path) : null;
-  const policyId = modeMatch?.[1];
+  const match = key.startsWith('POST ') ? policyRoute.exec(path) : null;
   const handler: ControlHandler | undefined =
-    policyId === undefined
-      ? CONTROL_ROUTES[key]
-      : async (req, c) => {
-          const mode = parseMode(await readJson(req));
-          c.setPolicyMode(policyId, mode);
-          return [200, { id: policyId, mode }];
-        };
+    match?.[1] === undefined || match[2] === undefined
+      ? (CONTROL_ROUTES[key] ?? fromSettings(key, path))
+      : policyHandler(match[1], match[2]);
   if (handler === undefined) {
     return undefined;
   }
@@ -302,11 +405,16 @@ function route(method: string, path: string): Handler | undefined {
           mode,
           description: policy.description,
           inputKeys: policy.state.sections.map((s) => s.from),
+          routes: policyRoutes(policy),
+          ...(policy.variantOf === undefined
+            ? { variant: decider.activeVariant(policy.id), variants: decider.variantsOf(policy.id) }
+            : { variantOf: policy.variantOf }),
         })),
       );
   }
   if (key === 'GET /v1/stats') {
-    return async (_req, res, { log }) => send(res, 200, computeStats(log.read()));
+    return async (_req, res, { log, pricing, settings }) =>
+      send(res, 200, computeStats(log.read(), settings?.().pricing ?? pricing));
   }
   if (key === 'POST /v1/systemone' || key === 'POST /invocations') {
     return async (req, res, { decider }) =>
@@ -315,6 +423,12 @@ function route(method: string, path: string): Handler | undefined {
         200,
         await decider.systemOne(parseSystemOne(await readJson(req)), requestSignal(res)),
       );
+  }
+  if (key === 'POST /v1/usage') {
+    return async (req, res, { log }) => {
+      log.append(parseUsage(await readJson(req)));
+      send(res, 200, { ok: true });
+    };
   }
   if (key === 'POST /v1/outcomes') {
     return async (req, res, { log }) => {
@@ -329,12 +443,17 @@ function route(method: string, path: string): Handler | undefined {
   const match = method === 'POST' ? decideRoute.exec(path) : null;
   const policy = match?.[1];
   if (policy !== undefined) {
-    return async (req, res, { decider }) =>
+    return async (req, res, { decider, settings }) => {
+      const config = settings?.();
+      const parsed = parseDecideRequest(await readJson(req));
+      const request = config === undefined ? parsed : withConfiguredRoutes(config, parsed);
+      const response = await decider.decide(policy, request, requestSignal(res));
       send(
         res,
         200,
-        await decider.decide(policy, parseDecideRequest(await readJson(req)), requestSignal(res)),
+        config === undefined ? response : withRoute(config, request.harness, response),
       );
+    };
   }
   return undefined;
 }

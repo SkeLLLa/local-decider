@@ -537,12 +537,17 @@ function permissionAllow() {
     hookSpecificOutput: { hookEventName: "PermissionRequest", decision: { behavior: "allow" } }
   });
 }
-function routingContext(preset) {
+var MODEL_ID = /^[\w.:@+/[\]-]{1,200}$/;
+function routingAdvice(harness, model) {
+  return harness === "claude" ? ` Start subagents for it with model "${model}"; to run this session on it, the user can type /model ${model}.` : ` To run this session on it, the user can type /model and pick ${model}.`;
+}
+function routingContext(harness, res) {
+  const preset = res.action.slice("route:".length);
+  const model = res.route?.model;
+  const mapped = model !== void 0 && MODEL_ID.test(model);
+  const text = mapped ? `${PREFIX}: routing suggests the "${preset}" preset (model ${model}) for this task.${routingAdvice(harness, model)}` : `${PREFIX}: routing suggests the "${preset}" model preset for this task.`;
   return json({
-    hookSpecificOutput: {
-      hookEventName: "UserPromptSubmit",
-      additionalContext: `${PREFIX}: routing suggests the "${preset}" model tier for this task.`
-    }
+    hookSpecificOutput: { hookEventName: "UserPromptSubmit", additionalContext: text }
   });
 }
 function reasonOf(res) {
@@ -570,7 +575,7 @@ function translate(harness, event, res) {
     return res.action === "allow" ? permissionAllow() : "";
   }
   if (event === "UserPromptSubmit" && res.action.startsWith("route:")) {
-    return routingContext(res.action.slice("route:".length));
+    return routingContext(harness, res);
   }
   return "";
 }

@@ -1,0 +1,335 @@
+{
+  "$id": "https://raw.githubusercontent.com/SkeLLLa/local-decider/main/schemas/config.schema.json",
+  "title": "local-decider config.yaml",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "$schema": {
+      "description": "Optional JSON Schema reference for editors.",
+      "type": "string"
+    },
+    "host": {
+      "default": "127.0.0.1",
+      "description": "Listen address. Anything but loopback needs LOCAL_DECIDER_TOKEN. Restart to apply.",
+      "type": "string"
+    },
+    "port": {
+      "default": 8765,
+      "description": "Listen port. Restart to apply.",
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 65535
+    },
+    "engine": {
+      "default": {
+        "type": "strands-decider",
+        "model": "StrandsAgents/strands-decider-2B-qwen3.5-v1-2610",
+        "device": "auto",
+        "maxBatch": 8,
+        "extraArgs": [],
+        "startTimeoutSeconds": 900
+      },
+      "description": "The decision-model engine and its options. `selection` picks engine and model at runtime.",
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "strands-decider"
+            },
+            "model": {
+              "default": "StrandsAgents/strands-decider-2B-qwen3.5-v1-2610",
+              "type": "string",
+              "minLength": 1
+            },
+            "device": {
+              "default": "auto",
+              "type": "string",
+              "enum": ["auto", "cpu", "mlx", "mps", "cuda"]
+            },
+            "url": {
+              "type": "string",
+              "format": "uri"
+            },
+            "maxBatch": {
+              "default": 8,
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 64
+            },
+            "extraArgs": {
+              "default": [],
+              "type": "array",
+              "items": {
+                "type": "string",
+                "pattern": "^--[a-z][a-z0-9-]*(?:=[\\w./:-]+)?$|^[\\w./:-]+$"
+              }
+            },
+            "startTimeoutSeconds": {
+              "default": 900,
+              "type": "integer",
+              "minimum": 10,
+              "maximum": 3600
+            }
+          },
+          "required": ["type"],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "systemone-remote"
+            },
+            "url": {
+              "type": "string",
+              "format": "uri"
+            },
+            "model": {
+              "default": "remote",
+              "type": "string"
+            },
+            "tokenEnv": {
+              "type": "string",
+              "pattern": "^[A-Z_][A-Z0-9_]*$"
+            }
+          },
+          "required": ["type", "url"],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "fastflowlm"
+            },
+            "model": {
+              "default": "d3:nano",
+              "type": "string",
+              "pattern": "^[a-z0-9][a-z0-9.-]*:[a-z0-9][a-z0-9.-]*$"
+            },
+            "binary": {
+              "type": "string",
+              "minLength": 1
+            },
+            "url": {
+              "type": "string",
+              "format": "uri"
+            },
+            "pmode": {
+              "default": "performance",
+              "type": "string",
+              "enum": ["powersaver", "balanced", "performance", "turbo"]
+            },
+            "startTimeoutSeconds": {
+              "default": 300,
+              "type": "integer",
+              "minimum": 10,
+              "maximum": 3600
+            }
+          },
+          "required": ["type"],
+          "additionalProperties": false
+        }
+      ]
+    },
+    "selection": {
+      "description": "Engine and model in use, set by the settings pages; beats `engine.type` and `engine.model`.",
+      "type": "object",
+      "properties": {
+        "engine": {
+          "type": "string",
+          "enum": ["strands-decider", "fastflowlm"]
+        },
+        "model": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 300
+        },
+        "device": {
+          "type": "string",
+          "enum": ["auto", "cpu", "mlx", "mps", "cuda"]
+        }
+      },
+      "required": ["engine", "model"],
+      "additionalProperties": false
+    },
+    "policies": {
+      "default": {},
+      "description": "Per-policy mode and variant, by policy id (e.g. `routing`).",
+      "type": "object",
+      "propertyNames": {
+        "type": "string",
+        "pattern": "^[a-z][a-z0-9_-]*$"
+      },
+      "additionalProperties": {
+        "type": "object",
+        "properties": {
+          "mode": {
+            "description": "off: never asked; shadow: logged only; act: adapters may enforce. Unset: the policy file decides.",
+            "type": "string",
+            "enum": ["off", "shadow", "act"]
+          },
+          "variant": {
+            "description": "Id of a policy with `variantOf: <this policy>` that answers instead of it. Unset: the policy itself.",
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9_-]*$"
+          }
+        },
+        "additionalProperties": false,
+        "description": "Settings for one policy, by policy id."
+      }
+    },
+    "policyDirs": {
+      "default": [],
+      "description": "Extra policy directories, read after the defaults and before `<config dir>/policies`; a later id replaces an earlier one.",
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "routing": {
+      "default": {
+        "presets": {}
+      },
+      "description": "How each harness applies `route:<preset>` decisions.",
+      "type": "object",
+      "properties": {
+        "presets": {
+          "default": {},
+          "description": "Harness id → preset name → target. Preset names come from the routing policy in use (`local-decider policies`). A preset without a target changes nothing.",
+          "type": "object",
+          "propertyNames": {
+            "type": "string",
+            "enum": ["paseo", "claude-code", "codex", "mcp", "cli"]
+          },
+          "additionalProperties": {
+            "type": "object",
+            "propertyNames": {
+              "type": "string",
+              "maxLength": 64,
+              "pattern": "^[a-z0-9][a-z0-9_.-]*$"
+            },
+            "additionalProperties": {
+              "type": "object",
+              "properties": {
+                "model": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 300,
+                  "description": "Model the harness switches to or is told about. Paseo: `provider/model` (e.g. `claude/haiku`); Claude Code: `haiku`, `sonnet`, `opus` or a full id; Codex: a model id."
+                },
+                "mode": {
+                  "description": "Paseo only: provider mode id for the new agent; unset keeps the provider default.",
+                  "type": "string",
+                  "maxLength": 200
+                }
+              },
+              "required": ["model"],
+              "additionalProperties": false,
+              "description": "Where one routing preset sends a task in one harness."
+            }
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "lifecycle": {
+      "default": {
+        "mode": "lazy",
+        "idleUnloadMinutes": 15
+      },
+      "description": "lazy: load the model on the first decision and unload it when idle; eager: keep it loaded.",
+      "type": "object",
+      "properties": {
+        "mode": {
+          "default": "lazy",
+          "type": "string",
+          "enum": ["lazy", "eager"]
+        },
+        "idleUnloadMinutes": {
+          "default": 15,
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 1440
+        }
+      },
+      "additionalProperties": false
+    },
+    "tools": {
+      "default": {},
+      "description": "Absolute tool paths; unset = automatic discovery.",
+      "type": "object",
+      "properties": {
+        "flm": {
+          "type": "string",
+          "minLength": 1
+        },
+        "strandsDecider": {
+          "type": "string",
+          "minLength": 1
+        },
+        "uv": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "additionalProperties": false
+    },
+    "dirs": {
+      "default": {},
+      "description": "Model stores; unset = each tool's default (FLM_MODEL_PATH, HF_HUB_CACHE).",
+      "type": "object",
+      "properties": {
+        "flmModels": {
+          "type": "string",
+          "minLength": 1
+        },
+        "hfCache": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "additionalProperties": false
+    },
+    "pricing": {
+      "description": "USD per million tokens by `provider/model` or model id, for savings stats. Never fetched.",
+      "type": "object",
+      "propertyNames": {
+        "type": "string",
+        "minLength": 1
+      },
+      "additionalProperties": {
+        "type": "object",
+        "properties": {
+          "input": {
+            "type": "number",
+            "minimum": 0
+          },
+          "cachedInput": {
+            "type": "number",
+            "minimum": 0
+          },
+          "output": {
+            "type": "number",
+            "minimum": 0
+          }
+        },
+        "required": ["input", "output"],
+        "additionalProperties": false
+      }
+    },
+    "decisionTimeoutMs": {
+      "default": 30000,
+      "description": "Deadline for one decision, queue wait included.",
+      "type": "integer",
+      "minimum": 100,
+      "maximum": 120000
+    }
+  },
+  "additionalProperties": false,
+  "description": "local-decider gateway settings (config.yaml). The gateway reloads this file when it changes."
+}

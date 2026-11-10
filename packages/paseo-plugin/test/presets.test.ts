@@ -7,6 +7,7 @@ import {
   presetFromAction,
   presetModelOptions,
   presetTarget,
+  routeTarget,
   withCurrent,
 } from '../shared/presets.ts';
 
@@ -14,12 +15,14 @@ const presets = {
   fast: { model: 'claude/haiku', modeId: '' },
   standard: { model: '', modeId: '' },
   deep: { model: 'codex/gpt-5.5', modeId: 'full-access' },
+  cheap: { model: 'claude/haiku', modeId: '' },
 };
 
 describe('presets', () => {
   it('parses route actions', () => {
     assert.equal(presetFromAction('route:fast'), 'fast');
-    assert.equal(presetFromAction('route:huge'), null);
+    assert.equal(presetFromAction('route:my-tier'), 'my-tier');
+    assert.equal(presetFromAction('route:'), null);
     assert.equal(presetFromAction('allow'), null);
   });
 
@@ -40,7 +43,20 @@ describe('presets', () => {
       modeId: 'full-access',
     });
     assert.equal(presetTarget(presets, 'route:standard'), null);
+    assert.equal(presetTarget(presets, 'route:cheap')?.model, 'haiku', 'user-defined preset');
+    assert.equal(presetTarget(presets, 'route:huge'), null, 'unknown preset');
+    assert.equal(presetTarget(presets, 'route:constructor'), null, 'no prototype keys');
     assert.equal(presetTarget(presets, 'log'), null);
+  });
+
+  it('turns the gateway route into a target, ignoring malformed ones', () => {
+    assert.deepEqual(routeTarget({ model: 'codex/gpt-5.5', mode: 'auto' }), {
+      provider: 'codex',
+      model: 'gpt-5.5',
+      modeId: 'auto',
+    });
+    assert.equal(routeTarget({ model: 'haiku' }), null, 'not provider/model');
+    assert.equal(routeTarget({ model: 42 }), null);
   });
 
   it('changes only the model on the same provider', () => {

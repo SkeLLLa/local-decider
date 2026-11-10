@@ -12,6 +12,12 @@ import {
 
 const mode = z.enum(PLUGIN_MODES).default('shadow');
 
+/** A routing preset name, as in a policy's `route:<preset>` action. */
+const presetName = z
+  .string()
+  .max(64)
+  .regex(/^[a-z0-9][a-z0-9_.-]*$/);
+
 /** `provider/model` from `providers.listModels()`, or '' for "not mapped". */
 const preset = z
   .object({
@@ -41,7 +47,14 @@ const rows = z
 export const settingsSchema = z.object({
   gatewayUrl: z.string().max(500).default(DEFAULT_GATEWAY_URL),
   modes: z.object({ 'turn-outcome': mode, 'permission': mode, 'routing': mode }).prefault({}),
-  presets: z.object({ fast: preset, standard: preset, deep: preset }).prefault({}),
+  /**
+   * Preset name → target. Names come from the routing policy the gateway runs (any variant, the
+   * user's own included), so this is open-ended; v3's fixed fast/standard/deep keys still parse.
+   */
+  presets: z
+    .record(presetName, preset)
+    .refine((p) => Object.keys(p).length <= 64, { message: 'at most 64 presets' })
+    .default({}),
   injectMcp: z.boolean().default(false),
   /** Ask the gateway to load its model when Paseo (and so this plugin) starts. */
   preloadOnStart: z.boolean().default(false),

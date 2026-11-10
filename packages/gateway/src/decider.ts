@@ -1,6 +1,7 @@
 import {
   buildState,
   canonicalJson,
+  CHARS_PER_TOKEN,
   evaluateRules,
   inputHash,
   normaliseAnswers,
@@ -12,6 +13,7 @@ import {
   type DecideRequest,
   type DecideResponse,
   type Mode,
+  type Policy,
   type ShadowRecord,
   type SystemOneRequest,
   type SystemOneResponse,
@@ -62,7 +64,9 @@ export function renderValue(value: unknown): string {
 /** The policy pipeline: redact → state → cache → engine (serial) → rules → shadow log. */
 export class Decider {
   #engine: Engine;
-  readonly #policies: Map<string, LoadedPolicy>;
+  #policies: Map<string, LoadedPolicy>;
+  /** Policy id → the variant answering for it, when not the policy itself. */
+  readonly #variants = new Map<string, string>();
   readonly #log: ShadowLog;
   readonly #timeoutMs: number;
   readonly #now: () => Date;
@@ -86,10 +90,6 @@ export class Decider {
     return this.#engine;
   }
 
-  /**
-   * Serve later decisions from `next` and drop cached answers, which belong to the old model.
-   * Stopping the old engine is the caller's job; decisions already queued on it fail open.
-   */
   /** Change a policy's run mode in place; false when the policy is unknown. */
   setMode(id: string, mode: Mode): boolean {
     const loaded = this.#policies.get(id);
@@ -100,6 +100,72 @@ export class Decider {
     return true;
   }
 
+  /** Answer `id` with policy `variant` (`id` itself restores the default); false when it can't. */
+  setVariant(id: string, variant: string): boolean {
+    if (!this.#canAnswer(id, variant)) {
+      return false;
+    }
+    if (variant === id) {
+      this.#variants.delete(id);
+    } else {
+      this.#variants.set(id, variant);
+    }
+    return true;
+  }
+
+  /** The policy that answers for `id` now. */
+  activeVariant(id: string): string {
+    return this.#variants.get(id) ?? id;
+  }
+
+  /** Policies that can answer for `id`: itself first, then its variants by id. */
+  variantsOf(id: string): string[] {
+    const variants = [...this.#policies.values()]
+      .filter(({ policy }) => policy.variantOf === id)
+      .map(({ policy }) => policy.id)
+      .toSorted();
+    const base = this.#policies.get(id);
+    return base === undefined || base.policy.variantOf !== undefined ? [] : [id, ...variants];
+  }
+
+  /**
+   * Serve reloaded policies. Cached answers belong to the old questions and are dropped, and a
+   * variant choice whose policy is gone falls back to the default. Modes come with `next`.
+   */
+  replacePolicies(next: ReadonlyMap<string, LoadedPolicy>): void {
+    this.#policies = new Map(next);
+    this.#cache.clear();
+    for (const [id, variant] of this.#variants) {
+      if (!this.#canAnswer(id, variant)) {
+        this.#variants.delete(id);
+      }
+    }
+  }
+
+  #canAnswer(id: string, variant: string): boolean {
+    const base = this.#policies.get(id);
+    if (base === undefined || base.policy.variantOf !== undefined) {
+      return false;
+    }
+    return variant === id || this.#policies.get(variant)?.policy.variantOf === id;
+  }
+
+  /** The requested policy's mode with the selected variant's questions and rules. */
+  #resolve(policyId: string): { mode: Mode; policy: Policy; variant?: string } {
+    const loaded = this.#policies.get(policyId);
+    if (loaded === undefined) {
+      throw new UnknownPolicyError(`unknown policy "${policyId}"`);
+    }
+    const variant = this.#policies.get(this.activeVariant(policyId));
+    return variant === undefined || variant === loaded
+      ? { mode: loaded.mode, policy: loaded.policy }
+      : { mode: loaded.mode, policy: variant.policy, variant: variant.policy.id };
+  }
+
+  /**
+   * Serve later decisions from `next` and drop cached answers, which belong to the old model.
+   * Stopping the old engine is the caller's job; decisions already queued on it fail open.
+   */
   replaceEngine(next: Engine): Engine {
     const previous = this.#engine;
     this.#engine = next;
@@ -130,15 +196,12 @@ export class Decider {
     request: DecideRequest,
     signal: AbortSignal,
   ): Promise<DecideResponse> {
-    const loaded = this.#policies.get(policyId);
-    if (loaded === undefined) {
-      throw new UnknownPolicyError(`unknown policy "${policyId}"`);
-    }
-    const { policy, mode } = loaded;
+    const { policy, mode, variant } = this.#resolve(policyId);
     const decisionId = randomUUID();
     const base = {
       decisionId,
-      policy: policy.id,
+      policy: policyId,
+      ...(variant === undefined ? {} : { variant }),
       mode,
       engine: this.#engine.id,
       model: this.#engine.model,
@@ -164,7 +227,7 @@ export class Decider {
     const result = await this.#answers(
       { state, questions },
       hash,
-      loaded.policy.cache.ttlSeconds,
+      policy.cache.ttlSeconds,
       callerSignal,
       policy.priority,
     );
@@ -180,7 +243,10 @@ export class Decider {
       cached: result.cached,
       ...(result.error === undefined ? {} : { error: result.error }),
     };
-    this.#record(request, response, hash);
+    this.#record(request, response, {
+      hash,
+      stateTokens: Math.ceil(state.length / CHARS_PER_TOKEN),
+    });
     return response;
   }
 
@@ -247,15 +313,23 @@ export class Decider {
     return AbortSignal.any([caller, AbortSignal.timeout(this.#timeoutMs)]);
   }
 
-  #record(request: DecideRequest, response: DecideResponse, hash: string): void {
+  #record(
+    request: DecideRequest,
+    response: DecideResponse,
+    state: { hash: string; stateTokens: number },
+  ): void {
     const record: ShadowRecord = {
       kind: 'decision',
       ts: this.#now().toISOString(),
       decisionId: response.decisionId,
       harness: request.harness,
+      ...(request.sessionId === undefined ? {} : { sessionId: request.sessionId }),
       policy: response.policy,
+      ...(response.variant === undefined ? {} : { variant: response.variant }),
       mode: response.mode,
-      inputHash: hash,
+      inputHash: state.hash,
+      stateTokens: state.stateTokens,
+      ...modelFields(request, response.action),
       answers: response.answers,
       action: response.action,
       enforced: response.enforced,
@@ -266,6 +340,19 @@ export class Decider {
     };
     this.#log.append(record);
   }
+}
+
+/** `requestedModel` and the model `action` routes to, from the request's `models`. */
+function modelFields(
+  request: DecideRequest,
+  action: string,
+): { requestedModel?: string; routedModel?: string } {
+  const requested = request.models?.requested;
+  const routed = request.models?.routes?.[action];
+  return {
+    ...(requested === undefined ? {} : { requestedModel: requested }),
+    ...(routed === undefined ? {} : { routedModel: routed }),
+  };
 }
 
 function errorMessage(error: unknown): string {

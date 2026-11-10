@@ -6,6 +6,7 @@ import { HOOK_POLICIES, SERVICE_ACTIONS } from './constants.ts';
 import { downloadSchema, engineCatalogSchema, validationSchema } from './engines.ts';
 import { IDLE_MINUTES } from './lifecycle.ts';
 import { PATH_KEY, pathEntrySchema } from './paths.ts';
+import { policyPromptSchema, policyVariantsSchema, routingSettingsSchema } from './policies.ts';
 import { decisionRowSchema } from './row.ts';
 import { policyStatsSchema } from './stats.ts';
 
@@ -92,6 +93,57 @@ export const policyModeRpc = defineRpc({
   name: 'policy-mode',
   input: z.object({ policy: z.enum(HOOK_POLICIES), mode: z.enum(['off', 'shadow', 'act']) }),
   output: z.object({ ok: z.boolean(), error: failure }),
+});
+
+/** A hook policy and the variants that can answer for it (`GET /v1/policies`). */
+export const policyVariantsRpc = defineRpc({
+  name: 'policy-variants',
+  input: z.object({ policy: z.enum(HOOK_POLICIES) }),
+  output: policyVariantsSchema,
+});
+
+/** Which variant answers for a hook policy (`POST /v1/policies/:id/variant`); persisted. */
+export const policyVariantRpc = defineRpc({
+  name: 'policy-variant',
+  input: z.object({
+    policy: z.enum(HOOK_POLICIES),
+    variant: z.string().regex(/^[a-z][a-z0-9_-]{0,63}$/),
+  }),
+  output: z.object({ ok: z.boolean(), error: failure }),
+});
+
+/** Re-read the gateway's policy files (`POST /v1/policies/reload`). */
+export const reloadPoliciesRpc = defineRpc({
+  name: 'reload-policies',
+  input: z.object({}),
+  output: z.object({ ok: z.boolean(), error: failure, count: z.number().int() }),
+});
+
+/** Paseo's routing presets from the gateway's config.yaml, and where that file is. */
+export const routingSettingsRpc = defineRpc({
+  name: 'routing-settings',
+  input: z.object({}),
+  output: routingSettingsSchema,
+});
+
+const presetName = z.string().regex(/^[a-z0-9][a-z0-9_.-]{0,63}$/);
+
+/** Map (or with a null model, remove) one Paseo preset in config.yaml. */
+export const routingPresetRpc = defineRpc({
+  name: 'routing-preset',
+  input: z.object({
+    preset: presetName,
+    model: z.string().min(1).max(300).nullable(),
+    mode: z.string().max(200).optional(),
+  }),
+  output: z.object({ ok: z.boolean(), error: failure }),
+});
+
+/** The prompt that has an agent write a variant of a hook policy, and where it should run. */
+export const policyPromptRpc = defineRpc({
+  name: 'policy-prompt',
+  input: z.object({ policy: z.enum(HOOK_POLICIES) }),
+  output: policyPromptSchema,
 });
 
 export const lifecycleRpc = defineRpc({

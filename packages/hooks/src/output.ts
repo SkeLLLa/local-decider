@@ -33,12 +33,29 @@ function permissionAllow(): string {
   });
 }
 
-function routingContext(preset: string): string {
+/** Model ids from config.yaml are quoted into model-facing text: keep them to id characters. */
+const MODEL_ID = /^[\w.:@+/[\]-]{1,200}$/;
+
+/**
+ * Neither harness lets a hook switch the session's model, so the mapped model
+ * (`routing.presets.<harness>` in config.yaml) becomes advice: Claude Code can pass it to the
+ * subagents it starts, and the user can switch with `/model`.
+ */
+function routingAdvice(harness: HookHarness, model: string): string {
+  return harness === 'claude'
+    ? ` Start subagents for it with model "${model}"; to run this session on it, the user can type /model ${model}.`
+    : ` To run this session on it, the user can type /model and pick ${model}.`;
+}
+
+function routingContext(harness: HookHarness, res: DecideResponse): string {
+  const preset = res.action.slice('route:'.length);
+  const model = res.route?.model;
+  const mapped = model !== undefined && MODEL_ID.test(model);
+  const text = mapped
+    ? `${PREFIX}: routing suggests the "${preset}" preset (model ${model}) for this task.${routingAdvice(harness, model)}`
+    : `${PREFIX}: routing suggests the "${preset}" model preset for this task.`;
   return json({
-    hookSpecificOutput: {
-      hookEventName: 'UserPromptSubmit',
-      additionalContext: `${PREFIX}: routing suggests the "${preset}" model tier for this task.`,
-    },
+    hookSpecificOutput: { hookEventName: 'UserPromptSubmit', additionalContext: text },
   });
 }
 
@@ -81,7 +98,7 @@ export function translate(
     return res.action === 'allow' ? permissionAllow() : '';
   }
   if (event === 'UserPromptSubmit' && res.action.startsWith('route:')) {
-    return routingContext(res.action.slice('route:'.length));
+    return routingContext(harness, res);
   }
   // Stop is log only: any Stop output would continue the turn.
   return '';

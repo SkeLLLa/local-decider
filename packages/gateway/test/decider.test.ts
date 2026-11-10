@@ -226,6 +226,67 @@ describe('Decider under load', () => {
   });
 });
 
+const REPO_POLICIES = join(import.meta.dirname, '..', '..', '..', 'policies');
+
+function routingSetup(): Setup {
+  const loaded = new Map<string, LoadedPolicy>();
+  for (const file of ['routing.yaml', 'routing-budget.yaml', 'permission.yaml']) {
+    const source = join(REPO_POLICIES, file);
+    const policy = parsePolicy(readFileSync(source, 'utf8'), file);
+    loaded.set(policy.id, { policy, mode: policy.id === 'routing' ? 'act' : 'off', source });
+  }
+  const engine = new FakeEngine({ cheap: 0.9, standard: 0.05, premium: 0.05 });
+  const log = new ShadowLog(tempPaths().logs);
+  return {
+    decider: new Decider({ engine, policies: loaded, log, decisionTimeoutMs: 2000 }),
+    engine,
+    log,
+  };
+}
+
+const routingReq = { harness: 'cli' as const, input: { project: '/p', prompt: 'rename foo' } };
+
+describe('Decider variants', () => {
+  it('lists a policy and its variants, and nothing for unknown or variant ids', () => {
+    const { decider } = routingSetup();
+    assert.deepEqual(decider.variantsOf('routing'), ['routing', 'routing-budget']);
+    assert.deepEqual(decider.variantsOf('routing-budget'), []);
+    assert.deepEqual(decider.variantsOf('nope'), []);
+    assert.equal(decider.activeVariant('routing'), 'routing');
+  });
+
+  it('answers with the selected variant under the requested policy and its mode', async () => {
+    const { decider, engine, log } = routingSetup();
+    assert.equal(decider.setVariant('routing', 'routing-budget'), true);
+    const res = await decider.decide('routing', routingReq, signal());
+    assert.equal(res.policy, 'routing');
+    assert.equal(res.variant, 'routing-budget');
+    assert.equal(res.action, 'route:cheap');
+    assert.equal(res.enforced, true, 'the mode of routing (act), not of routing-budget (off)');
+    assert.deepEqual(Object.keys(engine.requests[0]?.questions ?? {}), ['tier']);
+    const [record] = log.read();
+    assert.equal(record?.kind === 'decision' ? record.variant : undefined, 'routing-budget');
+  });
+
+  it('refuses policies that are not variants, and restores the default', () => {
+    const { decider } = routingSetup();
+    assert.equal(decider.setVariant('routing', 'permission'), false);
+    assert.equal(decider.setVariant('routing-budget', 'routing'), false);
+    assert.equal(decider.setVariant('routing', 'routing-budget'), true);
+    assert.equal(decider.setVariant('routing', 'routing'), true);
+    assert.equal(decider.activeVariant('routing'), 'routing');
+  });
+
+  it('drops a variant choice whose policy disappears on reload', () => {
+    const { decider } = routingSetup();
+    decider.setVariant('routing', 'routing-budget');
+    decider.replacePolicies(
+      new Map([...decider.policies].filter(([id]) => id !== 'routing-budget')),
+    );
+    assert.equal(decider.activeVariant('routing'), 'routing');
+  });
+});
+
 describe('renderValue', () => {
   it('passes strings, sorts objects, blanks nullish', () => {
     assert.equal(renderValue('x'), 'x');

@@ -19,38 +19,30 @@ function executable(path: string): string {
 }
 
 describe('toolchain discovery', () => {
-  it('prefers settings over config over the managed install over PATH', () => {
+  it('prefers config over the managed install over PATH', () => {
     const paths = tempPaths();
     const bin = join(paths.data, 'bin');
     const onPath = executable(join(bin, 'flm'));
     const env = { PATH: bin };
     const config = parseConfig({});
-    assert.equal(resolveEntry('tools.flm', config, {}, paths, env).source, 'path');
+    assert.equal(resolveEntry('tools.flm', config, paths, env).source, 'path');
     const managed = executable(join(paths.engines, 'fastflowlm', '1.0.12', 'dist', 'flm'));
     executable(join(paths.engines, 'fastflowlm', '1.0.9', 'dist', 'flm'));
     assert.equal(managedFlm(paths), managed, 'newest version wins');
-    assert.equal(resolveEntry('tools.flm', config, {}, paths, env).effective, managed);
+    assert.equal(resolveEntry('tools.flm', config, paths, env).effective, managed);
     const fromConfig = parseConfig({ tools: { flm: onPath } });
-    assert.equal(resolveEntry('tools.flm', fromConfig, {}, paths, env).source, 'config');
-    const fromSettings = resolveEntry(
-      'tools.flm',
-      fromConfig,
-      { paths: { 'tools.flm': onPath } },
-      paths,
-      env,
-    );
-    assert.deepEqual([fromSettings.source, fromSettings.value], ['settings', onPath]);
+    const entry = resolveEntry('tools.flm', fromConfig, paths, env);
+    assert.deepEqual([entry.source, entry.value], ['config', onPath]);
   });
 
   it('reports missing tools and sets model-store env only for overrides', () => {
     const paths = tempPaths();
-    const entry = resolveEntry('tools.uv', parseConfig({}), {}, paths, { PATH: '' });
+    const entry = resolveEntry('tools.uv', parseConfig({}), paths, { PATH: '' });
     assert.deepEqual([entry.source, entry.ok], ['missing', false]);
-    const auto = toolchain(parseConfig({}), {}, paths, { PATH: '' });
+    const auto = toolchain(parseConfig({}), paths, { PATH: '' });
     assert.deepEqual(auto.env, {});
     const custom = toolchain(
       parseConfig({ dirs: { flmModels: paths.data, hfCache: paths.logs } }),
-      {},
       paths,
       { PATH: '' },
     );

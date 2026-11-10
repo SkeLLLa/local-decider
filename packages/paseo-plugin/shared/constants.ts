@@ -24,9 +24,6 @@ export const SIDEBAR_PRESS = ['popover', 'screen'] as const;
 export const ROW_VISIBILITY = ['all', 'notable', 'off'] as const;
 export type RowVisibility = (typeof ROW_VISIBILITY)[number];
 
-export const ROUTING_PRESETS = ['fast', 'standard', 'deep'] as const;
-export type RoutingPreset = (typeof ROUTING_PRESETS)[number];
-
 /** Installs the gateway's user service; shown, never run. */
 export const INSTALL_SERVICE_COMMAND = 'local-decider gateway start';
 

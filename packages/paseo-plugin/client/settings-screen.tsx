@@ -1,5 +1,5 @@
 import type { PluginScreenProps, PluginSurfaceProps } from '@getpaseo/plugin/client';
-import { usePaseo, useRpc, useSettings } from '@getpaseo/plugin/client';
+import { useRpc, useSettings } from '@getpaseo/plugin/client';
 import {
   Loading,
   SettingsAction,
@@ -9,51 +9,20 @@ import {
   SettingsSelect,
   SettingsSwitch,
 } from '@getpaseo/plugin/client/ui';
-import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useState, type ReactNode } from 'react';
 import { Text, View } from 'react-native';
 
-import {
-  HOOK_POLICIES,
-  PLUGIN_MODES,
-  ROUTING_PRESETS,
-  type RoutingPreset,
-} from '../shared/constants.ts';
-import { parsePresetModel, presetModelOptions, withCurrent } from '../shared/presets.ts';
+import { HOOK_POLICIES, PLUGIN_MODES } from '../shared/constants.ts';
 import { policyModeRpc } from '../shared/rpc.ts';
-import { deciderSettings, type DeciderSettings } from '../shared/settings.ts';
+import { deciderSettings } from '../shared/settings.ts';
 import { normaliseBaseUrl } from '../shared/url.ts';
 import { StatusSection } from './engine-state.tsx';
 import { choices, type Save, type SectionProps } from './settings-common.ts';
 import { RowsSection, SidebarSection } from './settings-display.tsx';
 import { EngineSection } from './settings-engines.tsx';
 import { PathsSection } from './settings-paths.tsx';
+import { RoutingSection } from './settings-routing.tsx';
 import { Page, type Theme } from './ui.tsx';
-
-const PROVIDER_MODELS_KEY = ['local-decider', 'provider-models'] as const;
-
-/** Models of every available provider, for the routing preset selects. */
-function useProviderModels(): ReturnType<typeof useQuery<Awaited<ReturnType<typeof loadModels>>>> {
-  const paseo = usePaseo();
-  return useQuery({
-    queryKey: PROVIDER_MODELS_KEY,
-    queryFn: async () => loadModels(paseo),
-    staleTime: Number.POSITIVE_INFINITY,
-    retry: false,
-  });
-}
-
-type Paseo = ReturnType<typeof usePaseo>;
-type ProviderModels = Awaited<ReturnType<Paseo['providers']['listModels']>>;
-
-async function loadModels(paseo: Paseo): Promise<ProviderModels[]> {
-  const available = await paseo.providers.listAvailable();
-  const providers = available.providers.filter((p) => p.available).map((p) => p.provider);
-  const results = await Promise.all(
-    providers.map(async (provider) => paseo.providers.listModels(provider).catch(() => null)),
-  );
-  return results.filter((r) => r !== null);
-}
 
 function GatewaySection({ values, save }: SectionProps): ReactNode {
   const [draft, setDraft] = useState(values.gatewayUrl);
@@ -126,101 +95,6 @@ function PolicySection({ values, save }: SectionProps): ReactNode {
   );
 }
 
-function PresetRows({
-  preset,
-  values,
-  save,
-  modelOptions,
-}: {
-  preset: RoutingPreset;
-  values: DeciderSettings;
-  save: Save;
-  modelOptions: readonly { label: string; value: string }[];
-}): ReactNode {
-  const paseo = usePaseo();
-  const setting = values.presets[preset];
-  const provider = parsePresetModel(setting.model)?.provider ?? null;
-  const modes = useQuery({
-    queryKey: ['local-decider', 'provider-modes', provider],
-    queryFn: async () => (provider === null ? null : paseo.providers.listModes(provider)),
-    enabled: provider !== null,
-    staleTime: Number.POSITIVE_INFINITY,
-    retry: false,
-  });
-  const modeOptions = withCurrent(
-    [
-      { label: 'Provider default', value: '' },
-      ...(modes.data?.modes ?? []).map((m) => ({ label: m.label, value: m.id })),
-    ],
-    setting.modeId,
-  );
-  const update = (next: Partial<DeciderSettings['presets'][RoutingPreset]>): void =>
-    save({ ...values, presets: { ...values.presets, [preset]: { ...setting, ...next } } });
-  return (
-    <>
-      <SettingsSelect
-        label={`route:${preset}`}
-        value={setting.model}
-        options={withCurrent(modelOptions, setting.model)}
-        onValueChange={(model) => update({ model, modeId: '' })}
-      />
-      {provider === null ? null : (
-        <SettingsSelect
-          label={`route:${preset} mode`}
-          value={setting.modeId}
-          options={modeOptions}
-          onValueChange={(modeId) => update({ modeId })}
-        />
-      )}
-    </>
-  );
-}
-
-function RoutingSection({ values, save }: SectionProps): ReactNode {
-  const paseo = usePaseo();
-  const queryClient = useQueryClient();
-  const models = useProviderModels();
-  const [refreshing, setRefreshing] = useState(false);
-  const modelOptions = presetModelOptions(models.data ?? []);
-  const refresh = async (): Promise<void> => {
-    setRefreshing(true);
-    try {
-      await paseo.providers.refresh();
-      await paseo.providers.waitForReady({ timeoutMs: 20_000 });
-    } catch {
-      // Discovery keeps going in the background; list whatever is there now.
-    } finally {
-      await queryClient.invalidateQueries({ queryKey: ['local-decider'] });
-      setRefreshing(false);
-    }
-  };
-  return (
-    <SettingsSection
-      title="Routing presets"
-      info="When routing is enforced, a new agent's provider and model follow the preset the gateway picks. Unmapped presets change nothing."
-    >
-      <SettingsCard>
-        {ROUTING_PRESETS.map((preset) => (
-          <PresetRows
-            key={preset}
-            preset={preset}
-            values={values}
-            save={save}
-            modelOptions={modelOptions}
-          />
-        ))}
-        <SettingsAction
-          label="Provider models"
-          {...(models.error === null ? {} : { hint: String(models.error) })}
-          actionLabel={refreshing || models.isFetching ? 'Refreshing…' : 'Refresh'}
-          disabled={refreshing}
-          onPress={() => void refresh()}
-        />
-      </SettingsCard>
-    </SettingsSection>
-  );
-}
-
 function Message({ theme, text }: { theme: Theme; text: string }): ReactNode {
   return (
     <View style={{ padding: 16 }}>
@@ -229,7 +103,7 @@ function Message({ theme, text }: { theme: Theme; text: string }): ReactNode {
   );
 }
 
-export function SettingsScreen({ theme }: PluginSurfaceProps): ReactNode {
+export function SettingsScreen({ theme, navigation }: PluginSurfaceProps): ReactNode {
   const settings = useSettings(deciderSettings);
   if (settings.status === 'loading') {
     return <Loading />;
@@ -263,7 +137,13 @@ export function SettingsScreen({ theme }: PluginSurfaceProps): ReactNode {
       <PolicySection values={values} save={save} />
       <RowsSection values={values} save={save} />
       <SidebarSection values={values} save={save} />
-      <RoutingSection values={values} save={save} />
+      <RoutingSection
+        theme={theme}
+        navigation={navigation}
+        gatewayUrl={values.gatewayUrl}
+        values={values}
+        save={save}
+      />
       <SettingsSection title="Reset">
         <SettingsCard>
           <SettingsAction

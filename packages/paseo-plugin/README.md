@@ -20,9 +20,38 @@ Install and start the gateway first:
 
 ## Install
 
+Plugins must be enabled on the daemon first (**Settings → Plugins → Enable plugins**). Plugins
+are trusted, unsandboxed code, so read the source before you install. Pick one of these:
+
+**From npm:**
+
 ```sh
 paseo plugin install npm:paseo-plugin-local-decider
 ```
+
+**From GitHub.** The plugin is in the `packages/paseo-plugin` directory of the monorepo, so add
+that path after a `:` at the end of the source:
+
+```sh
+paseo plugin install github:SkeLLLa/local-decider:packages/paseo-plugin
+# or as a full Git URL
+paseo plugin install https://github.com/SkeLLLa/local-decider.git:packages/paseo-plugin
+# pin a branch, tag or commit
+paseo plugin install github:SkeLLLa/local-decider:packages/paseo-plugin --ref main
+```
+
+**From a local checkout.** Give the absolute path to the plugin directory, not the repository
+root:
+
+```sh
+git clone https://github.com/SkeLLLa/local-decider.git
+paseo plugin install (pwd)/local-decider/packages/paseo-plugin
+```
+
+The plugin imports only modules Paseo provides, so none of these need `pnpm install` or a build.
+Run `paseo plugin ls` and check that `local-decider` shows `running`. To upgrade, run
+`paseo plugin update local-decider`. A local directory install loads the files in place, so use
+`paseo plugin reload local-decider` after you pull.
 
 Then open **Settings → Local decider** to pick the engine and model (with download buttons),
 check the NPU, choose each policy's mode, and control the gateway service.

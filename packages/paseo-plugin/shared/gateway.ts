@@ -1,4 +1,10 @@
-import type { DecideRequest, DecideResponse, GatewayHealth, OutcomeSource } from './decision.ts';
+import type {
+  DecideRequest,
+  DecideResponse,
+  GatewayHealth,
+  OutcomeSource,
+  UsageReport,
+} from './decision.ts';
 /**
  * Fail-open client of the local-decider gateway, with the same semantics as core's
  * `GatewayClient`: every call has a hard timeout and resolves to `null` on any failure (gateway
@@ -35,6 +41,8 @@ export interface Gateway {
     source: OutcomeSource,
     options?: CallOptions,
   ): Promise<boolean>;
+  /** `POST /v1/usage`: token counts of one agent turn; false when not recorded. */
+  reportUsage(usage: UsageReport, options?: CallOptions): Promise<boolean>;
   health(options?: CallOptions): Promise<GatewayHealth | null>;
   /** `GET /v1/engines`: engines, their models, downloads and the active selection. */
   engines(options?: CallOptions): Promise<unknown>;
@@ -59,6 +67,25 @@ export interface Gateway {
   setLifecycle(lifecycle: Lifecycle, options?: CallOptions): Promise<PostResult>;
   /** `POST /v1/policies/:id/mode`: the gateway's run mode for a policy; persisted. */
   setPolicyMode(policy: string, mode: string, options?: CallOptions): Promise<PostResult>;
+  /** `GET /v1/policies`: every policy with its routes, and for each base policy its variants. */
+  policies(options?: CallOptions): Promise<unknown>;
+  /** `POST /v1/policies/:id/variant`: which variant answers for a policy; persisted. */
+  setPolicyVariant(policy: string, variant: string, options?: CallOptions): Promise<PostResult>;
+  /** `POST /v1/policies/reload`: re-read the policy files, e.g. after adding one. */
+  reloadPolicies(options?: CallOptions): Promise<PostResult>;
+  /** `GET /v1/config`: config.yaml's path, schemas and content as the gateway applies it. */
+  config(options?: CallOptions): Promise<unknown>;
+  /** `POST /v1/routing/presets`: map a preset for a harness in config.yaml; null model removes. */
+  setRoutingPreset(update: PresetUpdate, options?: CallOptions): Promise<PostResult>;
+  /** `GET /v1/policies/:id/prompt`: the prompt that has an agent write a variant of `id`. */
+  policyPrompt(policy: string, options?: CallOptions): Promise<unknown>;
+}
+
+export interface PresetUpdate {
+  readonly harness: 'paseo';
+  readonly preset: string;
+  readonly model: string | null;
+  readonly mode?: string;
 }
 
 export interface Lifecycle {
@@ -204,6 +231,9 @@ export function createGateway(options: GatewayOptions = {}): Gateway | null {
       const res = await request('POST', '/v1/outcomes', { decisionId, outcome, source }, call);
       return res !== null;
     },
+    async reportUsage(usage, call) {
+      return (await request('POST', '/v1/usage', usage, call)) !== null;
+    },
     async health(call) {
       const res = await request('GET', '/health', undefined, call);
       return isHealth(res) ? res : null;
@@ -218,5 +248,13 @@ export function createGateway(options: GatewayOptions = {}): Gateway | null {
     setLifecycle: async (lifecycle, call) => post('/v1/engine/lifecycle', { ...lifecycle }, call),
     setPolicyMode: async (policy, mode, call) =>
       post(`/v1/policies/${encodeURIComponent(policy)}/mode`, { mode }, call),
+    policies: async (call) => request('GET', '/v1/policies', undefined, call),
+    setPolicyVariant: async (policy, variant, call) =>
+      post(`/v1/policies/${encodeURIComponent(policy)}/variant`, { variant }, call),
+    reloadPolicies: async (call) => post('/v1/policies/reload', {}, call),
+    config: async (call) => request('GET', '/v1/config', undefined, call),
+    setRoutingPreset: async (update, call) => post('/v1/routing/presets', { ...update }, call),
+    policyPrompt: async (policy, call) =>
+      request('GET', `/v1/policies/${encodeURIComponent(policy)}/prompt`, undefined, call),
   };
 }

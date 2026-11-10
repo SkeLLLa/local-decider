@@ -11,3 +11,7 @@ code-blocks = false
 [per-file-ignores]
 "docs/research/*.md" = ["MD013"]
 "docs/review/*.md" = ["MD013"]
+
+# Collapsible sections, e.g. the README screenshots.
+[MD033]
+allowed-elements = ["details", "summary"]

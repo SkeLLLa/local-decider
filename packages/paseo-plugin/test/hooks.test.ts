@@ -253,6 +253,40 @@ describe('agent.create.before', () => {
     assert.deepEqual(gw.calls[0]?.input, { project: '/p', prompt: 'Rename foo' });
   });
 
+  it('applies the route the gateway resolved from config.yaml over plugin settings', async () => {
+    const gw = fakeGateway(() =>
+      response({
+        policy: 'routing',
+        action: 'route:fast',
+        mode: 'act',
+        enforced: true,
+        route: { preset: 'fast', model: 'codex/gpt-mini', mode: 'auto' },
+      }),
+    );
+    const out = await createRoutingHandler(deps(routingAct, gw))(createRequest('Rename'), {
+      signal,
+    });
+    assert.equal(out?.config.provider, 'codex');
+    assert.equal(out?.config.model, 'gpt-mini');
+    assert.equal(out?.config.modeId, 'auto');
+  });
+
+  it('applies a preset of a user-written routing variant', async () => {
+    const gw = fakeGateway(() =>
+      response({
+        policy: 'routing',
+        variant: 'routing-mine',
+        action: 'route:cheap',
+        mode: 'act',
+        enforced: true,
+      }),
+    );
+    const mine = { ...routingAct, presets: { cheap: { model: 'codex/gpt-mini', modeId: '' } } };
+    const out = await createRoutingHandler(deps(mine, gw))(createRequest('Docs'), { signal });
+    assert.equal(out?.config.provider, 'codex');
+    assert.equal(out?.config.model, 'gpt-mini');
+  });
+
   it('changes nothing when unmapped, not enforced, without a prompt, or on failure', async () => {
     const cases = [
       [routingAct, response({ action: 'route:standard', mode: 'act', enforced: true })],

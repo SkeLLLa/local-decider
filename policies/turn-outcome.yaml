@@ -1,3 +1,4 @@
+# yaml-language-server: $schema=../schemas/policy.schema.json
 # Turn outcome: when an agent turn ends, did it finish, get stuck, need the user, or fail?
 id: turn-outcome
 version: 1

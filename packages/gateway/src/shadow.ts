@@ -3,8 +3,9 @@ import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync } from
 import { join } from 'node:path';
 
 const FILE_PATTERN = /^decisions-\d{4}-\d{2}-\d{2}\.jsonl$/;
+const KINDS = new Set<string>(['decision', 'outcome', 'usage']);
 
-/** Append-only JSONL, one file per UTC day. Holds hashes, answers and actions; never state text. */
+/** Append-only JSONL, one file per UTC day. Holds hashes, answers, actions and token counts; never state text. */
 export class ShadowLog {
   readonly #dir: string;
 
@@ -53,7 +54,9 @@ function parseLine(line: string): LogRecord | undefined {
   }
   try {
     const value = JSON.parse(line) as { kind?: unknown };
-    return value.kind === 'decision' || value.kind === 'outcome' ? (value as LogRecord) : undefined;
+    return typeof value.kind === 'string' && KINDS.has(value.kind)
+      ? (value as LogRecord)
+      : undefined;
   } catch {
     return undefined;
   }

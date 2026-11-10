@@ -1,0 +1,39 @@
+# yaml-language-server: $schema=../schemas/policy.schema.json
+# Routing variant: spend as little as possible. Leans on the cheapest tier and keeps the premium
+# tier for work a cheaper model would likely get wrong. Select it with
+# `local-decider policies use routing routing-budget` or in a harness's settings.
+id: routing-budget
+version: 1
+description: Pick the cheapest model that can do the task; premium only when it clearly needs it.
+variantOf: routing
+mode: shadow
+priority: high
+cache:
+  ttlSeconds: 600
+state:
+  maxTokens: 1500
+  sections:
+    - { label: Project, from: project, keep: head }
+    - { label: Task prompt, from: prompt, keep: middle }
+questions:
+  tier:
+    type: choice
+    instructions: >-
+      Choose the cheapest model tier likely to complete the coding task in the prompt without
+      mistakes. Prefer a cheaper tier when unsure between two.
+    criteria:
+      cheap: >-
+        Routine work: questions, lookups, renames, formatting, docs, tests for existing code, or a
+        small fix in one or two files.
+      standard: A feature or bug fix across several files with clear requirements.
+      premium: >-
+        Hard work a cheaper model would likely get wrong: architecture, concurrency, security, a
+        bug that resisted earlier attempts, or a large refactor.
+rules:
+  - when: { question: tier, answer: premium, minConfidence: 0.7 }
+    action: route:premium
+  - when: { question: tier, answer: cheap, minConfidence: 0.4 }
+    action: route:cheap
+  - when: { question: tier, answer: standard, minConfidence: 0.4 }
+    action: route:standard
+default: route:cheap

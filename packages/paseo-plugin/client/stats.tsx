@@ -13,7 +13,14 @@ import type { ReactNode } from 'react';
 import { View } from 'react-native';
 
 import { statsRpc } from '../shared/rpc.ts';
-import { actionSummary, formatMs, formatPercent, type PolicyStats } from '../shared/stats.ts';
+import {
+  actionSummary,
+  formatMs,
+  formatPercent,
+  promptTimeSummary,
+  savingsSummary,
+  type PolicyStats,
+} from '../shared/stats.ts';
 import { Button, Page, type Theme, Value } from './ui.tsx';
 
 function policyHint(s: PolicyStats): string {
@@ -48,6 +55,32 @@ function PolicyRow({ stats, theme }: { stats: PolicyStats; theme: Theme }): Reac
   );
 }
 
+/** Savings lines under a policy: potential (shadow) and realized (enforced), when any. */
+function SavingsRows({ stats }: { stats: PolicyStats }): ReactNode {
+  const potential = stats.savings === null ? '' : savingsSummary(stats.savings.potential);
+  const realized = stats.savings === null ? '' : savingsSummary(stats.savings.realized);
+  const prompts = promptTimeSummary(stats.promptTime);
+  return (
+    <>
+      {potential === '' ? null : (
+        <SettingsRow
+          label={`${stats.policy}: potential savings`}
+          hint={`${potential} — upper bound: assumes the routed model would use the same tokens and succeed`}
+        />
+      )}
+      {realized === '' ? null : (
+        <SettingsRow label={`${stats.policy}: realized savings`} hint={realized} />
+      )}
+      {prompts === '' ? null : (
+        <SettingsRow
+          label={`${stats.policy}: prompts it would have allowed`}
+          hint={`${prompts} spent answering them`}
+        />
+      )}
+    </>
+  );
+}
+
 /**
  * `GET /v1/stats` through the daemon: per-policy volume, latency and agreement with the answers
  * reported back (feedback buttons, human permission answers).
@@ -65,7 +98,7 @@ export function StatsSection({ theme }: { theme: Theme }): ReactNode {
   return (
     <SettingsSection
       title="Shadow statistics"
-      info="Agreement compares each decision with the answer reported back: your feedback in chat rows and your answers to permission prompts. The same report is available as `local-decider stats`."
+      info="Agreement compares each decision with the answer reported back: your feedback in chat rows and your answers to permission prompts. Savings count the tokens of agents routing sent (or would send) to another model; dollars appear when the gateway config has a `pricing` table. The same report is available as `local-decider stats`."
       trailing={
         <Button
           theme={theme}
@@ -87,7 +120,12 @@ export function StatsSection({ theme }: { theme: Theme }): ReactNode {
         ) : data.policies.length === 0 ? (
           <SettingsRow label="No decisions logged yet" />
         ) : (
-          data.policies.map((p) => <PolicyRow key={p.policy} stats={p} theme={theme} />)
+          data.policies.map((p) => (
+            <View key={p.policy}>
+              <PolicyRow stats={p} theme={theme} />
+              <SavingsRows stats={p} />
+            </View>
+          ))
         )}
         {data?.ok === true ? (
           <SettingsAction

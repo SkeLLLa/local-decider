@@ -9,10 +9,13 @@ export {
   HARNESSES,
   type DecideRequest,
   type DecideResponse,
+  type DecisionModels,
   type Harness,
   type LogRecord,
   type OutcomeRecord,
   type ShadowRecord,
+  type UsageRecord,
+  type RouteTarget,
 } from './decision.ts';
 export { inputHash } from './hash.ts';
 export {
@@ -21,6 +24,7 @@ export {
   parsePolicy,
   PolicyError,
   policyQuestions,
+  policyRoutes,
   policySchema,
   policySections,
   type Action,

@@ -17,6 +17,7 @@ export type Mode = (typeof MODES)[number];
  */
 const ACTION_PATTERN = /^(?:allow|ask|deny|log|abstain|notify|route:[a-z0-9][a-z0-9_.-]*)$/;
 export type Action = string;
+const ROUTE_PREFIX = 'route:';
 
 const ID_PATTERN = /^[a-z][a-z0-9_-]*$/;
 const sentence = z.string().trim().min(1).max(600);
@@ -43,56 +44,109 @@ const scoreSchema = z.strictObject({
   criteria: z.array(sentence).min(2).max(10),
 });
 
-const questionSchema = z.discriminatedUnion('type', [noulSchema, choiceSchema, scoreSchema]);
+const questionSchema = z
+  .discriminatedUnion('type', [noulSchema, choiceSchema, scoreSchema])
+  .describe(
+    'noul: yes/no (answers `true`/`false`); choice: one of 2..255 options (answers the option id); score: ordered levels (answers the level text). Criteria: short, mutually exclusive, with concrete examples.',
+  );
 
 const sectionSchema = z.strictObject({
   label: z.string().min(1).max(80),
   /** Key of the harness input to render into this section. */
-  from: z.string().regex(/^[A-Za-z][A-Za-z0-9_]*$/),
-  keep: z.enum(['head', 'tail', 'middle']).default('tail'),
+  from: z
+    .string()
+    .regex(/^[A-Za-z][A-Za-z0-9_]*$/)
+    .describe('Key of the harness input rendered here, e.g. `prompt`, `project`, `history`.'),
+  keep: z
+    .enum(['head', 'tail', 'middle'])
+    .default('tail')
+    .describe('Which part survives truncation.'),
 });
 
 const ruleSchema = z.strictObject({
   when: z.strictObject({
     question: z.string().regex(ID_PATTERN),
     answer: z.string().min(1),
-    minConfidence: z.number().min(0).max(1).optional(),
-    minProbability: z.number().min(0).max(1).optional(),
+    minConfidence: z
+      .number()
+      .min(0)
+      .max(1)
+      .optional()
+      .describe('Normalised confidence: 0 = uniform, 1 = certain.'),
+    minProbability: z
+      .number()
+      .min(0)
+      .max(1)
+      .optional()
+      .describe('Probability of the named answer.'),
   }),
-  action: z.string().regex(ACTION_PATTERN),
+  action: z
+    .string()
+    .regex(ACTION_PATTERN)
+    .describe('allow, ask, deny, log, notify, abstain, or route:<preset>.'),
 });
 
 export const policySchema = z
   .strictObject({
-    id: z.string().regex(ID_PATTERN),
+    id: z.string().regex(ID_PATTERN).describe('Policy id; also the file name (`<id>.yaml`).'),
     version: z.literal(1),
-    description: z.string().min(1),
-    mode: z.enum(MODES).default('shadow'),
+    description: z.string().min(1).describe('One line: what this decides.'),
+    /**
+     * Id of the policy this one can stand in for. Adapters keep asking for that id; the gateway
+     * answers with whichever variant the user selected (the policy with that id by default).
+     */
+    variantOf: z
+      .string()
+      .regex(ID_PATTERN)
+      .optional()
+      .describe('Id of the policy this one can answer for when selected (e.g. `routing`).'),
+    mode: z
+      .enum(MODES)
+      .default('shadow')
+      .describe('Default run mode; config.yaml `policies.<id>.mode` overrides it.'),
     /**
      * Engine queue priority. Engines answer one request at a time, so policies a hook waits on
      * (`high`) go ahead of background ones (`low`, e.g. turn outcomes) instead of timing out.
      */
-    priority: z.enum(['high', 'normal', 'low']).default('normal'),
+    priority: z
+      .enum(['high', 'normal', 'low'])
+      .default('normal')
+      .describe('Engine queue priority: `high` for decisions a hook waits on.'),
     /** Harness ids this policy applies to; empty = all. */
     harnesses: z.array(z.string().regex(ID_PATTERN)).default([]),
-    state: z.strictObject({
-      maxTokens: z.number().int().min(128).max(32_000).default(3000),
-      sections: z.array(sectionSchema).min(1),
-    }),
+    state: z
+      .strictObject({
+        maxTokens: z.number().int().min(128).max(32_000).default(3000),
+        sections: z.array(sectionSchema).min(1),
+      })
+      .describe(
+        'What the model reads: input keys in order, least relevant first, within maxTokens.',
+      ),
     questions: z
       .record(z.string().regex(ID_PATTERN), questionSchema)
       .refine((q) => Object.keys(q).length >= 1, {
         message: 'a policy needs at least one question',
       }),
     /** First matching rule wins. */
-    rules: z.array(ruleSchema).default([]),
+    rules: z.array(ruleSchema).default([]).describe('Checked in order; the first match wins.'),
     /** Action when no rule matches or the engine gave no answer. */
-    default: z.string().regex(ACTION_PATTERN).default('abstain'),
+    default: z
+      .string()
+      .regex(ACTION_PATTERN)
+      .default('abstain')
+      .describe('Action when no rule matches or the engine failed.'),
     cache: z
       .strictObject({ ttlSeconds: z.number().int().min(0).max(86_400).default(0) })
       .default({ ttlSeconds: 0 }),
   })
   .superRefine((policy, ctx) => {
+    if (policy.variantOf === policy.id) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['variantOf'],
+        message: 'a policy cannot be its own variant',
+      });
+    }
     for (const [i, rule] of policy.rules.entries()) {
       const question = policy.questions[rule.when.question];
       if (question === undefined) {
@@ -192,4 +246,13 @@ export function evaluateRules(policy: Policy, answers: Answers): RuleMatch {
   return rule === undefined
     ? { action: policy.default, rule: -1 }
     : { action: rule.action, rule: index };
+}
+
+/** Preset names the policy can route to (`route:<preset>` in its rules or default), in order. */
+export function policyRoutes(policy: Policy): string[] {
+  const actions = [...policy.rules.map((rule) => rule.action), policy.default];
+  const routes = actions
+    .filter((action) => action.startsWith(ROUTE_PREFIX))
+    .map((action) => action.slice(ROUTE_PREFIX.length));
+  return [...new Set(routes)];
 }

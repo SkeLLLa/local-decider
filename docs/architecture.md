@@ -41,10 +41,15 @@ user unit on Linux, a launchd agent on macOS) or `local-decider gateway run` in 
 | `POST /v1/systemone` | Strands/Jev/Laya-compatible pass-through to the active engine (keys sorted, secrets redacted) |
 | `POST /v1/decide/:policy` | run a policy on structured harness input → `DecideResponse` (`packages/core/src/decision.ts`) |
 | `POST /v1/outcomes` | adapters report what actually happened, for agreement and calibration |
+| `POST /v1/usage` | adapters report one agent turn's token counts for the decision that applied to the agent, for savings |
 | `GET /health`, `GET /ping` | engine state, model, p50/p95 latency |
 | `GET /models` | known decision models (`StrandsAgents/*`), the active model and device, and whether the engine can switch |
-| `POST /v1/engine` | `{model, device?}`: restart a spawned strands-decider engine on another known model until the gateway restarts (`config.yaml` stays the default); 409 for a remote or `engine.url` engine |
-| `GET /v1/policies` | loaded policies with effective modes |
+| `POST /v1/engine` | `{engine?, model, device?}`: switch a spawned engine to another known model; saved as `selection` in `config.yaml`; 409 for a remote or `engine.url` engine |
+| `GET /v1/policies` | loaded policies with effective modes, routes, and variants |
+| `POST /v1/policies/:id/mode`, `/variant`, `POST /v1/policies/reload` | change a policy's mode or variant (written to `config.yaml`), re-read policy files |
+| `GET /v1/policies/:id/prompt` | `{prompt, cwd}`: the prompt that has an agent write a variant of `:id` (routing) |
+| `GET /v1/config`, `POST /v1/config/reload` | `config.yaml`'s path, schema paths and applied content; re-read it after an outside edit |
+| `POST /v1/routing/presets` | `{harness, preset, model, mode?}`: map a preset in `config.yaml` (`model: null` removes it) |
 | `POST /mcp` | MCP (streamable HTTP) with a `decide` tool; `local-decider mcp` is the stdio form |
 
 - Binds `127.0.0.1:8765` with no auth. Binding any other address requires
@@ -79,11 +84,27 @@ rollout. Every policy ships in `shadow`. Adapters change harness behaviour only 
 `enforced` is true.
 
 Records go to `~/.local/share/local-decider/logs/decisions-YYYY-MM-DD.jsonl`:
-`{kind: "decision", ts, decisionId, harness, policy, mode, inputHash, answers, action, enforced,
-engine, model, latencyMs, error?}`. Adapters later append `{kind: "outcome", decisionId,
-outcome, source}` through `/v1/outcomes`. No state text is logged, only its hash, so the log
-never holds prompts, code or (unredacted) secrets. `local-decider stats` joins the two kinds and
-reports agreement, Brier score and reliability per confidence bucket.
+`{kind: "decision", ts, decisionId, harness, sessionId?, policy, mode, inputHash, stateTokens,
+requestedModel?, routedModel?, answers, action, enforced, engine, model, latencyMs, error?}`.
+Adapters later append `{kind: "outcome", decisionId, outcome, source}` through `/v1/outcomes`
+and `{kind: "usage", decisionId, turnId?, model?, inputTokens, cachedInputTokens,
+outputTokens, costUsd?}` through `/v1/usage`. No state text is logged, only its hash, so the log
+never holds prompts, code or (unredacted) secrets. `local-decider stats` joins the three kinds
+and reports agreement, Brier score and reliability per confidence bucket, plus savings
+(`gateway/src/savings.ts`):
+
+- **Routing**: a decide request may carry `models: {requested, routes}`, the model the agent
+  uses unchanged and the model each route action switches to. With usage reported for the agent,
+  stats sum the tokens of tasks routed to another model: `potential` for shadow decisions (the
+  task ran on the requested model), `realized` for enforced ones. The optional `pricing` table
+  in `config.yaml` prices both sides; without it savings stay in tokens. Shadow figures are an
+  upper bound: a cheaper model may need more turns or fail.
+- **Prompts**: shadow `allow` decisions the user answered, and the time from the decision to
+  the answer (capped at 10 minutes each).
+
+The Paseo plugin reports usage from the agent's `lastUsage` after each turn, for agents a
+routing decision created (linked by cwd and title between `agent.create.before` and `.after`, in
+memory).
 
 ## Engines (ADR-0002)
 

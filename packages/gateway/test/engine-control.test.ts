@@ -1,8 +1,9 @@
 import assert from 'node:assert/strict';
-import { chmodSync, mkdirSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, it } from 'node:test';
 
+import { ConfigFile, MemoryConfigStore } from '../src/config-file.ts';
 import { parseConfig, type EngineConfig } from '../src/config.ts';
 import { Decider } from '../src/decider.ts';
 import {
@@ -15,10 +16,9 @@ import {
 } from '../src/engine-control.ts';
 import type { Engine, EngineHealth } from '../src/engines/types.ts';
 import type { Paths } from '../src/paths.ts';
-import { loadPolicies } from '../src/policies.ts';
+import { defaultPolicyDir, loadPolicies, policyDirs } from '../src/policies.ts';
 import { startGateway } from '../src/runtime.ts';
 import { ShadowLog } from '../src/shadow.ts';
-import { loadState } from '../src/state.ts';
 import { FakeEngine, tempPaths, testConfig } from './helpers.ts';
 
 class ModelEngine implements Engine {
@@ -82,14 +82,19 @@ function setup(options: SetupOptions = {}): Setup {
   const paths = options.paths ?? tempPaths();
   fakeFlm(paths);
   fakeStrands(paths);
-  const config = parseConfig({ engine: { type: 'strands-decider', ...options.engine } });
+  const store =
+    options.persist === true
+      ? ConfigFile.open(paths)
+      : new MemoryConfigStore(
+          parseConfig({ engine: { type: 'strands-decider', ...options.engine } }),
+        );
+  const config = store.current;
   const created: ModelEngine[] = [];
   const control = new EngineControl({
-    config,
+    store,
     paths,
     env: { PATH: '' },
     totalMemory: options.totalMemory ?? 1e12,
-    persist: options.persist ?? false,
     installed: async (ids) => new Map(ids.map((id) => [id, options.installed ?? true])),
     create: (c) => {
       const next = new ModelEngine(c);
@@ -99,12 +104,22 @@ function setup(options: SetupOptions = {}): Setup {
   });
   const decider = new Decider({
     engine: control.engine,
-    policies: loadPolicies(config),
+    policies: loadPolicies(config, policyDirs(config, paths)),
     log: new ShadowLog(paths.logs),
     decisionTimeoutMs: 1000,
   });
   control.bind(decider);
   return { control, decider, created, paths };
+}
+
+/** A copy of the shipped routing policy under a new id, as a user variant. */
+function writeUserVariant(paths: Paths, id: string): void {
+  const source = readFileSync(join(defaultPolicyDir(), 'routing.yaml'), 'utf8');
+  mkdirSync(join(paths.config, 'policies'), { recursive: true });
+  writeFileSync(
+    join(paths.config, 'policies', `${id}.yaml`),
+    source.replace('id: routing', `id: ${id}\nvariantOf: routing`),
+  );
 }
 
 const E2B = 'StrandsAgents/strands-decider-E2B-gemma4-v1-2610';
@@ -176,21 +191,115 @@ describe('EngineControl switching', () => {
 });
 
 describe('EngineControl state', () => {
-  it('persists the selection, lifecycle and policy modes, and restores them', async () => {
+  it('writes the selection, lifecycle and policy modes to config.yaml, and restores them', async () => {
     const paths = tempPaths();
     const first = setup({ paths, persist: true });
     await first.control.select({ engine: 'fastflowlm', model: 'd3:nano' });
     first.control.setLifecycle({ lifecycle: 'eager', idleUnloadMinutes: 30 });
     first.control.setPolicyMode('permission', 'act');
-    const state = loadState(paths);
-    assert.deepEqual(state.selection, { engine: 'fastflowlm', model: 'd3:nano' });
-    assert.deepEqual(state.lifecycle, { lifecycle: 'eager', idleUnloadMinutes: 30 });
-    assert.deepEqual(state.policyModes, { permission: 'act' });
+    const saved = ConfigFile.open(paths).current;
+    assert.deepEqual(saved.selection, { engine: 'fastflowlm', model: 'd3:nano' });
+    assert.deepEqual(saved.lifecycle, { mode: 'eager', idleUnloadMinutes: 30 });
+    assert.deepEqual(saved.policies, { permission: { mode: 'act' } });
 
     const second = setup({ paths, persist: true });
     assert.equal(second.control.current()?.engine, 'fastflowlm');
     assert.equal(second.control.engine.lifecycle.lifecycle, 'eager');
     assert.equal(second.decider.policies.get('permission')?.mode, 'act');
+  });
+
+  it('reloads a new user variant and persists choosing it', () => {
+    const paths = tempPaths();
+    const first = setup({ paths, persist: true });
+    assert.throws(() => first.control.setPolicyVariant('routing', 'routing-mine'), /not a variant/);
+    writeUserVariant(paths, 'routing-mine');
+    assert.ok(first.control.reloadPolicies().includes('routing-mine'));
+    first.control.setPolicyVariant('routing', 'routing-mine');
+    assert.deepEqual(ConfigFile.open(paths).current.policies, {
+      routing: { variant: 'routing-mine' },
+    });
+
+    const second = setup({ paths, persist: true });
+    assert.equal(second.decider.activeVariant('routing'), 'routing-mine');
+    second.control.setPolicyVariant('routing', 'routing');
+    assert.deepEqual(ConfigFile.open(paths).current.policies, {}, 'empty sections are dropped');
+  });
+
+  it('applies an outside edit of config.yaml: variant, mode, lifecycle and presets', async () => {
+    const paths = tempPaths();
+    const { control, decider } = setup({ paths, persist: true });
+    mkdirSync(paths.config, { recursive: true });
+    writeFileSync(
+      join(paths.config, 'config.yaml'),
+      [
+        '# mine',
+        'policies:',
+        '  routing: { mode: act, variant: routing-budget }',
+        'lifecycle: { mode: eager }',
+        'routing:',
+        '  presets:',
+        '    claude-code: { cheap: { model: haiku } }',
+        '',
+      ].join('\n'),
+    );
+    assert.deepEqual(await control.reloadConfig(), { changed: true, notes: [] });
+    assert.equal(decider.activeVariant('routing'), 'routing-budget');
+    assert.equal(decider.policies.get('routing')?.mode, 'act');
+    assert.equal(control.engine.lifecycle.lifecycle, 'eager');
+    assert.equal(control.settings.routing.presets['claude-code']?.['cheap']?.model, 'haiku');
+    assert.deepEqual(await control.reloadConfig(), { changed: false, notes: [] });
+  });
+
+  it('keeps comments when the settings pages write, and refuses invalid outside edits', async () => {
+    const paths = tempPaths();
+    const { control } = setup({ paths, persist: true });
+    const file = join(paths.config, 'config.yaml');
+    mkdirSync(paths.config, { recursive: true });
+    writeFileSync(file, '# keep me\nport: 8765 # and me\n');
+    await control.reloadConfig();
+    control.setRoutingPreset('paseo', 'cheap', { model: 'claude/haiku' });
+    const text = readFileSync(file, 'utf8');
+    assert.match(text, /yaml-language-server: \$schema=schemas\/config\.schema\.json/);
+    assert.match(text, /# keep me/);
+    assert.match(text, /port: 8765 # and me/);
+    assert.match(text, /cheap:\s+model: claude\/haiku/);
+    writeFileSync(file, 'port: nope\n');
+    await assert.rejects(control.reloadConfig(), /port/);
+    assert.equal(control.settings.routing.presets.paseo?.['cheap']?.model, 'claude/haiku');
+  });
+
+  it('folds a pre-YAML state.json into config.yaml once', () => {
+    const paths = tempPaths();
+    mkdirSync(paths.data, { recursive: true });
+    writeFileSync(
+      join(paths.data, 'state.json'),
+      JSON.stringify({
+        selection: { engine: 'fastflowlm', model: 'd3:nano' },
+        lifecycle: { lifecycle: 'eager', idleUnloadMinutes: 20 },
+        paths: { 'dirs.hfCache': '/tmp', 'bogus.key': '/x' },
+        policyModes: { permission: 'act', bad: 'loud' },
+        policyVariants: { routing: 'routing-budget' },
+      }),
+    );
+    const config = ConfigFile.open(paths).current;
+    assert.deepEqual(config.selection, { engine: 'fastflowlm', model: 'd3:nano' });
+    assert.deepEqual(config.lifecycle, { mode: 'eager', idleUnloadMinutes: 20 });
+    assert.equal(config.dirs.hfCache, '/tmp');
+    assert.deepEqual(config.policies, {
+      permission: { mode: 'act' },
+      routing: { variant: 'routing-budget' },
+    });
+    assert.equal(existsSync(join(paths.data, 'state.json')), false);
+    assert.equal(existsSync(join(paths.data, 'state.json.migrated')), true);
+  });
+
+  it('keeps the old policies when a reloaded file is invalid', () => {
+    const paths = tempPaths();
+    const { control, decider } = setup({ paths });
+    mkdirSync(join(paths.config, 'policies'), { recursive: true });
+    writeFileSync(join(paths.config, 'policies', 'broken.yaml'), 'id: [unclosed');
+    assert.throws(() => control.reloadPolicies(), /invalid YAML/);
+    assert.ok(decider.policies.has('routing'));
   });
 
   it('rejects unknown policies for mode changes', () => {
@@ -219,14 +328,13 @@ describe('EngineControl state', () => {
     await assert.rejects(control.setPath('tools.flm', '/bin/sh'), /named flm/);
     const flm = fakeFlm(paths);
     const entry = await control.setPath('tools.flm', flm);
-    assert.equal(entry.source, 'settings');
+    assert.equal(entry.source, 'config');
     assert.equal(entry.ok, true);
     assert.equal((await control.setPath('tools.flm', null)).source, 'managed');
     const remote = new EngineControl({
-      config: parseConfig({}),
+      store: new MemoryConfigStore(parseConfig({})),
       paths,
       pathsEditable: false,
-      persist: false,
       create: (c) => new ModelEngine(c),
     });
     await assert.rejects(remote.setPath('tools.flm', flm), /loopback/);
@@ -275,6 +383,56 @@ describe('request parsing', () => {
 });
 
 describe('control routes', () => {
+  it('serve config.yaml, preset mapping, resolved routes and the authoring prompt', async () => {
+    const { control, paths } = setup();
+    const gw = await startGateway({ config: testConfig(), paths, engineControl: control, env: {} });
+    const post = (path: string, body: unknown): Promise<Response> =>
+      fetch(`${gw.url}${path}`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+    try {
+      const mapped = await post('/v1/routing/presets', {
+        harness: 'claude-code',
+        preset: 'deep',
+        model: 'opus',
+      });
+      assert.deepEqual(await mapped.json(), {
+        harness: 'claude-code',
+        presets: { deep: { model: 'opus' } },
+      });
+      assert.equal(
+        (await post('/v1/routing/presets', { harness: 'x', preset: 'deep', model: 'a' })).status,
+        400,
+      );
+      const described = (await (await fetch(`${gw.url}/v1/config`)).json()) as {
+        policyDir: string;
+        config: { routing: { presets: Record<string, unknown> } };
+      };
+      assert.equal(described.policyDir, join(paths.config, 'policies'));
+      assert.deepEqual(described.config.routing.presets, {
+        'claude-code': { deep: { model: 'opus' } },
+      });
+      await post('/v1/routing/presets', { harness: 'claude-code', preset: 'deep', model: null });
+      assert.deepEqual(control.settings.routing.presets, {});
+
+      const prompt = (await (await fetch(`${gw.url}/v1/policies/routing/prompt`)).json()) as {
+        prompt: string;
+        cwd: string;
+      };
+      assert.equal(prompt.cwd, paths.config);
+      assert.match(prompt.prompt, /variantOf: routing/);
+      assert.equal((await fetch(`${gw.url}/v1/policies/permission/prompt`)).status, 400);
+      assert.deepEqual(await (await post('/v1/config/reload', {})).json(), {
+        changed: false,
+        notes: [],
+      });
+    } finally {
+      await gw.close();
+    }
+  });
+
   it('answer 409 when the engine cannot switch', async () => {
     const gw = await startGateway({
       config: testConfig(),

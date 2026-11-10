@@ -9,6 +9,37 @@ async function json(res: Response): Promise<Record<string, unknown>> {
   return (await res.json()) as Record<string, unknown>;
 }
 
+describe('routing presets per harness', () => {
+  it('attaches the harness target of a routing action and fills models for savings', async () => {
+    const paths = tempPaths();
+    const gw = await startGateway({
+      config: testConfig({
+        policies: { routing: { mode: 'act' } },
+        routing: { presets: { 'claude-code': { fast: { model: 'haiku' } } } },
+      }),
+      paths,
+      engine: new FakeEngine({ fast: 0.9, standard: 0.05, deep: 0.05 }),
+      env: {},
+    });
+    const decide = async (harness: string): Promise<Record<string, unknown>> =>
+      json(
+        await fetch(`${gw.url}/v1/decide/routing`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ harness, input: { prompt: 'rename foo' } }),
+        }),
+      );
+    try {
+      const claude = await decide('claude-code');
+      assert.equal(claude['action'], 'route:fast');
+      assert.deepEqual(claude['route'], { preset: 'fast', model: 'haiku' });
+      assert.equal((await decide('codex'))['route'], undefined, 'codex has no mapping');
+    } finally {
+      await gw.close();
+    }
+  });
+});
+
 describe('gateway HTTP', () => {
   let gw: Gateway;
   const engine = new FakeEngine({ done: 0.9, needs_input: 0.05, stuck: 0.03, failed: 0.02 });
@@ -45,8 +76,21 @@ describe('gateway HTTP', () => {
       'command-risk',
       'permission',
       'routing',
+      'routing-budget',
+      'routing-task-kind',
       'turn-outcome',
     ]);
+    const routing = policies.find((p) => p.id === 'routing') as Record<string, unknown>;
+    assert.deepEqual(routing['routes'], ['fast', 'deep', 'standard']);
+    assert.equal(routing['variant'], 'routing');
+    assert.deepEqual(routing['variants'], ['routing', 'routing-budget', 'routing-task-kind']);
+    const budget = policies.find((p) => p.id === 'routing-budget') as Record<string, unknown>;
+    assert.equal(budget['variantOf'], 'routing');
+  });
+
+  it('policy variant and reload routes need a switchable engine', async () => {
+    assert.equal((await post('/v1/policies/routing/variant', { variant: 'x' })).status, 409);
+    assert.equal((await post('/v1/policies/reload', {})).status, 409);
   });
 
   it('POST /v1/decide/:policy runs a policy', async () => {
@@ -104,6 +148,40 @@ describe('gateway HTTP', () => {
       labelled: number;
     }[];
     assert.equal(stats.find((s) => s.policy === 'turn-outcome')?.labelled, 1);
+  });
+
+  it('records usage against a decision and reports token savings', async () => {
+    const decision = await json(
+      await post('/v1/decide/turn-outcome', {
+        harness: 'cli',
+        input: { lastMessage: 'ok' },
+        models: {
+          requested: 'claude/claude-opus-4-6[1m]',
+          routes: { log: 'claude/haiku', bad: 'no spaces allowed' },
+        },
+      }),
+    );
+    const usage = {
+      decisionId: decision['decisionId'],
+      turnId: 't1',
+      model: 'claude/claude-opus-4-6[1m]',
+      inputTokens: 1000,
+      cachedInputTokens: 5000,
+      outputTokens: 200,
+    };
+    assert.equal((await post('/v1/usage', usage)).status, 200);
+    assert.equal((await post('/v1/usage', usage)).status, 200, 'a repeated turn counts once');
+    assert.equal((await post('/v1/usage', { ...usage, inputTokens: -1 })).status, 400);
+    const stats = (await (await fetch(`${gw.url}/v1/stats`)).json()) as {
+      policy: string;
+      savings?: {
+        potential: { moved: number; tokens: { input: number }; moves: { from: string }[] };
+      };
+    }[];
+    const potential = stats.find((s) => s.policy === 'turn-outcome')?.savings?.potential;
+    assert.equal(potential?.moved, 1);
+    assert.equal(potential.tokens.input, 1000);
+    assert.equal(potential.moves[0]?.from, 'claude/claude-opus-4-6[1m]');
   });
 
   it('serves MCP tools/list and decide', async () => {

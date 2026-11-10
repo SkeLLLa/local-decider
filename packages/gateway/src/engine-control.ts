@@ -1,7 +1,11 @@
-import { MODES, type Mode } from '@local-decider/core';
+import { MODES, PolicyError, type Mode } from '@local-decider/core';
+import { mkdirSync } from 'node:fs';
 import { totalmem } from 'node:os';
+import { join } from 'node:path';
 
+import { authoringPrompt } from './authoring.ts';
 import { CatalogStatus, type Validation } from './catalog-status.ts';
+import type { ConfigEdit, ConfigStore } from './config-file.ts';
 import {
   DEVICES,
   engineDefaults,
@@ -12,7 +16,7 @@ import {
 import type { Decider } from './decider.ts';
 import { DownloadError, Downloads, type Download } from './downloads.ts';
 import { createEngine } from './engines/index.ts';
-import { ManagedEngine, type Lifecycle, type LifecycleOptions } from './engines/lazy.ts';
+import { ManagedEngine, type LifecycleOptions } from './engines/lazy.ts';
 import type { Engine } from './engines/types.ts';
 import {
   catalogModel,
@@ -23,7 +27,7 @@ import {
   type CatalogEngine,
 } from './models.ts';
 import type { Paths } from './paths.ts';
-import { loadState, saveState, type GatewayState } from './state.ts';
+import { loadPolicies, policyDirs, type LoadedPolicy } from './policies.ts';
 import {
   checkPath,
   PATH_KEYS,
@@ -105,6 +109,14 @@ export function parseMode(body: unknown): Mode {
   return mode as Mode;
 }
 
+export function parseVariant(body: unknown): string {
+  const variant = isRecord(body) ? body['variant'] : undefined;
+  if (typeof variant !== 'string' || !/^[a-z][a-z0-9_-]{0,63}$/.test(variant)) {
+    throw new EngineSwitchError(400, 'variant must be a policy id');
+  }
+  return variant;
+}
+
 export function parsePathUpdate(body: unknown): { key: PathKey; value: string | null } {
   const record = isRecord(body) ? body : {};
   const { key, value } = record;
@@ -118,7 +130,8 @@ export function parsePathUpdate(body: unknown): { key: PathKey; value: string | 
 }
 
 export interface EngineControlOptions {
-  readonly config: GatewayConfig;
+  /** Where settings are read and every settings-page change is written (config.yaml). */
+  readonly store: ConfigStore;
   readonly paths: Paths;
   readonly env?: NodeJS.ProcessEnv;
   /** False behind a token (remote mode): tool paths can't be changed over the network. */
@@ -127,34 +140,39 @@ export interface EngineControlOptions {
   readonly create?: (config: EngineConfig, paths: Paths, tools: Toolchain) => Engine;
   readonly totalMemory?: number;
   readonly installed?: (models: readonly string[]) => Promise<Map<string, boolean>>;
-  readonly persist?: boolean;
 }
 
-function lifecycleFrom(config: GatewayConfig, state: GatewayState): LifecycleOptions {
+function lifecycleFrom(config: GatewayConfig): LifecycleOptions {
   return {
-    lifecycle: (state.lifecycle?.lifecycle ?? config.lifecycle.mode) as Lifecycle,
-    idleUnloadMinutes: state.lifecycle?.idleUnloadMinutes ?? config.lifecycle.idleUnloadMinutes,
+    lifecycle: config.lifecycle.mode,
+    idleUnloadMinutes: config.lifecycle.idleUnloadMinutes,
   };
+}
+
+/** Settings that only take effect when the gateway starts. */
+function startupKey(config: GatewayConfig): string {
+  return JSON.stringify([config.host, config.port, config.engine, config.decisionTimeoutMs]);
 }
 
 /**
  * Owns the engine: which one runs (switchable at runtime between strands-decider and
- * FastFlowLM, persisted in state.json), its lifecycle (lazy or eager), tool paths, model
- * downloads and FLM validation. config.yaml stays the default the state falls back to.
+ * FastFlowLM), its lifecycle (lazy or eager), tool paths, model downloads and FLM validation,
+ * and policy modes and variants. Every change is written to config.yaml, and a changed
+ * config.yaml is applied with `applyConfig`.
  */
 export class EngineControl {
   readonly switchable: boolean;
   readonly pathsEditable: boolean;
-  readonly #config: GatewayConfig;
+  readonly #store: ConfigStore;
   readonly #paths: Paths;
   readonly #env: NodeJS.ProcessEnv;
   readonly #create: NonNullable<EngineControlOptions['create']>;
   readonly #memory: number;
-  readonly #persist: boolean;
   readonly #installedOverride: EngineControlOptions['installed'];
   readonly #downloads = new Downloads();
   readonly #status: CatalogStatus;
-  #state: GatewayState;
+  /** The config last applied, to tell what an edit of config.yaml changed. */
+  #applied: GatewayConfig;
   #tools: Toolchain;
   #selected: EngineSelection | null;
   #engine: ManagedEngine;
@@ -162,21 +180,30 @@ export class EngineControl {
   #pending: Promise<void> = Promise.resolve();
 
   constructor(options: EngineControlOptions) {
-    const { config, paths } = options;
-    this.#config = config;
+    const { store, paths } = options;
+    const config = store.current;
+    this.#store = store;
+    this.#applied = config;
     this.#paths = paths;
     this.#env = options.env ?? process.env;
     this.#create = options.create ?? ((c, p, t) => createEngine(c, p, t));
     this.#memory = options.totalMemory ?? totalmem();
-    this.#persist = options.persist ?? true;
     this.#installedOverride = options.installed;
     this.pathsEditable = options.pathsEditable ?? true;
-    this.#state = this.#persist ? loadState(paths) : {};
-    this.#tools = toolchain(config, this.#state, paths, this.#env);
+    this.#tools = toolchain(config, paths, this.#env);
     this.#status = new CatalogStatus(this.#tools, this.#hfCache());
     this.switchable = config.engine.type !== 'systemone-remote' && config.engine.url === undefined;
     this.#selected = this.switchable ? this.#initialSelection() : null;
     this.#engine = this.#build(this.#selected);
+  }
+
+  get #config(): GatewayConfig {
+    return this.#store.current;
+  }
+
+  /** The settings in effect (config.yaml with the settings pages' changes). */
+  get settings(): GatewayConfig {
+    return this.#store.current;
   }
 
   /** The engine to serve; replaced on every switch. */
@@ -186,9 +213,7 @@ export class EngineControl {
 
   bind(decider: Decider): void {
     this.#decider = decider;
-    for (const [id, mode] of Object.entries(this.#state.policyModes ?? {})) {
-      decider.setMode(id, mode);
-    }
+    this.#applyPolicyState(decider);
     if (this.#tools.flm !== undefined) {
       void this.#status.validate('fastflowlm');
     }
@@ -244,13 +269,149 @@ export class EngineControl {
     if (this.#decider === undefined || !this.#decider.setMode(id, mode)) {
       throw new EngineSwitchError(400, `unknown policy "${id}"`);
     }
-    this.#save({ ...this.#state, policyModes: { ...this.#state.policyModes, [id]: mode } });
+    this.#save([{ path: ['policies', id, 'mode'], value: mode }]);
+  }
+
+  /** Answer policy `id` with policy `variant` (`id` itself = the default); persisted. */
+  setPolicyVariant(id: string, variant: string): void {
+    if (this.#decider === undefined || !this.#decider.setVariant(id, variant)) {
+      throw new EngineSwitchError(400, `"${variant}" is not a variant of policy "${id}"`);
+    }
+    this.#save([
+      { path: ['policies', id, 'variant'], value: variant === id ? undefined : variant },
+    ]);
+  }
+
+  /** Where the settings live and what they are, for `GET /v1/config`. */
+  // fallow-ignore-next-line unused-class-member -- called through the settings-routes table
+  describeSettings(): Record<string, unknown> {
+    const schemas = join(this.#paths.config, 'schemas');
+    return {
+      file: this.#store.file ?? null,
+      schemas: {
+        config: join(schemas, 'config.schema.json'),
+        policy: join(schemas, 'policy.schema.json'),
+      },
+      policyDir: join(this.#paths.config, 'policies'),
+      config: this.#config,
+    };
+  }
+
+  /** Re-read config.yaml after an outside edit and apply it. */
+  async reloadConfig(): Promise<{ changed: boolean; notes: string[] }> {
+    let changed: boolean;
+    try {
+      changed = this.#store.reload?.() ?? false;
+    } catch (error) {
+      throw new EngineSwitchError(400, error instanceof Error ? error.message : String(error));
+    }
+    return { changed, notes: changed ? await this.applyConfig() : [] };
+  }
+
+  /** The authoring prompt for a variant of policy `id`, and the directory an agent should work in. */
+  // fallow-ignore-next-line unused-class-member -- called through the settings-routes table
+  policyPrompt(
+    id: string,
+    policies: ReadonlyMap<string, LoadedPolicy>,
+  ): { prompt: string; cwd: string } {
+    let prompt: string;
+    try {
+      prompt = authoringPrompt(id, policies, this.#paths);
+    } catch (error) {
+      throw new EngineSwitchError(400, error instanceof Error ? error.message : String(error));
+    }
+    mkdirSync(join(this.#paths.config, 'policies'), { recursive: true, mode: 0o700 });
+    return { prompt, cwd: this.#paths.config };
+  }
+
+  /** Point `preset` at `target` for `harness`, or remove it with null; persisted. */
+  setRoutingPreset(
+    harness: string,
+    preset: string,
+    target: { model: string; mode?: string } | null,
+  ): void {
+    this.#save([{ path: ['routing', 'presets', harness, preset], value: target ?? undefined }]);
+  }
+
+  /** Re-read the policy directories, e.g. after adding a policy; saved modes and variants stay. */
+  reloadPolicies(): string[] {
+    if (this.#decider === undefined) {
+      throw new EngineSwitchError(409, 'the gateway has no policies to reload');
+    }
+    let next: ReturnType<typeof loadPolicies>;
+    try {
+      next = loadPolicies(this.#config, policyDirs(this.#config, this.#paths));
+    } catch (error) {
+      throw new EngineSwitchError(
+        400,
+        error instanceof PolicyError ? error.message : String(error),
+      );
+    }
+    this.#decider.replacePolicies(next);
+    this.#applyPolicyState(this.#decider);
+    return [...next.keys()];
+  }
+
+  /** Modes come with the loaded policies (config.yaml beats the file); variants are set here. */
+  #applyPolicyState(decider: Decider): void {
+    for (const [id, settings] of Object.entries(this.#config.policies)) {
+      if (settings.mode !== undefined) {
+        decider.setMode(id, settings.mode);
+      }
+      decider.setVariant(id, settings.variant ?? id);
+    }
   }
 
   setLifecycle(options: LifecycleOptions): LifecycleOptions {
     this.#engine.setLifecycle(options);
-    this.#save({ ...this.#state, lifecycle: options });
+    this.#save([
+      { path: ['lifecycle', 'mode'], value: options.lifecycle },
+      { path: ['lifecycle', 'idleUnloadMinutes'], value: options.idleUnloadMinutes },
+    ]);
     return options;
+  }
+
+  /**
+   * Apply a config.yaml that changed on disk: policies, lifecycle, tool paths and the engine
+   * selection take effect now. Returns what needs a restart instead (empty when nothing).
+   */
+  async applyConfig(): Promise<string[]> {
+    const previous = this.#applied;
+    const config = this.#config;
+    this.#applied = config;
+    if (this.#decider !== undefined) {
+      this.reloadPolicies();
+    }
+    if (JSON.stringify(previous.lifecycle) !== JSON.stringify(config.lifecycle)) {
+      this.#engine.setLifecycle(lifecycleFrom(config));
+    }
+    const toolsChanged =
+      JSON.stringify([previous.tools, previous.dirs]) !==
+      JSON.stringify([config.tools, config.dirs]);
+    if (toolsChanged) {
+      this.#retool();
+    }
+    const wanted = this.switchable ? this.#initialSelection() : null;
+    if (wanted !== null && !this.#same(wanted)) {
+      await this.select({
+        engine: wanted.engine,
+        model: wanted.model,
+        ...(wanted.device === null ? {} : { device: wanted.device }),
+      });
+    }
+    return startupKey(previous) === startupKey(config)
+      ? []
+      : ['host, port, engine or decisionTimeoutMs changed: restart the gateway to apply'];
+  }
+
+  /** Rebuild the toolchain from the config and restart the engine on it. */
+  #retool(): void {
+    this.#tools = toolchain(this.#config, this.#paths, this.#env);
+    this.#status.reset(this.#tools, this.#hfCache());
+    if (this.#selected !== null) {
+      const sel = this.#selected;
+      this.#pending = this.#pending.then(() => this.#apply(sel, true)).catch(() => undefined);
+    }
   }
 
   async setPath(key: PathKey, value: string | null): Promise<PathEntry> {
@@ -260,20 +421,10 @@ export class EngineControl {
     if (value !== null) {
       await this.#checkPathValue(key, value);
     }
-    const paths = { ...this.#state.paths };
-    if (value === null) {
-      delete paths[key];
-    } else {
-      paths[key] = value;
-    }
-    this.#save({ ...this.#state, paths });
-    this.#tools = toolchain(this.#config, this.#state, this.#paths, this.#env);
-    this.#status.reset(this.#tools, this.#hfCache());
-    if (this.#selected !== null) {
-      const sel = this.#selected;
-      this.#pending = this.#pending.then(() => this.#apply(sel, true)).catch(() => undefined);
-    }
-    return resolveEntry(key, this.#config, this.#state, this.#paths, this.#env);
+    this.#save([{ path: key.split('.'), value: value ?? undefined }]);
+    this.#applied = this.#config;
+    this.#retool();
+    return resolveEntry(key, this.#config, this.#paths, this.#env);
   }
 
   download(engine: string, model: string): Download {
@@ -326,7 +477,7 @@ export class EngineControl {
         recommended: m.recommended === true,
       })),
       downloads: this.#downloads.list(),
-      paths: resolveAll(this.#config, this.#state, this.#paths, this.#env),
+      paths: resolveAll(this.#config, this.#paths, this.#env),
       pathsEditable: this.pathsEditable,
     };
   }
@@ -368,8 +519,8 @@ export class EngineControl {
       model: engine.model,
       device: engine.type === 'strands-decider' ? engine.device : null,
     };
-    const saved = this.#state.selection;
-    const savedEngine = saved?.engine as CatalogEngine | undefined;
+    const saved = this.#config.selection;
+    const savedEngine = saved?.engine;
     if (
       saved === undefined ||
       savedEngine === undefined ||
@@ -405,7 +556,7 @@ export class EngineControl {
     const life =
       sel === null
         ? { lifecycle: 'eager' as const, idleUnloadMinutes: 15 }
-        : lifecycleFrom(this.#config, this.#state);
+        : lifecycleFrom(this.#config);
     return new ManagedEngine(inner, life);
   }
 
@@ -463,14 +614,15 @@ export class EngineControl {
     this.#engine = engine;
     this.#selected = next;
     this.#decider?.replaceEngine(engine);
-    this.#save({
-      ...this.#state,
-      selection: {
-        engine: next.engine,
-        model: next.model,
-        ...(next.device === null ? {} : { device: next.device }),
-      },
-    });
+    const selection = {
+      engine: next.engine,
+      model: next.model,
+      ...(next.device === null ? {} : { device: next.device }),
+    };
+    if (JSON.stringify(this.#config.selection) !== JSON.stringify(selection)) {
+      this.#save([{ path: ['selection'], value: selection }]);
+      this.#applied = this.#config;
+    }
     await previous.stop().catch(() => undefined);
     void engine.start();
   }
@@ -497,16 +649,14 @@ export class EngineControl {
   }
 
   #hfCache(): string {
-    return (
-      resolveEntry('dirs.hfCache', this.#config, this.#state, this.#paths, this.#env).effective ??
-      ''
-    );
+    return resolveEntry('dirs.hfCache', this.#config, this.#paths, this.#env).effective ?? '';
   }
 
-  #save(state: GatewayState): void {
-    this.#state = state;
-    if (this.#persist) {
-      saveState(this.#paths, state);
+  #save(edits: readonly ConfigEdit[]): void {
+    try {
+      this.#store.update(edits);
+    } catch (error) {
+      throw new EngineSwitchError(400, error instanceof Error ? error.message : String(error));
     }
   }
 }

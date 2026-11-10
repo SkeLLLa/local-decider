@@ -7,6 +7,7 @@ import {
   evaluateRules,
   parsePolicy,
   PolicyError,
+  policyRoutes,
   policySections,
   type Answer,
   type Policy,
@@ -86,6 +87,30 @@ describe('parsePolicy', () => {
       '{ type: score, instructions: Rate., criteria: [Low] }',
     );
     assert.throws(() => parsePolicy(score), PolicyError);
+  });
+});
+
+describe('variants and routes', () => {
+  it('accepts variantOf but not a policy naming itself', () => {
+    assert.equal(parsePolicy(`${MINIMAL}variantOf: other\n`).variantOf, 'other');
+    assert.throws(() => parsePolicy(`${MINIMAL}variantOf: demo\n`), /its own variant/);
+  });
+
+  it('lists route presets from rules and the default, once each', () => {
+    assert.deepEqual(policyRoutes(parsePolicy(MINIMAL)), ['big']);
+    const routed = MINIMAL.replace('action: allow', 'action: route:small').replace(
+      'default: ask',
+      'default: route:big',
+    );
+    assert.deepEqual(policyRoutes(parsePolicy(routed)), ['small', 'big']);
+  });
+
+  it('ships routing variants that name their base policy', () => {
+    for (const file of ['routing-budget.yaml', 'routing-task-kind.yaml']) {
+      const policy = parsePolicy(readFileSync(join(POLICY_DIR, file), 'utf8'), file);
+      assert.equal(policy.variantOf, 'routing');
+      assert.ok(policyRoutes(policy).length >= 3);
+    }
   });
 });
 

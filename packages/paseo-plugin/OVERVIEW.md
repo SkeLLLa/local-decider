@@ -20,9 +20,10 @@ that policy is also `act`.
   prompt is ever sent.
 - Permission: tool permission requests can be auto-allowed when the model is very confident. The
   plugin never denies a request; everything else stays pending for you.
-- Routing: when a new agent is created, the gateway can pick a `fast`, `standard`, or `deep`
-  preset, which you map to a provider, model, and mode. Paseo 0.15.3 does not pass the first
-  prompt to plugins, so routing uses the agent title and skips agents without one.
+- Routing: when a new agent is created, the gateway's routing policy picks a preset, which you map
+  to a provider, model, and mode. The default picks `fast`, `standard`, or `deep`; you can switch
+  to a budget or task-kind policy, or write your own. Paseo 0.15.3 does not pass the first prompt
+  to plugins, so routing uses the agent title and skips agents without one.
 
 ## Setup
 
@@ -64,7 +65,11 @@ The token is never stored in plugin settings, which every connected client can r
   gateway's log. A details line and feedback buttons can be turned off separately.
 - Sidebar: the status row at the top or bottom of the sidebar, or hidden; what its label shows;
   and whether pressing it opens a quick status popover or the status screen.
-- Routing preset mapping, with a refresh for provider models.
+- Routing: which routing policy the gateway runs, a mapping for each of its presets, a reload for
+  policy files, and "Write with an agent", which starts an agent that interviews you and writes a
+  routing policy for your models. Routing and policy settings are stored in the gateway's
+  `config.yaml`, shared with Claude Code and Codex; presets mapped by an older version of this
+  plugin move there the first time the settings page opens.
 
 Engine, model, download, validation, path and lifecycle changes go to the gateway, not to plugin
 settings, so they apply to every client of that gateway.
