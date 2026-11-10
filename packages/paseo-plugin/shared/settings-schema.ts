@@ -3,13 +3,11 @@ import { z } from 'zod';
 
 import {
   DEFAULT_GATEWAY_URL,
-  DEVICES,
   PLUGIN_MODES,
   ROW_VISIBILITY,
   SIDEBAR_LABELS,
   SIDEBAR_POSITIONS,
   SIDEBAR_PRESS,
-  STRANDS_MODELS,
 } from './constants.ts';
 
 const mode = z.enum(PLUGIN_MODES).default('shadow');
@@ -42,11 +40,6 @@ const rows = z
 
 export const settingsSchema = z.object({
   gatewayUrl: z.string().max(500).default(DEFAULT_GATEWAY_URL),
-  /** Decision model the gateway should serve; '' leaves the gateway's config.yaml choice. */
-  model: z.string().max(300).default(''),
-  device: z.enum(DEVICES).default('auto'),
-  /** Switch the gateway back to `model` when it restarts with another one. */
-  keepModel: z.boolean().default(false),
   modes: z.object({ 'turn-outcome': mode, 'permission': mode, 'routing': mode }).prefault({}),
   presets: z.object({ fast: preset, standard: preset, deep: preset }).prefault({}),
   injectMcp: z.boolean().default(false),
@@ -54,14 +47,29 @@ export const settingsSchema = z.object({
   rows,
 });
 
-/** v1 stored an engine preference and always a model; neither changed what the gateway ran. */
-export function migrateV1(values: unknown): unknown {
-  if (typeof values !== 'object' || values === null) {
+/**
+ * v1 stored an engine preference; v2 a model, device and "keep after restarts" switch. The
+ * gateway now owns and persists the engine and model choice, so v3 drops all four.
+ */
+export function migrateSettings(values: unknown): unknown {
+  if (typeof values !== 'object' || values === null || Array.isArray(values)) {
     return {};
   }
-  const { engine: _engine, ...rest } = values as Record<string, unknown>;
-  const untouched = rest['model'] === STRANDS_MODELS[0].id && (rest['device'] ?? 'auto') === 'auto';
-  return untouched ? { ...rest, model: '' } : rest;
+  const {
+    engine: _engine,
+    model: _model,
+    device: _device,
+    keepModel: _keepModel,
+    ...rest
+  } = values as Record<string, unknown>;
+  return rest;
+}
+
+export const SETTINGS_VERSION = 3;
+
+/** `defineSettings` migrate hook: anything stored before v3 loses the engine-choice fields. */
+export function migrateStored(values: unknown, fromVersion: number): unknown {
+  return fromVersion < SETTINGS_VERSION ? migrateSettings(values) : values;
 }
 
 export type DeciderSettings = z.output<typeof settingsSchema>;

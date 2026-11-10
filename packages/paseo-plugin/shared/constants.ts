@@ -12,18 +12,6 @@ export const HOOK_POLICIES = ['turn-outcome', 'permission', 'routing'] as const;
 
 export const PLUGIN_MODES = ['off', 'shadow', 'act'] as const;
 
-export const DEVICES = ['auto', 'cpu', 'mlx', 'mps', 'cuda'] as const;
-export type Device = (typeof DEVICES)[number];
-
-/** Fallback model list (the gateway's `GET /models` wins), with approximate memory needs. */
-export const STRANDS_MODELS = [
-  { id: 'StrandsAgents/strands-decider-2B-qwen3.5-v1-2610', memoryGb: 8 },
-  { id: 'StrandsAgents/strands-decider-2B-hobson-v21', memoryGb: 8 },
-  { id: 'StrandsAgents/strands-decider-E2B-gemma4-v1-2610', memoryGb: 19 },
-  { id: 'StrandsAgents/strands-decider-E4B-gemma4-v1-2610', memoryGb: 30 },
-  { id: 'StrandsAgents/strands-decider-12B-gemma4-v1-2610', memoryGb: 46 },
-] as const;
-
 /** Where the status item sits in the sidebar, or hidden. */
 export const SIDEBAR_POSITIONS = ['footer', 'header', 'hidden'] as const;
 export type SidebarPosition = (typeof SIDEBAR_POSITIONS)[number];
@@ -39,11 +27,12 @@ export type RowVisibility = (typeof ROW_VISIBILITY)[number];
 export const ROUTING_PRESETS = ['fast', 'standard', 'deep'] as const;
 export type RoutingPreset = (typeof ROUTING_PRESETS)[number];
 
-/** Shown, never run: the plugin does not spawn processes. */
-export const GATEWAY_COMMANDS = {
-  start: 'local-decider gateway start',
-  stop: 'local-decider gateway stop',
-} as const;
+/** Installs the gateway's user service; shown, never run. */
+export const INSTALL_SERVICE_COMMAND = 'local-decider gateway start';
+
+/** What the service buttons do; the argv behind each is fixed daemon-side (server/service.ts). */
+export const SERVICE_ACTIONS = ['start', 'stop', 'restart'] as const;
+export type ServiceAction = (typeof SERVICE_ACTIONS)[number];
 
 export const SETTINGS_SCREEN_ID = 'settings';
 export const STATUS_SCREEN_ID = 'status';

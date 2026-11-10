@@ -1,6 +1,6 @@
 import type { PluginHostProps } from '@getpaseo/plugin/client';
 import type { ReactNode } from 'react';
-import { Pressable, ScrollView, Text } from 'react-native';
+import { ActivityIndicator, Platform, Pressable, ScrollView, Text, View } from 'react-native';
 
 export type Theme = PluginHostProps['theme'];
 
@@ -102,6 +102,118 @@ export function Value({
         fontSize: 13,
         textAlign: 'right',
         flexShrink: 1,
+      }}
+    >
+      {children}
+    </Text>
+  );
+}
+
+/** Monospace family for paths and commands. */
+const MONO = Platform.select({ ios: 'Menlo', default: 'monospace' });
+
+export type Tone = 'error' | 'success' | 'info';
+
+function toneColor(theme: Theme, tone: Tone): string {
+  if (tone === 'error') {
+    return theme.colors.statusDanger;
+  }
+  return tone === 'success' ? theme.colors.statusSuccess : theme.colors.foregroundMuted;
+}
+
+/** An inline result or error line inside a settings card. */
+export function InlineMessage({
+  theme,
+  tone,
+  text,
+}: {
+  theme: Theme;
+  tone: Tone;
+  text: string;
+}): ReactNode {
+  return (
+    <View style={{ paddingHorizontal: 16, paddingVertical: 8 }}>
+      <Text
+        accessibilityLiveRegion="polite"
+        style={{ color: toneColor(theme, tone), fontSize: 13, lineHeight: 18 }}
+      >
+        {text}
+      </Text>
+    </View>
+  );
+}
+
+/** A small outlined label, e.g. `auto: PATH`, `Recommended`, `ok`. */
+export function Badge({
+  theme,
+  text,
+  tone = 'info',
+}: {
+  theme: Theme;
+  text: string;
+  tone?: Tone;
+}): ReactNode {
+  const color = toneColor(theme, tone);
+  return (
+    <View
+      style={{
+        alignSelf: 'flex-start',
+        paddingHorizontal: 8,
+        paddingVertical: 1,
+        borderRadius: 999,
+        borderWidth: 1,
+        borderColor: tone === 'info' ? theme.colors.border : color,
+      }}
+    >
+      <Text style={{ color, fontSize: 11, lineHeight: 16 }}>{text}</Text>
+    </View>
+  );
+}
+
+/** A determinate bar for 0..1, or a spinner when progress is unknown. */
+export function Progress({ theme, value }: { theme: Theme; value: number | null }): ReactNode {
+  if (value === null) {
+    return <ActivityIndicator size="small" color={theme.colors.accent} />;
+  }
+  return (
+    <View
+      accessibilityRole="progressbar"
+      accessibilityValue={{ min: 0, max: 100, now: Math.round(value * 100) }}
+      style={{
+        width: 120,
+        height: 6,
+        flexDirection: 'row',
+        borderRadius: 3,
+        overflow: 'hidden',
+        backgroundColor: theme.colors.surface2,
+      }}
+    >
+      <View style={{ flex: value, backgroundColor: theme.colors.accent }} />
+      <View style={{ flex: 1 - value }} />
+    </View>
+  );
+}
+
+/** Small muted monospace text: a path or the exact command behind a button. */
+export function Mono({
+  theme,
+  children,
+  lines = 1,
+}: {
+  theme: Theme;
+  children: string;
+  lines?: number;
+}): ReactNode {
+  return (
+    <Text
+      numberOfLines={lines}
+      ellipsizeMode="middle"
+      selectable
+      style={{
+        color: theme.colors.foregroundMuted,
+        fontFamily: MONO,
+        fontSize: 11,
+        lineHeight: 16,
       }}
     >
       {children}

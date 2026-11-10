@@ -1,22 +1,22 @@
 import type { PluginScreenProps, PluginSidebarItemProps } from '@getpaseo/plugin/client';
-import {
-  copyText,
-  SettingsAction,
-  SettingsCard,
-  SettingsRow,
-  SettingsSection,
-  SidebarRow,
-  useToast,
-} from '@getpaseo/plugin/client/ui';
+import { SettingsCard, SettingsRow, SettingsSection, SidebarRow } from '@getpaseo/plugin/client/ui';
 import { useEffect, useState, type ReactNode } from 'react';
 import { View } from 'react-native';
 
-import { GATEWAY_COMMANDS, STATUS_SCREEN_ID, type SidebarPosition } from '../shared/constants.ts';
+import {
+  DEFAULT_GATEWAY_URL,
+  SERVICE_ACTIONS,
+  type ServiceAction,
+  STATUS_SCREEN_ID,
+  type SidebarPosition,
+} from '../shared/constants.ts';
 import { shortModel } from '../shared/models.ts';
 import { checkedAgo, statusLabel } from '../shared/poll.ts';
 import { formatMs } from '../shared/stats.ts';
+import { EngineControls } from './engine-state.tsx';
 import { type Status, useDeciderValues, useGatewayStatus } from './hooks.ts';
 import { headline, healthColor, QuickStatus } from './quick-status.tsx';
+import { ServiceSection } from './service.tsx';
 import { StatsSection } from './stats.tsx';
 import { Button, Page, type Theme, Value } from './ui.tsx';
 
@@ -128,39 +128,17 @@ function useNow(ms: number): number {
   return now;
 }
 
-function CommandsSection(): ReactNode {
-  const toast = useToast();
-  const copy = (command: string): void => {
-    copyText(command).then(
-      () => toast.show('Copied', { variant: 'success' }),
-      () => toast.error('Copy is not available here'),
-    );
-  };
-  return (
-    <SettingsSection
-      title="Start or stop"
-      info="The plugin never starts processes. Run these in a terminal on the daemon machine."
-    >
-      <SettingsCard>
-        <SettingsAction
-          label="Start the gateway"
-          hint={GATEWAY_COMMANDS.start}
-          actionLabel="Copy"
-          onPress={() => copy(GATEWAY_COMMANDS.start)}
-        />
-        <SettingsAction
-          label="Stop the gateway"
-          hint={GATEWAY_COMMANDS.stop}
-          actionLabel="Copy"
-          onPress={() => copy(GATEWAY_COMMANDS.stop)}
-        />
-      </SettingsCard>
-    </SettingsSection>
-  );
+/** `?service=start&nonce=…` from a Command Center item. */
+function serviceRequest(
+  params: Readonly<Record<string, string>>,
+): { action: ServiceAction; nonce: string } | null {
+  const action = SERVICE_ACTIONS.find((a) => a === params['service']);
+  return action === undefined ? null : { action, nonce: params['nonce'] ?? '' };
 }
 
 export function StatusScreen({ theme, layout, params }: PluginScreenProps): ReactNode {
   const { data, isFetching, refetch } = useGatewayStatus();
+  const values = useDeciderValues();
   // `refresh` changes on every "Refresh status" command, forcing a check now.
   useEffect(() => {
     if (params['refresh'] !== undefined) {
@@ -175,7 +153,10 @@ export function StatusScreen({ theme, layout, params }: PluginScreenProps): Reac
         isFetching={isFetching}
         refetch={() => void refetch()}
       />
-      <CommandsSection />
+      <SettingsSection title="Engine">
+        <EngineControls theme={theme} gatewayUrl={values?.gatewayUrl ?? DEFAULT_GATEWAY_URL} />
+      </SettingsSection>
+      <ServiceSection theme={theme} requested={serviceRequest(params)} />
       <StatsSection theme={theme} />
     </Page>
   );

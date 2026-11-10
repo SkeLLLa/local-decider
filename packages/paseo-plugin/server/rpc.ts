@@ -1,8 +1,7 @@
-/** Daemon-side RPC handlers: status, stats, models, model switch, feedback and `/decide`. */
+/** Daemon-side RPC handlers: status, stats, feedback and `/decide`. Engines: engines.ts. */
 import { ROW_KIND, ROW_VERSION } from '../shared/constants.ts';
 import type { GatewayHealth } from '../shared/decision.ts';
 import { manualInput } from '../shared/manual.ts';
-import { gatewayCatalog, type ModelCatalog } from '../shared/models.ts';
 import { toRowData, type DecisionRow } from '../shared/row.ts';
 import { parsePolicyStats, type PolicyStats } from '../shared/stats.ts';
 import type { HookDeps, PaseoLike } from './deps.ts';
@@ -79,27 +78,6 @@ export async function statsText(
     text: text.length > STATS_MAX_CHARS ? `${text.slice(0, STATS_MAX_CHARS)}\n…` : text,
     policies: parsePolicyStats(body),
   };
-}
-
-export async function gatewayModels(
-  deps: Pick<HookDeps, 'gateway'>,
-): Promise<ModelCatalog & { reachable: boolean }> {
-  const gateway = await deps.gateway();
-  const body = gateway === null ? null : await gateway.models({ timeoutMs: 3000 });
-  return { reachable: body !== null, ...gatewayCatalog(body) };
-}
-
-export async function selectModel(
-  deps: Pick<HookDeps, 'gateway' | 'log'>,
-  selection: { model: string; device: string },
-): Promise<{ ok: boolean; error: string | null }> {
-  const gateway = await deps.gateway();
-  if (gateway === null) {
-    return { ok: false, error: 'The gateway URL in settings is not a valid http(s) URL.' };
-  }
-  const res = await gateway.selectEngine(selection, { timeoutMs: 15_000 });
-  deps.log(`model switch to ${selection.model}: ${res.ok ? 'accepted' : res.error}`);
-  return res.ok ? { ok: true, error: null } : { ok: false, error: res.error };
 }
 
 /**

@@ -3,9 +3,11 @@ import type { PluginPopoverProps } from '@getpaseo/plugin/client';
 import { useMemo, type ReactNode } from 'react';
 import { Text, type TextStyle, View, type ViewStyle } from 'react-native';
 
-import { GATEWAY_COMMANDS, HOOK_POLICIES, STATUS_SCREEN_ID } from '../shared/constants.ts';
-import { shortModel } from '../shared/models.ts';
-import { type Status, useDeciderValues, useGatewayStatus } from './hooks.ts';
+import { HOOK_POLICIES, INSTALL_SERVICE_COMMAND, STATUS_SCREEN_ID } from '../shared/constants.ts';
+import { engineTag } from '../shared/engines.ts';
+import { engineStateNote } from '../shared/lifecycle.ts';
+import { type Status, useDeciderValues, useGatewayStatus, useServiceInfo } from './hooks.ts';
+import { useServiceRun } from './service.tsx';
 import { Button, type Theme } from './ui.tsx';
 
 export function healthColor(theme: Theme, data: Status | undefined): string {
@@ -116,14 +118,49 @@ function useStyles(theme: Theme): Styles {
   );
 }
 
-function subtitle(data: Status | undefined): string | null {
+/** `Loaded · d3:nano · NPU`, `Unloaded · loads automatically…`, or how to start the gateway. */
+function subtitle(data: Status | undefined, hasService: boolean): string | null {
   if (data === undefined) {
     return null;
   }
   if (!data.up) {
-    return `Run ${GATEWAY_COMMANDS.start} on the daemon machine.`;
+    return hasService
+      ? 'The gateway is not running.'
+      : `Install and start it with ${INSTALL_SERVICE_COMMAND} on the daemon machine.`;
   }
-  return data.detail ?? (data.model === null ? null : shortModel(data.model));
+  return engineStateNote({
+    state: data.engineState ?? (data.status === 'ok' ? 'ready' : 'starting'),
+    detail: data.detail,
+    model: data.model,
+    engineTag: engineTag(data.engine),
+  });
+}
+
+/** Start, shown only while the gateway is down and a user service can start it. */
+function StartRow({ theme, styles }: { theme: Theme; styles: Styles }): ReactNode {
+  const svc = useServiceRun();
+  return (
+    <View style={[styles.section, { gap: 6 }]}>
+      <Button
+        theme={theme}
+        grow
+        label={svc.busy === null ? 'Start gateway' : 'Starting…'}
+        disabled={svc.busy !== null}
+        onPress={() => void svc.start('start')}
+      />
+      {svc.outcome === null ? null : (
+        <Text
+          style={[
+            styles.caption,
+            svc.outcome.tone === 'error' ? { color: theme.colors.statusDanger } : null,
+          ]}
+          numberOfLines={3}
+        >
+          {svc.outcome.text}
+        </Text>
+      )}
+    </View>
+  );
 }
 
 export function QuickStatus(props: PluginPopoverProps): ReactNode {
@@ -131,7 +168,9 @@ export function QuickStatus(props: PluginPopoverProps): ReactNode {
   const styles = useStyles(theme);
   const { data, isFetching, refetch } = useGatewayStatus();
   const values = useDeciderValues();
-  const sub = subtitle(data);
+  const service = useServiceInfo();
+  const hasService = service.data?.commands != null;
+  const sub = subtitle(data, hasService);
   return (
     <View style={styles.root}>
       <View style={styles.section}>
@@ -150,6 +189,7 @@ export function QuickStatus(props: PluginPopoverProps): ReactNode {
           </Text>
         )}
       </View>
+      {data?.up === false && hasService ? <StartRow theme={theme} styles={styles} /> : null}
       <View style={styles.divider} />
       <View style={styles.section}>
         {HOOK_POLICIES.map((policy) => (

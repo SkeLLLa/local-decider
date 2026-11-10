@@ -36,17 +36,42 @@ export interface Gateway {
     options?: CallOptions,
   ): Promise<boolean>;
   health(options?: CallOptions): Promise<GatewayHealth | null>;
-  models(options?: CallOptions): Promise<unknown>;
+  /** `GET /v1/engines`: engines, their models, downloads and the active selection. */
+  engines(options?: CallOptions): Promise<unknown>;
   stats(options?: CallOptions): Promise<unknown>;
   /**
-   * `POST /v1/engine`: switch the served model; device `auto` keeps the gateway's device. Unlike
-   * the rest, reports why it failed.
+   * `POST /v1/engine`: switch the served engine and model (the gateway persists it). Device
+   * `auto` or absent keeps the gateway's device. Unlike the read calls, reports why it failed.
    */
-  selectEngine(
-    selection: { model: string; device: string },
+  selectEngine(selection: EngineSelection, options?: CallOptions): Promise<PostResult>;
+  /** `POST /v1/models/download`: start downloading a model; 202 with `{download}`. */
+  downloadModel(
+    target: { engine: string; model: string },
     options?: CallOptions,
-  ): Promise<{ ok: true } | { ok: false; error: string }>;
+  ): Promise<PostResult>;
+  /** `POST /v1/engines/validate`: re-run an engine's self check (FastFlowLM's `flm validate`). */
+  validateEngine(engine: string, options?: CallOptions): Promise<PostResult>;
+  /** `POST /v1/paths`: set a tool path or directory; null returns to automatic discovery. */
+  setPath(key: string, value: string | null, options?: CallOptions): Promise<PostResult>;
+  /** `POST /v1/engine/load` (202) or `/v1/engine/unload`: load the model now, or free it. */
+  engineLoad(action: 'load' | 'unload', options?: CallOptions): Promise<PostResult>;
+  /** `POST /v1/engine/lifecycle`: lazy (load on demand, unload when idle) or eager; persisted. */
+  setLifecycle(lifecycle: Lifecycle, options?: CallOptions): Promise<PostResult>;
 }
+
+export interface Lifecycle {
+  readonly lifecycle: 'lazy' | 'eager';
+  readonly idleUnloadMinutes?: number;
+}
+
+export interface EngineSelection {
+  readonly engine?: string;
+  readonly model: string;
+  readonly device?: string;
+}
+
+/** A mutating call's outcome: the response body, or the gateway's error message. */
+export type PostResult = { ok: true; body: unknown } | { ok: false; error: string };
 
 const DEFAULT_TIMEOUT_MS = 2000;
 
@@ -70,6 +95,28 @@ function isHealth(value: unknown): value is GatewayHealth {
     value !== null &&
     typeof (value as { status?: unknown }).status === 'string'
   );
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : 'unreachable';
+}
+
+async function failure(res: Response): Promise<PostResult> {
+  const body = (await res.json().catch(() => null)) as { error?: unknown } | null;
+  const reason = typeof body?.error === 'string' ? body.error.slice(0, 300) : '';
+  return { ok: false, error: reason === '' ? `HTTP ${String(res.status)}` : reason };
+}
+
+/** Device `auto` (or none) is left out so the gateway keeps its own. */
+function selectionBody(selection: EngineSelection): Record<string, string> {
+  const body: Record<string, string> = { model: selection.model };
+  if (selection.engine !== undefined && selection.engine !== '') {
+    body['engine'] = selection.engine;
+  }
+  if (selection.device !== undefined && selection.device !== 'auto') {
+    body['device'] = selection.device;
+  }
+  return body;
 }
 
 function signalFor(defaultMs: number, options: CallOptions | undefined): AbortSignal {
@@ -128,6 +175,22 @@ export function createGateway(options: GatewayOptions = {}): Gateway | null {
     }
   }
 
+  async function post(
+    path: string,
+    body: unknown,
+    call: CallOptions | undefined,
+  ): Promise<PostResult> {
+    try {
+      const res = await send('POST', path, body, call);
+      if (!res.ok) {
+        return await failure(res);
+      }
+      return { ok: true, body: await res.json().catch(() => null) };
+    } catch (error) {
+      return { ok: false, error: errorMessage(error) };
+    }
+  }
+
   return {
     baseUrl,
     async decide(policy, req, call) {
@@ -142,24 +205,13 @@ export function createGateway(options: GatewayOptions = {}): Gateway | null {
       const res = await request('GET', '/health', undefined, call);
       return isHealth(res) ? res : null;
     },
-    models: async (call) => request('GET', '/models', undefined, call),
+    engines: async (call) => request('GET', '/v1/engines', undefined, call),
     stats: async (call) => request('GET', '/v1/stats', undefined, call),
-    async selectEngine(selection, call) {
-      try {
-        const payload = selection.device === 'auto' ? { model: selection.model } : { ...selection };
-        const res = await send('POST', '/v1/engine', payload, call);
-        if (res.ok) {
-          return { ok: true };
-        }
-        const body = (await res.json().catch(() => null)) as { error?: unknown } | null;
-        const reason = typeof body?.error === 'string' ? body.error.slice(0, 200) : '';
-        return {
-          ok: false,
-          error: `HTTP ${String(res.status)}${reason === '' ? '' : `: ${reason}`}`,
-        };
-      } catch (error) {
-        return { ok: false, error: error instanceof Error ? error.message : 'unreachable' };
-      }
-    },
+    selectEngine: async (selection, call) => post('/v1/engine', selectionBody(selection), call),
+    downloadModel: async (target, call) => post('/v1/models/download', { ...target }, call),
+    validateEngine: async (engine, call) => post('/v1/engines/validate', { engine }, call),
+    setPath: async (key, value, call) => post('/v1/paths', { key, value }, call),
+    engineLoad: async (action, call) => post(`/v1/engine/${action}`, {}, call),
+    setLifecycle: async (lifecycle, call) => post('/v1/engine/lifecycle', { ...lifecycle }, call),
   };
 }

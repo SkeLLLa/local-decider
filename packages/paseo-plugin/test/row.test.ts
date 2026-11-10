@@ -140,6 +140,21 @@ describe('polling', () => {
     );
   });
 
+  it('names the engine in the sidebar label when it fits', () => {
+    const npu = { up: true, engine: 'fastflowlm', model: 'd3:nano', p50Ms: 300 };
+    assert.equal(statusLabel(npu), 'd3:nano · NPU · 300ms');
+    assert.equal(statusLabel(npu, 'model'), 'd3:nano · NPU');
+    assert.equal(statusLabel(npu, 'latency'), '300ms');
+    const strands = {
+      up: true,
+      engine: 'strands-decider',
+      model: 'StrandsAgents/strands-decider-2B-qwen3.5-v1-2610',
+      p50Ms: 8487,
+    };
+    assert.equal(statusLabel(strands), 'qwen3.5 2B · 8.5s');
+    assert.equal(statusLabel(strands, 'model'), 'qwen3.5 2B · PyTorch');
+  });
+
   it('shortens models and latency for the sidebar', () => {
     assert.equal(compactModel('StrandsAgents/strands-decider-2B-qwen3.5-v1-2610'), 'qwen3.5 2B');
     assert.equal(compactModel('StrandsAgents/strands-decider-E4B-gemma4-v1-2610'), 'gemma4 E4B');

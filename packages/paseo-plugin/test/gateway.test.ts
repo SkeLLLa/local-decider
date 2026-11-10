@@ -150,28 +150,78 @@ describe('createGateway (fail open)', () => {
 function recording(
   status: number,
   body: unknown,
-): { gateway: ReturnType<typeof createGateway>; sent: unknown[] } {
-  const sent: unknown[] = [];
-  const fetch = (async (_url: string, init: RequestInit) => {
-    sent.push(JSON.parse(init.body as string));
+): {
+  gateway: ReturnType<typeof createGateway>;
+  sent: { url: string; body: unknown; type: string | undefined }[];
+} {
+  const sent: { url: string; body: unknown; type: string | undefined }[] = [];
+  const fetch = (async (url: string, init: RequestInit) => {
+    const headers = init.headers as Record<string, string>;
+    sent.push({ url, body: JSON.parse(init.body as string), type: headers['content-type'] });
     return new Response(JSON.stringify(body), { status });
   }) as typeof globalThis.fetch;
   return { gateway: createGateway({ fetch }), sent };
 }
 
-describe('createGateway.selectEngine', () => {
-  it('omits device auto so the gateway keeps its own', async () => {
-    const { gateway, sent } = recording(200, {});
-    assert.deepEqual(await gateway?.selectEngine({ model: 'm', device: 'auto' }), { ok: true });
-    await gateway?.selectEngine({ model: 'm', device: 'cpu' });
-    assert.deepEqual(sent, [{ model: 'm' }, { model: 'm', device: 'cpu' }]);
+describe('createGateway engine calls', () => {
+  it('omits device auto so the gateway keeps its own, and sends JSON', async () => {
+    const { gateway, sent } = recording(200, { state: 'starting' });
+    assert.deepEqual(await gateway?.selectEngine({ model: 'm', device: 'auto' }), {
+      ok: true,
+      body: { state: 'starting' },
+    });
+    await gateway?.selectEngine({ engine: 'fastflowlm', model: 'd3:nano', device: 'cpu' });
+    assert.deepEqual(
+      sent.map((s) => s.body),
+      [{ model: 'm' }, { engine: 'fastflowlm', model: 'd3:nano', device: 'cpu' }],
+    );
+    assert.ok(sent.every((s) => s.type === 'application/json'));
   });
 
-  it('reports the gateway error', async () => {
-    const { gateway } = recording(400, { error: 'unknown model "x"' });
-    assert.deepEqual(await gateway?.selectEngine({ model: 'x', device: 'auto' }), {
+  it('posts downloads, validation, paths, load and lifecycle to their endpoints', async () => {
+    const { gateway, sent } = recording(202, { download: { id: 'dl-1' } });
+    await gateway?.downloadModel({ engine: 'fastflowlm', model: 'd3:mini' });
+    await gateway?.validateEngine('fastflowlm');
+    await gateway?.setPath('tools.flm', null);
+    await gateway?.engineLoad('load');
+    await gateway?.engineLoad('unload');
+    await gateway?.setLifecycle({ lifecycle: 'lazy', idleUnloadMinutes: 30 });
+    assert.deepEqual(
+      sent.map((s) => [new URL(s.url).pathname, s.body]),
+      [
+        ['/v1/models/download', { engine: 'fastflowlm', model: 'd3:mini' }],
+        ['/v1/engines/validate', { engine: 'fastflowlm' }],
+        ['/v1/paths', { key: 'tools.flm', value: null }],
+        ['/v1/engine/load', {}],
+        ['/v1/engine/unload', {}],
+        ['/v1/engine/lifecycle', { lifecycle: 'lazy', idleUnloadMinutes: 30 }],
+      ],
+    );
+    assert.ok(sent.every((s) => s.type === 'application/json'));
+  });
+
+  it("reports the gateway's error message, or the status without one", async () => {
+    const { gateway } = recording(409, { error: 'd3:mini needs ~12 GB' });
+    assert.deepEqual(await gateway?.selectEngine({ model: 'x' }), {
       ok: false,
-      error: 'HTTP 400: unknown model "x"',
+      error: 'd3:mini needs ~12 GB',
+    });
+    const bare = recording(500, 'boom');
+    assert.deepEqual(await bare.gateway?.downloadModel({ engine: 'e', model: 'm' }), {
+      ok: false,
+      error: 'HTTP 500',
+    });
+  });
+
+  it('reports an unreachable gateway without throwing', async () => {
+    const gateway = createGateway({
+      fetch: async () => {
+        throw new TypeError('network down');
+      },
+    });
+    assert.deepEqual(await gateway?.validateEngine('fastflowlm'), {
+      ok: false,
+      error: 'network down',
     });
   });
 });

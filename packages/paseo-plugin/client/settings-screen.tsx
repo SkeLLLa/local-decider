@@ -22,9 +22,11 @@ import {
 import { parsePresetModel, presetModelOptions, withCurrent } from '../shared/presets.ts';
 import { deciderSettings, type DeciderSettings } from '../shared/settings.ts';
 import { normaliseBaseUrl } from '../shared/url.ts';
+import { StatusSection } from './engine-state.tsx';
 import { choices, type Save, type SectionProps } from './settings-common.ts';
 import { RowsSection, SidebarSection } from './settings-display.tsx';
-import { ModelSection, StatusSection } from './settings-model.tsx';
+import { EngineSection } from './settings-engines.tsx';
+import { PathsSection } from './settings-paths.tsx';
 import type { Theme } from './ui.tsx';
 
 const PROVIDER_MODELS_KEY = ['local-decider', 'provider-models'] as const;
@@ -244,9 +246,10 @@ export function SettingsScreen({ theme }: PluginSurfaceProps): ReactNode {
   return (
     <View style={{ gap: 16 }}>
       {settings.saveError === null ? null : <Message theme={theme} text={settings.saveError} />}
-      <StatusSection />
+      <StatusSection theme={theme} gatewayUrl={values.gatewayUrl} />
       <GatewaySection values={values} save={save} />
-      <ModelSection values={values} save={save} />
+      <EngineSection theme={theme} gatewayUrl={values.gatewayUrl} />
+      <PathsSection theme={theme} gatewayUrl={values.gatewayUrl} />
       <PolicySection values={values} save={save} />
       <RowsSection values={values} save={save} />
       <SidebarSection values={values} save={save} />

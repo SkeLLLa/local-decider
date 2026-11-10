@@ -26,23 +26,36 @@ that policy is also `act`.
 
 ## Setup
 
-Install and start the gateway on the daemon machine with `local-decider gateway start`. The
-sidebar shows whether it is up, which model it serves, and its median latency.
+Install the gateway on the daemon machine with `local-decider gateway start`, which also installs
+it as a user service (systemd on Linux, launchd on macOS). The sidebar shows whether it is up,
+which model and engine it serves, and its median latency.
 
 A remote gateway needs a bearer token. Set `LOCAL_DECIDER_TOKEN` in the daemon's environment.
 The token is never stored in plugin settings, which every connected client can read.
 
 ## Settings
 
-- Status: whether the gateway is up, the engine state (for example while a model loads), the
-  model, and its median latency.
+- Status: whether the gateway is up, and the engine's state in plain words: loaded (with model
+  and engine), unloaded and loading automatically on the next decision, loading, or failed and
+  why. Load now and Unload act on it right away. Lifecycle picks between automatic (load on
+  demand, unload after a number of idle minutes, 1 to 1440) and always loaded. The gateway
+  stores the lifecycle.
 - Gateway URL.
-- Decision model and device. Picking a model asks the gateway to restart its engine on it; the
-  list shows roughly how much memory each needs. A model's first use downloads it, and decisions
-  fail open until it is ready. The choice lasts until the gateway restarts, unless "Keep after
-  gateway restarts" is on, which checks every minute and switches it back. Remote engines, and
-  engines attached through `engine.url`, cannot switch; set `engine.model` in the gateway's
-  `config.yaml` instead.
+- Engine and model: pick an engine (for example Strands Decider on PyTorch, or FastFlowLM on an
+  AMD NPU) to list its models. Engines that are not installed or cannot run here are marked and
+  say why; the plugin never installs engines (use `local-decider engine install`). Each model
+  shows its download size, memory, a latency hint, and whether it is recommended. A model that is
+  not downloaded has a Download button and shows progress while it downloads; one that needs
+  more memory than the machine has is disabled; the one in use is marked. Use switches the
+  gateway to that model now, and the gateway keeps the choice across restarts. Strands Decider
+  also has a device picker, where Gateway default keeps the gateway's device.
+- FastFlowLM check: the result of `flm validate` (NPU, firmware, driver), when it ran, its full
+  output, and a Re-validate button.
+- Paths, collapsed by default: the tools and directories the gateway uses (the `flm` launcher,
+  `strands-decider`, `uv`, the FastFlowLM model directory, the Hugging Face cache). Each shows the
+  path in use, where it came from (found automatically, or custom), and whether it works. You can
+  set a custom absolute path, which the gateway checks before accepting it, or go back to
+  automatic discovery. A remote gateway shows them read-only.
 - Mode per policy (`off`, `shadow`, `act`), and an optional switch that adds the gateway's
   `decide` MCP tool to every agent session. Providers without MCP support fail to open while it
   is on.
@@ -52,6 +65,25 @@ The token is never stored in plugin settings, which every connected client can r
 - Sidebar: the status row at the top or bottom of the sidebar, or hidden; what its label shows;
   and whether pressing it opens a quick status popover or the status screen.
 - Routing preset mapping, with a refresh for provider models.
+
+Engine, model, download, validation, path and lifecycle changes go to the gateway, not to plugin
+settings, so they apply to every client of that gateway.
+
+## What this plugin runs
+
+The plugin starts one kind of process: the gateway's user service manager, when you press Start,
+Stop or Restart gateway (on the status screen, in the Command Center, or Start in the quick
+status popover while the gateway is down). The command is fixed per platform and never built from
+settings or input, and each button shows it:
+
+- Linux, when `~/.config/systemd/user/local-decider.service` exists:
+  `systemctl --user start|stop|restart local-decider.service`.
+- macOS, when `~/Library/LaunchAgents/dev.local-decider.gateway.plist` exists:
+  `launchctl bootstrap gui/<uid> <plist>`, `launchctl bootout gui/<uid>/dev.local-decider.gateway`,
+  and `launchctl kickstart -k gui/<uid>/dev.local-decider.gateway`.
+
+It runs without a shell and times out after 20 seconds. Stop asks for confirmation first. Without
+an installed service there are no buttons, only the command to install one.
 
 ## Feedback
 
@@ -63,4 +95,6 @@ Brier score, and calibration. Human answers to permission prompts are reported t
 
 - `/decide <policy> <text>` in an agent's composer runs a policy on your text and shows the
   result in the chat without changing anything.
-- Command Center items open the settings, the status screen, and the shadow statistics.
+- Command Center items open the settings, the status screen, and the shadow statistics, and
+  start, stop or restart the gateway service (the status screen opens and shows the result; stop
+  asks for confirmation there).

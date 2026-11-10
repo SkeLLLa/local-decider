@@ -8,9 +8,6 @@ import type { DeciderSettings } from '../shared/settings.ts';
 export function settings(overrides: Partial<DeciderSettings> = {}): DeciderSettings {
   return {
     gatewayUrl: 'http://127.0.0.1:8765',
-    model: '',
-    device: 'auto',
-    keepModel: false,
     modes: { 'turn-outcome': 'shadow', 'permission': 'shadow', 'routing': 'shadow' },
     presets: {
       fast: { model: '', modeId: '' },
@@ -55,7 +52,8 @@ export interface FakeGateway extends Gateway {
     sessionId?: string;
   }[];
   readonly outcomes: { decisionId: string; outcome: string; source: string }[];
-  readonly selections: { model: string; device: string }[];
+  /** Every mutating engine call, by name, with its input. */
+  readonly posts: { name: string; input: unknown }[];
 }
 
 export function fakeGateway(
@@ -63,12 +61,18 @@ export function fakeGateway(
 ): FakeGateway {
   const calls: FakeGateway['calls'] = [];
   const outcomes: FakeGateway['outcomes'] = [];
-  const selections: FakeGateway['selections'] = [];
+  const posts: FakeGateway['posts'] = [];
+  const record =
+    (name: string) =>
+    async (input: unknown): Promise<{ ok: true; body: unknown }> => {
+      posts.push({ name, input });
+      return { ok: true, body: {} };
+    };
   return {
     baseUrl: 'http://127.0.0.1:8765',
     calls,
     outcomes,
-    selections,
+    posts,
     async decide(policy, request) {
       calls.push({
         policy,
@@ -82,12 +86,14 @@ export function fakeGateway(
       return true;
     },
     health: async () => ({ status: 'ok', engine: 'strands-decider', model: 'm', p50Ms: 100 }),
-    models: async () => [],
+    engines: async () => ({}),
     stats: async () => ({}),
-    async selectEngine(selection) {
-      selections.push(selection);
-      return { ok: true };
-    },
+    selectEngine: record('selectEngine'),
+    downloadModel: record('downloadModel'),
+    validateEngine: record('validateEngine'),
+    setPath: async (key, value) => record('setPath')({ key, value }),
+    engineLoad: record('engineLoad'),
+    setLifecycle: record('setLifecycle'),
   };
 }
 

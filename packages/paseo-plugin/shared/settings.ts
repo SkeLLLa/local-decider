@@ -1,6 +1,6 @@
 import { defineSettings } from '@getpaseo/plugin';
 
-import { migrateV1, settingsSchema } from './settings-schema.ts';
+import { migrateStored, SETTINGS_VERSION, settingsSchema } from './settings-schema.ts';
 
 export type { DeciderSettings } from './settings-schema.ts';
 
@@ -11,7 +11,7 @@ export type { DeciderSettings } from './settings-schema.ts';
 export const deciderSettings = defineSettings({
   id: 'local-decider',
   scope: 'host',
-  version: 2,
+  version: SETTINGS_VERSION,
   schema: settingsSchema,
-  migrate: (values, fromVersion) => (fromVersion < 2 ? migrateV1(values) : values),
+  migrate: migrateStored,
 });

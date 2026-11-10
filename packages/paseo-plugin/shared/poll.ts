@@ -1,4 +1,5 @@
 import type { SidebarLabel } from './constants.ts';
+import { engineTag } from './engines.ts';
 import { compactModel, shortModel } from './models.ts';
 
 /** Status polling cadence: steady while the gateway is up, exponential backoff while it is down. */
@@ -18,6 +19,7 @@ export function nextPollDelay(downStreak: number): number {
 export interface StatusLike {
   readonly up: boolean;
   readonly status?: 'ok' | 'degraded' | 'down';
+  readonly engine?: string | null;
   readonly model: string | null;
   readonly p50Ms: number | null;
 }
@@ -53,14 +55,28 @@ export function statusLabel(status: StatusLike | undefined, style: SidebarLabel 
   if (status.status === 'degraded') {
     return 'Loading…';
   }
-  const parts: string[] = [];
-  if ((style === 'full' || style === 'model') && status.model !== null && status.model !== '') {
-    parts.push(compactModel(status.model));
+  const { model, tag, latency } = labelParts(status, style);
+  const parts = [model, tag, latency].filter((p): p is string => p !== null);
+  const label = parts.join(' · ');
+  // The engine goes first when the label would not fit.
+  if (tag !== null && label.length > MAX_LABEL) {
+    return ellipsis([model, latency].filter((p): p is string => p !== null).join(' · '));
   }
-  if ((style === 'full' || style === 'latency') && status.p50Ms !== null) {
-    parts.push(compactMs(status.p50Ms));
-  }
-  return parts.length === 0 ? 'Decider' : ellipsis(parts.join(' · '));
+  return parts.length === 0 ? 'Decider' : ellipsis(label);
+}
+
+function labelParts(
+  status: StatusLike,
+  style: SidebarLabel,
+): { model: string | null; tag: string | null; latency: string | null } {
+  const withModel = style === 'full' || style === 'model';
+  const withLatency = style === 'full' || style === 'latency';
+  const hasModel = status.model !== null && status.model !== '';
+  return {
+    model: withModel && hasModel ? compactModel(status.model) : null,
+    tag: withModel ? engineTag(status.engine ?? null) : null,
+    latency: withLatency && status.p50Ms !== null ? compactMs(status.p50Ms) : null,
+  };
 }
 
 export interface StatusSummaryLike extends StatusLike {

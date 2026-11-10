@@ -2,27 +2,36 @@ import type { PluginServerContext, PluginSettingsState } from '@getpaseo/plugin/
 
 import { Background } from './server/background.ts';
 import type { HookDeps } from './server/deps.ts';
+import {
+  downloadModel,
+  engineLoad,
+  listEngines,
+  selectEngine,
+  setLifecycle,
+  setPath,
+  validateEngine,
+} from './server/engines.ts';
 import { createMcpHandler } from './server/mcp.ts';
-import { createModelKeeper, KEEP_MODEL_INTERVAL_MS } from './server/model.ts';
 import { createPermissionHandlers } from './server/permission.ts';
 import { createRoutingHandler } from './server/routing.ts';
-import {
-  createStatusHandler,
-  gatewayModels,
-  manualDecide,
-  recordFeedback,
-  selectModel,
-  statsText,
-} from './server/rpc.ts';
+import { createStatusHandler, manualDecide, recordFeedback, statsText } from './server/rpc.ts';
+import { defaultServiceEnv, runService, serviceInfo } from './server/service.ts';
 import { createTurnHandler } from './server/turn.ts';
 import { createGateway, type Gateway } from './shared/gateway.ts';
 import {
   decideRpc,
+  downloadModelRpc,
+  engineLoadRpc,
+  enginesRpc,
   feedbackRpc,
-  gatewayModelsRpc,
-  selectModelRpc,
+  lifecycleRpc,
+  selectEngineRpc,
+  serviceInfoRpc,
+  serviceRpc,
+  setPathRpc,
   statsRpc,
   statusRpc,
+  validateEngineRpc,
 } from './shared/rpc.ts';
 import { deciderSettings, type DeciderSettings } from './shared/settings.ts';
 
@@ -113,17 +122,23 @@ export default function contribute(server: PluginServerContext): () => void {
   const status = createStatusHandler(deps, undefined, markHealth);
   server.handle(statusRpc, async () => status());
   server.handle(statsRpc, async () => statsText(deps));
-  server.handle(gatewayModelsRpc, async () => gatewayModels(deps));
   server.handle(decideRpc, async (input, { paseo }) => manualDecide(deps, paseo, input));
-  server.handle(selectModelRpc, async (input) => selectModel(deps, input));
   server.handle(feedbackRpc, async (input, { paseo }) => recordFeedback(deps, paseo, input));
-
-  const keepModel = createModelKeeper(deps);
-  const keeper = setInterval(() => void keepModel(), KEEP_MODEL_INTERVAL_MS);
-  keeper.unref();
+  server.handle(enginesRpc, async () => listEngines(deps));
+  server.handle(selectEngineRpc, async (input) => selectEngine(deps, input));
+  server.handle(downloadModelRpc, async (input) => downloadModel(deps, input));
+  server.handle(validateEngineRpc, async ({ engine }) => validateEngine(deps, engine));
+  server.handle(setPathRpc, async (input) => setPath(deps, input));
+  server.handle(engineLoadRpc, async ({ action }) => engineLoad(deps, action));
+  server.handle(lifecycleRpc, async (input) => setLifecycle(deps, input));
+  server.handle(serviceInfoRpc, async () => serviceInfo(defaultServiceEnv()));
+  server.handle(serviceRpc, async ({ action }) => {
+    const res = await runService(defaultServiceEnv(), action);
+    log(`service ${action}: ${res.ok ? 'ok' : (res.error ?? 'failed')}`);
+    return res;
+  });
 
   return () => {
-    clearInterval(keeper);
     background.stop();
     cleanup();
   };

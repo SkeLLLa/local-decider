@@ -6,6 +6,7 @@ import { StatsScreen } from './client/stats.tsx';
 import { StatusFooterItem, StatusHeaderItem, StatusScreen } from './client/status.tsx';
 import {
   ROW_KIND,
+  type ServiceAction,
   ROW_VERSION,
   SETTINGS_SCREEN_ID,
   STATS_SCREEN_ID,
@@ -64,6 +65,17 @@ export default function contribute(client: PluginClientContext): () => void {
   };
 }
 
+const SERVICE_ITEMS = [
+  { id: 'gateway-start', action: 'start', title: 'Local decider: start gateway', icon: 'Play' },
+  { id: 'gateway-stop', action: 'stop', title: 'Local decider: stop gateway', icon: 'Square' },
+  {
+    id: 'gateway-restart',
+    action: 'restart',
+    title: 'Local decider: restart gateway',
+    icon: 'RotateCw',
+  },
+] as const satisfies readonly { id: string; action: ServiceAction; title: string; icon: string }[];
+
 function commandCenterItems(
   client: PluginClientContext,
 ): ReturnType<PluginClientContext['addCommandCenterItem']>[] {
@@ -94,21 +106,18 @@ function commandCenterItems(
       context: 'global',
       onSelect: (c) => c.openScreen({ screenId: STATS_SCREEN_ID }),
     }),
-    client.addCommandCenterItem({
-      id: 'gateway-start',
-      title: 'Local decider: start gateway (shows the command)',
-      icon: 'Play',
-      keywords,
-      context: 'global',
-      onSelect: (c) => c.openScreen({ screenId: STATUS_SCREEN_ID }),
-    }),
-    client.addCommandCenterItem({
-      id: 'gateway-stop',
-      title: 'Local decider: stop gateway (shows the command)',
-      icon: 'Square',
-      keywords,
-      context: 'global',
-      onSelect: (c) => c.openScreen({ screenId: STATUS_SCREEN_ID }),
-    }),
+    ...SERVICE_ITEMS.map(({ action, ...item }) =>
+      client.addCommandCenterItem({
+        ...item,
+        keywords,
+        context: 'global',
+        // The status screen runs it and toasts the result; stop asks for confirmation there.
+        onSelect: (c) =>
+          c.openScreen({
+            screenId: STATUS_SCREEN_ID,
+            params: { service: action, nonce: String(Date.now()) },
+          }),
+      }),
+    ),
   ];
 }
