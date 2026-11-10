@@ -279,6 +279,17 @@ describe('agent.create.before', () => {
     assert.equal(gw.calls.length, 0);
   });
 
+  it('never waits in shadow mode but still sends the decision for the log', async () => {
+    const slow = fakeGateway(async () => new Promise(() => {}));
+    const started = Date.now();
+    const out = await createRoutingHandler(deps(settings(), slow))(createRequest('Task'), {
+      signal,
+    });
+    assert.equal(out, undefined);
+    assert.ok(Date.now() - started < 50);
+    assert.equal(slow.calls.length, 1);
+  });
+
   it('gives up within its budget and never throws', async () => {
     const slow = fakeGateway(async () => new Promise(() => {}));
     const started = Date.now();

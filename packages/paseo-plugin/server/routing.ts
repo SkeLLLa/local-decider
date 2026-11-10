@@ -12,6 +12,7 @@ import { pluginEnforces } from './turn.ts';
 
 const ROUTING_POLICY = 'routing';
 const ROUTING_BUDGET_MS = 2000;
+const SHADOW_TIMEOUT_MS = 30_000;
 
 export interface CreateRequest {
   config: AgentSessionConfig;
@@ -73,11 +74,15 @@ async function route(
   if (gateway === null || input === null) {
     return undefined;
   }
-  const res = await gateway.decide(
-    ROUTING_POLICY,
-    { harness: 'paseo', input: { ...input } },
-    { timeoutMs: ROUTING_BUDGET_MS, signal },
-  );
+  const body = { harness: 'paseo' as const, input: { ...input } };
+  if (mode !== 'act') {
+    // Shadow: nothing will be applied, so never make agent creation wait. The gateway logs it.
+    void gateway
+      .decide(ROUTING_POLICY, body, { timeoutMs: SHADOW_TIMEOUT_MS })
+      .catch(() => undefined);
+    return undefined;
+  }
+  const res = await gateway.decide(ROUTING_POLICY, body, { timeoutMs: ROUTING_BUDGET_MS, signal });
   if (res === null || !pluginEnforces(res, mode)) {
     return undefined;
   }
