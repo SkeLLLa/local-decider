@@ -1,7 +1,27 @@
-/** `GET /v1/policies` → a policy and the variants that can answer for it (e.g. routing). */
+/**
+ * `GET /v1/policies` → a policy and the variants that can answer for it (e.g. routing), and the
+ * rule thresholds of the one answering.
+ */
 import { z } from 'zod';
 
+import { ALLOW_THRESHOLD } from './constants.ts';
+
 const policyId = z.string().regex(/^[a-z][a-z0-9_-]{0,63}$/);
+
+const thresholdSchema = z.object({
+  /** `<question>.<answer>`, the key config.yaml `policies.<id>.thresholds` uses. */
+  key: z.string().min(3).max(200),
+  question: z.string().max(64),
+  answer: z.string().max(200),
+  action: z.string().max(100),
+  kind: z.enum(['minProbability', 'minConfidence']),
+  /** The policy file's value; null when the rule has none. */
+  default: z.number().min(0).max(1).nullable(),
+  value: z.number().min(0).max(1).nullable(),
+  /** Lowest value the gateway accepts (0.5 for allow rules); older gateways send none. */
+  floor: z.number().min(0).max(1).catch(0),
+});
+export type ThresholdSetting = z.output<typeof thresholdSchema>;
 
 const entrySchema = z.object({
   id: policyId,
@@ -9,7 +29,10 @@ const entrySchema = z.object({
   routes: z.array(z.string().max(64)).max(255).catch([]),
   variant: policyId.optional().catch(undefined),
   variants: z.array(policyId).max(255).optional().catch(undefined),
+  /** Older gateways have none. */
+  thresholds: z.array(thresholdSchema).max(255).catch([]),
 });
+type Entry = z.output<typeof entrySchema>;
 
 const policyVariantSchema = z.object({
   id: policyId,
@@ -26,16 +49,21 @@ export const policyVariantsSchema = z.object({
 });
 export type PolicyVariants = z.output<typeof policyVariantsSchema>;
 
-/** Pick policy `id` and its variants out of the list; entries that fail to parse are skipped. */
-export function parsePolicyVariants(body: unknown, id: string): PolicyVariants {
-  const list = Array.isArray(body) ? body : [];
-  const entries = new Map<string, z.output<typeof entrySchema>>();
+function parseEntries(list: readonly unknown[]): Map<string, Entry> {
+  const entries = new Map<string, Entry>();
   for (const item of list) {
     const parsed = entrySchema.safeParse(item);
     if (parsed.success) {
       entries.set(parsed.data.id, parsed.data);
     }
   }
+  return entries;
+}
+
+/** Pick policy `id` and its variants out of the list; entries that fail to parse are skipped. */
+export function parsePolicyVariants(body: unknown, id: string): PolicyVariants {
+  const list = Array.isArray(body) ? body : [];
+  const entries = parseEntries(list);
   const base = entries.get(id);
   if (base === undefined) {
     return {
@@ -52,6 +80,101 @@ export function parsePolicyVariants(body: unknown, id: string): PolicyVariants {
       : [{ id: entry.id, description: entry.description, routes: entry.routes }];
   });
   return { ok: true, error: null, active: base.variant ?? id, variants };
+}
+
+export const policyThresholdsSchema = z.object({
+  ok: z.boolean(),
+  error: z.string().nullable(),
+  /** The policy whose rules answer for the hook policy now (a variant, or the policy itself). */
+  policy: policyId.nullable(),
+  thresholds: z.array(thresholdSchema),
+});
+export type PolicyThresholds = z.output<typeof policyThresholdsSchema>;
+
+/** The rule thresholds in effect for hook policy `id`: those of the variant answering for it. */
+export function parsePolicyThresholds(body: unknown, id: string): PolicyThresholds {
+  const entries = parseEntries(Array.isArray(body) ? body : []);
+  const base = entries.get(id);
+  const answering = entries.get(base?.variant ?? id) ?? base;
+  if (answering === undefined) {
+    return { ok: false, error: `No "${id}" policy.`, policy: null, thresholds: [] };
+  }
+  return { ok: true, error: null, policy: answering.id, thresholds: answering.thresholds };
+}
+
+const ACTION_VERBS: Readonly<Record<string, string>> = { allow: 'auto-allow' };
+
+/** `auto-allow when verdict is allow`, `route to fast when tier is fast`. */
+export function thresholdLabel(t: ThresholdSetting): string {
+  const verb = t.action.startsWith('route:')
+    ? `route to ${t.action.slice('route:'.length)}`
+    : (ACTION_VERBS[t.action] ?? t.action);
+  return `${verb} when ${t.question} is ${t.answer}`;
+}
+
+/** `p(allow) ≥ 0.95`, `confidence ≥ 0.8`, with the default when it is overridden. */
+export function thresholdText(t: ThresholdSetting): string {
+  const subject = t.kind === 'minProbability' ? `p(${t.answer})` : 'confidence';
+  const value = t.value === null ? 'any' : t.value.toFixed(2);
+  const overridden = t.value !== t.default;
+  const base = t.default === null ? 'none' : t.default.toFixed(2);
+  return `${subject} ≥ ${value}${overridden ? ` (default ${base})` : ''}`;
+}
+
+/** Slider and input resolution: hundredths. */
+export const THRESHOLD_STEP = 0.01;
+
+/** Lowest value the rule accepts: the gateway's floor, and never below 0.5 for an auto-allow. */
+export function thresholdFloor(t: ThresholdSetting): number {
+  return t.action === 'allow' ? Math.max(t.floor, ALLOW_THRESHOLD.floor) : t.floor;
+}
+
+/** `value` snapped to hundredths within the rule's floor..1. */
+export function clampThreshold(t: ThresholdSetting, value: number): number {
+  return Math.round(Math.min(1, Math.max(thresholdFloor(t), value)) * 100) / 100;
+}
+
+/**
+ * A typed threshold: `0.9`, `.9`, `90` or `90%` (a percentage when above 1). Out-of-range and
+ * unparsable text is an error, never silently clamped.
+ */
+export function parseThresholdInput(
+  t: ThresholdSetting,
+  text: string,
+): { value: number; error: null } | { value: null; error: string } {
+  const trimmed = text.trim().replace(/%$/, '').replace(',', '.');
+  const raw = /^\d*\.?\d+$/.test(trimmed) ? Number(trimmed) : Number.NaN;
+  const value = raw > 1 || text.trim().endsWith('%') ? raw / 100 : raw;
+  const floor = thresholdFloor(t);
+  if (!Number.isFinite(value) || value < floor || value > 1) {
+    return { value: null, error: `Enter a number from ${floor.toFixed(2)} to 1.00.` };
+  }
+  return { value: Math.round(value * 100) / 100, error: null };
+}
+
+/** How risky an auto-allow threshold of `value` is; null for other rules and safe values. */
+export function allowWarning(
+  t: ThresholdSetting,
+  value: number | null = t.value,
+): { strong: boolean; text: string } | null {
+  if (t.action !== 'allow' || value === null || value >= ALLOW_THRESHOLD.soft) {
+    return null;
+  }
+  return value < ALLOW_THRESHOLD.strong
+    ? { strong: true, text: 'The local model will often auto-allow requests it is unsure about.' }
+    : { strong: false, text: 'More requests will be auto-allowed without asking you.' };
+}
+
+/** Track bands the slider tints for an auto-allow rule: strong warning, then soft warning. */
+export function warningZones(t: ThresholdSetting): { from: number; to: number; strong: boolean }[] {
+  if (t.action !== 'allow') {
+    return [];
+  }
+  const floor = thresholdFloor(t);
+  return [
+    { from: floor, to: ALLOW_THRESHOLD.strong, strong: true },
+    { from: ALLOW_THRESHOLD.strong, to: ALLOW_THRESHOLD.soft, strong: false },
+  ].filter((zone) => zone.to > zone.from);
 }
 
 /**

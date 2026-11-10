@@ -6,7 +6,12 @@ import { HOOK_POLICIES, SERVICE_ACTIONS } from './constants.ts';
 import { downloadSchema, engineCatalogSchema, validationSchema } from './engines.ts';
 import { IDLE_MINUTES } from './lifecycle.ts';
 import { PATH_KEY, pathEntrySchema } from './paths.ts';
-import { policyPromptSchema, policyVariantsSchema, routingSettingsSchema } from './policies.ts';
+import {
+  policyPromptSchema,
+  policyThresholdsSchema,
+  policyVariantsSchema,
+  routingSettingsSchema,
+} from './policies.ts';
 import { decisionRowSchema } from './row.ts';
 import { policyStatsSchema } from './stats.ts';
 
@@ -108,6 +113,30 @@ export const policyVariantRpc = defineRpc({
   input: z.object({
     policy: z.enum(HOOK_POLICIES),
     variant: z.string().regex(/^[a-z][a-z0-9_-]{0,63}$/),
+  }),
+  output: z.object({ ok: z.boolean(), error: failure }),
+});
+
+/** The rule thresholds in effect for a hook policy, with their defaults (`GET /v1/policies`). */
+export const policyThresholdsRpc = defineRpc({
+  name: 'policy-thresholds',
+  input: z.object({ policy: z.enum(HOOK_POLICIES) }),
+  output: policyThresholdsSchema,
+});
+
+/**
+ * Override rule thresholds of a policy (or a variant) by `<question>.<answer>`; null restores the
+ * file's value (`POST /v1/policies/:id/thresholds`); persisted in config.yaml.
+ */
+export const setPolicyThresholdsRpc = defineRpc({
+  name: 'set-policy-thresholds',
+  input: z.object({
+    policy: z.string().regex(/^[a-z][a-z0-9_-]{0,63}$/),
+    thresholds: z
+      .record(z.string().min(3).max(200), z.number().min(0).max(1).nullable())
+      .refine((t) => Object.keys(t).length >= 1 && Object.keys(t).length <= 64, {
+        message: '1..64 thresholds',
+      }),
   }),
   output: z.object({ ok: z.boolean(), error: failure }),
 });

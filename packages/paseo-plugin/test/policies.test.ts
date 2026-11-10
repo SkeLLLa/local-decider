@@ -1,19 +1,32 @@
+import { ALLOW_THRESHOLD_FLOOR } from '@local-decider/core';
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
 import {
+  listPolicyThresholds,
   listPolicyVariants,
   policyPrompt,
   reloadPolicies,
   routingSettings,
+  setPolicyThresholds,
   setPolicyVariant,
   setRoutingPreset,
 } from '../server/engines.ts';
+import { ALLOW_THRESHOLD } from '../shared/constants.ts';
 import {
+  allowWarning,
   legacyPresetMoves,
+  parsePolicyThresholds,
   parsePolicyVariants,
   parseRoutingSettings,
   presetRows,
+  clampThreshold,
+  parseThresholdInput,
+  thresholdFloor,
+  warningZones,
+  thresholdLabel,
+  thresholdText,
+  type ThresholdSetting,
 } from '../shared/policies.ts';
 import { settingsSchema } from '../shared/settings-schema.ts';
 import { deps, fakeGateway, settings } from './fakes.ts';
@@ -109,6 +122,87 @@ describe('policy RPC handlers', () => {
       error: 'bad.yaml: invalid YAML',
       count: 0,
     });
+  });
+});
+
+describe('rule thresholds', () => {
+  const allow: ThresholdSetting = {
+    key: 'verdict.allow',
+    question: 'verdict',
+    answer: 'allow',
+    action: 'allow',
+    kind: 'minProbability',
+    default: 0.95,
+    value: 0.95,
+    floor: 0.5,
+  };
+
+  it('lists the thresholds of the variant answering, and sets them through the gateway', async () => {
+    const gw = fakeGateway(() => null);
+    const d = deps(settings(), gw);
+    const permission = await listPolicyThresholds(d, 'permission');
+    assert.equal(permission.policy, 'permission');
+    assert.equal(permission.thresholds[0]?.value, 0.9);
+    const routing = await listPolicyThresholds(d, 'routing');
+    assert.deepEqual([routing.policy, routing.thresholds], ['routing-budget', []]);
+    assert.equal((await listPolicyThresholds(deps(settings(), null), 'routing')).ok, false);
+    assert.equal(parsePolicyThresholds([], 'permission').ok, false);
+    const input = { policy: 'permission', thresholds: { 'verdict.allow': null } };
+    assert.deepEqual(await setPolicyThresholds(d, input), { ok: true, error: null });
+    assert.deepEqual(gw.posts, [{ name: 'setPolicyThresholds', input }]);
+  });
+
+  it('describes a rule and steps within its floor', () => {
+    assert.equal(thresholdLabel(allow), 'auto-allow when verdict is allow');
+    assert.equal(thresholdText(allow), 'p(allow) ≥ 0.95');
+    assert.equal(thresholdText({ ...allow, value: 0.9 }), 'p(allow) ≥ 0.90 (default 0.95)');
+    assert.equal(
+      thresholdLabel({ ...allow, action: 'route:fast', kind: 'minConfidence' }),
+      'route to fast when verdict is allow',
+    );
+    assert.equal(thresholdFloor(allow), 0.5);
+    assert.equal(thresholdFloor({ ...allow, action: 'deny', floor: 0 }), 0);
+    assert.equal(clampThreshold(allow, 0.333), 0.5);
+    assert.equal(clampThreshold(allow, 0.876), 0.88);
+    assert.equal(clampThreshold(allow, 1.2), 1);
+  });
+
+  it('parses typed thresholds as fractions or percentages, refusing out-of-range text', () => {
+    assert.deepEqual(parseThresholdInput(allow, '0.9'), { value: 0.9, error: null });
+    assert.deepEqual(parseThresholdInput(allow, '.85'), { value: 0.85, error: null });
+    assert.deepEqual(parseThresholdInput(allow, '90'), { value: 0.9, error: null });
+    assert.deepEqual(parseThresholdInput(allow, '92%'), { value: 0.92, error: null });
+    assert.deepEqual(parseThresholdInput(allow, '0,8'), { value: 0.8, error: null });
+    assert.match(parseThresholdInput(allow, '0.4').error ?? '', /0\.50 to 1\.00/);
+    assert.notEqual(parseThresholdInput(allow, 'abc').error, null);
+    assert.notEqual(parseThresholdInput(allow, '150').error, null);
+    assert.deepEqual(parseThresholdInput({ ...allow, action: 'deny', floor: 0 }, '0.3'), {
+      value: 0.3,
+      error: null,
+    });
+  });
+
+  it('tints the strong and soft warning bands of an auto-allow slider only', () => {
+    assert.deepEqual(warningZones(allow), [
+      { from: 0.5, to: ALLOW_THRESHOLD.strong, strong: true },
+      { from: ALLOW_THRESHOLD.strong, to: ALLOW_THRESHOLD.soft, strong: false },
+    ]);
+    assert.deepEqual(warningZones({ ...allow, action: 'deny' }), []);
+    assert.equal(allowWarning(allow, 0.85)?.strong, false);
+  });
+
+  it('warns when the auto-allow threshold is lowered, never for deny', () => {
+    assert.equal(allowWarning(allow), null);
+    assert.equal(allowWarning({ ...allow, value: ALLOW_THRESHOLD.soft }), null);
+    assert.equal(allowWarning({ ...allow, value: 0.85 })?.strong, false);
+    assert.match(allowWarning({ ...allow, value: 0.85 })?.text ?? '', /without asking you/);
+    assert.equal(allowWarning({ ...allow, value: 0.75 })?.strong, true);
+    assert.match(allowWarning({ ...allow, value: 0.75 })?.text ?? '', /unsure/);
+    assert.equal(allowWarning({ ...allow, action: 'deny', value: 0.3 }), null);
+  });
+
+  it('shares the gateway floor', () => {
+    assert.equal(ALLOW_THRESHOLD.floor, ALLOW_THRESHOLD_FLOOR);
   });
 });
 

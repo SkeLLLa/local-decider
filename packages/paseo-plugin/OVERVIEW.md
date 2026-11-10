@@ -34,6 +34,14 @@ which model and engine it serves, and its median latency.
 A remote gateway needs a bearer token. Set `LOCAL_DECIDER_TOKEN` in the daemon's environment.
 The token is never stored in plugin settings, which every connected client can read.
 
+## With the Claude Code or Codex plugin installed too
+
+Paseo runs Claude Code and Codex agents through their own CLIs, so the local-decider plugin for
+those CLIs also runs inside Paseo agents. The Paseo plugin tells it which decisions Paseo already
+makes (turn outcome, permission, routing), and it skips them, so each decision is made once and
+follows the modes set here. Its command guard and command-risk checks still run, since Paseo has
+no equivalent.
+
 ## Settings
 
 - Status: whether the gateway is up, and the engine's state in plain words: loaded (with model
@@ -41,7 +49,20 @@ The token is never stored in plugin settings, which every connected client can r
   why. Load now and Unload act on it right away. Lifecycle picks between automatic (load on
   demand, unload after a number of idle minutes, 1 to 1440) and always loaded. The gateway
   stores the lifecycle.
-- Gateway URL.
+- Policies: mode per policy (`off`, `shadow`, `act`), and the threshold of each of its rules,
+  such as "auto-allow when verdict is allow" at p(allow) ≥ 0.95. − and + move a threshold in
+  steps of 0.05 and Reset restores the policy file's value. Lowering the auto-allow threshold
+  below 0.90 warns that more requests will be auto-allowed without asking you, and below 0.80
+  that the local model will often auto-allow requests it is unsure about; it never goes below
+  0.50, which the gateway refuses. Thresholds are stored in the gateway's `config.yaml`
+  (`policies.<id>.thresholds`), so the Claude Code and Codex hooks, which get their decisions
+  from the gateway, use them too. For routing, the thresholds shown are those of the routing
+  policy in use.
+- Routing: which routing policy the gateway runs, a mapping for each of its presets, a reload for
+  policy files, and "Write with an agent", which starts an agent that interviews you and writes a
+  routing policy for your models. Routing and policy settings are stored in the gateway's
+  `config.yaml`, shared with Claude Code and Codex; presets mapped by an older version of this
+  plugin move there the first time the settings page opens.
 - Engine and model: pick an engine (for example Strands Decider on PyTorch, or FastFlowLM on an
   AMD NPU) to list its models. Engines that are not installed or cannot run here are marked and
   say why; the plugin never installs engines (use `local-decider engine install`). Each model
@@ -52,24 +73,21 @@ The token is never stored in plugin settings, which every connected client can r
   also has a device picker, where Gateway default keeps the gateway's device.
 - FastFlowLM check: the result of `flm validate` (NPU, firmware, driver), when it ran, its full
   output, and a Re-validate button.
+- Decisions in chat: every decision, only notable ones (changed something, need attention,
+  failed, or below 70% confidence while the policy is in shadow), or none. Routine decisions of a
+  policy in act, such as the `log` after every turn, are not notable. Hiding rows does not stop
+  decisions or the gateway's log. A details line and feedback buttons can be turned off
+  separately.
+- Sidebar: the status row at the top or bottom of the sidebar, or hidden; what its label shows;
+  and whether pressing it opens a quick status popover or the status screen.
+- Advanced: the gateway URL, a switch that adds the gateway's `decide` MCP tool to every agent
+  session (providers without MCP support fail to open while it is on), and a switch that loads
+  the model when Paseo starts.
 - Paths, collapsed by default: the tools and directories the gateway uses (the `flm` launcher,
   `strands-decider`, `uv`, the FastFlowLM model directory, the Hugging Face cache). Each shows the
   path in use, where it came from (found automatically, or custom), and whether it works. You can
   set a custom absolute path, which the gateway checks before accepting it, or go back to
   automatic discovery. A remote gateway shows them read-only.
-- Mode per policy (`off`, `shadow`, `act`), and an optional switch that adds the gateway's
-  `decide` MCP tool to every agent session. Providers without MCP support fail to open while it
-  is on.
-- Decisions in chat: every decision, only notable ones (changed something, need attention,
-  failed, or below 70% confidence), or none. Hiding rows does not stop decisions or the
-  gateway's log. A details line and feedback buttons can be turned off separately.
-- Sidebar: the status row at the top or bottom of the sidebar, or hidden; what its label shows;
-  and whether pressing it opens a quick status popover or the status screen.
-- Routing: which routing policy the gateway runs, a mapping for each of its presets, a reload for
-  policy files, and "Write with an agent", which starts an agent that interviews you and writes a
-  routing policy for your models. Routing and policy settings are stored in the gateway's
-  `config.yaml`, shared with Claude Code and Codex; presets mapped by an older version of this
-  plugin move there the first time the settings page opens.
 
 Engine, model, download, validation, path and lifecycle changes go to the gateway, not to plugin
 settings, so they apply to every client of that gateway.
@@ -92,9 +110,12 @@ an installed service there are no buttons, only the command to install one.
 
 ## Feedback
 
-Each decision row can ask "Right answer?" with one button per option. Your answer goes to the
-gateway's `/v1/outcomes` as ground truth, and `local-decider stats` uses it for agreement,
-Brier score, and calibration. Human answers to permission prompts are reported the same way.
+Each turn and `/decide` row can ask "Right answer?" with one button per option. Your answer goes
+to the gateway's `/v1/outcomes` as ground truth, and `local-decider stats` uses it for agreement,
+Brier score, and calibration. Permission rows have no buttons: your Accept or Deny on the prompt
+is the one ground-truth outcome, and the row then reads "You allowed" or "You denied". A row
+says "auto-allowed" when the plugin allowed the request, otherwise "asked you", followed by what
+the model leaned towards (or "unsure" below 50% confidence).
 
 ## Commands
 

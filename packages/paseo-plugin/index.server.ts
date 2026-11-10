@@ -6,6 +6,7 @@ import {
   downloadModel,
   engineLoad,
   listEngines,
+  listPolicyThresholds,
   listPolicyVariants,
   policyPrompt,
   routingSettings,
@@ -14,11 +15,12 @@ import {
   selectEngine,
   setLifecycle,
   setPolicyMode,
+  setPolicyThresholds,
   setPolicyVariant,
   setPath,
   validateEngine,
 } from './server/engines.ts';
-import { createMcpHandler } from './server/mcp.ts';
+import { createOpenHandler } from './server/open.ts';
 import { createPermissionHandlers } from './server/permission.ts';
 import { preloadOnStart } from './server/preload.ts';
 import { createRoutingHandler } from './server/routing.ts';
@@ -35,6 +37,7 @@ import {
   feedbackRpc,
   lifecycleRpc,
   policyModeRpc,
+  policyThresholdsRpc,
   policyVariantRpc,
   policyVariantsRpc,
   policyPromptRpc,
@@ -45,6 +48,7 @@ import {
   serviceInfoRpc,
   serviceRpc,
   setPathRpc,
+  setPolicyThresholdsRpc,
   statsRpc,
   statusRpc,
   validateEngineRpc,
@@ -132,7 +136,7 @@ export default function contribute(server: PluginServerContext): () => void {
   const permission = createPermissionHandlers(deps, background);
   const usage = new UsageLinks();
   const onCreate = createRoutingHandler(deps, undefined, usage);
-  const onOpen = createMcpHandler(deps, token);
+  const onOpen = createOpenHandler(deps, token);
 
   server.addHook('agent.turn.after', async (event, ctx) => {
     void usage.turnEnded(deps, event, ctx.paseo);
@@ -159,6 +163,8 @@ export default function contribute(server: PluginServerContext): () => void {
   server.handle(policyModeRpc, async (input) => setPolicyMode(deps, input));
   server.handle(policyVariantsRpc, async ({ policy }) => listPolicyVariants(deps, policy));
   server.handle(policyVariantRpc, async (input) => setPolicyVariant(deps, input));
+  server.handle(policyThresholdsRpc, async ({ policy }) => listPolicyThresholds(deps, policy));
+  server.handle(setPolicyThresholdsRpc, async (input) => setPolicyThresholds(deps, input));
   server.handle(reloadPoliciesRpc, async () => reloadPolicies(deps));
   server.handle(routingSettingsRpc, async () => routingSettings(deps));
   server.handle(routingPresetRpc, async (input) => setRoutingPreset(deps, input));

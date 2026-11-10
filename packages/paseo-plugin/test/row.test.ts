@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
+import type { DecideResponse } from '../shared/decision.ts';
 import { DECIDE_USAGE, manualInput, parseDecideArgs } from '../shared/manual.ts';
 import { compactModel, shortModel } from '../shared/models.ts';
 import {
@@ -22,6 +23,16 @@ import {
 } from '../shared/row.ts';
 import { response } from './fakes.ts';
 
+function permission(confidence: number, action: string, mode: 'act' | 'shadow'): DecideResponse {
+  return response({
+    policy: 'permission',
+    action,
+    mode,
+    enforced: mode === 'act',
+    answers: { decision: { type: 'choice', answer: 'allow', probabilities: {}, confidence } },
+  });
+}
+
 describe('toRowData', () => {
   it('maps a response to schema-valid row data', () => {
     const row = toRowData(response(), { source: 'turn', key: 't1', enforced: false });
@@ -30,7 +41,7 @@ describe('toRowData', () => {
     assert.equal(row.answer, 'done');
     assert.equal(row.attention, false);
     assert.equal(row.error, null);
-    assert.equal(rowSummary(row), 'turn-outcome · done 80% · log · shadow');
+    assert.equal(rowSummary(row), 'turn-outcome · log · leaned done 80% · shadow');
     assert.equal(rowDetail(row), '2B-qwen3.5-v1-2610 · 120 ms');
   });
 
@@ -39,7 +50,10 @@ describe('toRowData', () => {
     assert.equal(toRowData(res, { source: 'turn', key: 't1', enforced: true }).attention, true);
     const shadow = toRowData(res, { source: 'turn', key: 't1', enforced: false });
     assert.equal(shadow.attention, false);
-    assert.equal(rowSummary(shadow), 'turn-outcome · done 80% · notify · act (plugin: shadow)');
+    assert.equal(
+      rowSummary(shadow),
+      'turn-outcome · notify · leaned done 80% · act (plugin: shadow)',
+    );
   });
 
   it('handles an engine error without answers', () => {
@@ -50,10 +64,35 @@ describe('toRowData', () => {
       note: 'via /decide',
     });
     assert.equal(row.answer, '');
-    assert.equal(rowSummary(row), 'turn-outcome · no answer · log · shadow');
+    assert.equal(rowSummary(row), 'turn-outcome · log · no answer · shadow');
     assert.equal(
       rowDetail(row),
       'via /decide · 2B-qwen3.5-v1-2610 · 120 ms · engine error: engine down',
+    );
+  });
+
+  it('leads permission rows with what happened and never presents a weak answer', () => {
+    const weak = toRowData(permission(0.09, 'ask', 'act'), {
+      source: 'permission',
+      key: 'r1',
+      enforced: true,
+    });
+    assert.equal(rowSummary(weak), 'permission · asked you · unsure 9% · act');
+    const allowed = toRowData(permission(0.97, 'allow', 'act'), {
+      source: 'permission',
+      key: 'r1',
+      enforced: true,
+      applied: true,
+    });
+    assert.equal(rowSummary(allowed), 'permission · auto-allowed · leaned allow 97% · act');
+    const shadow = toRowData(permission(0.72, 'allow', 'shadow'), {
+      source: 'permission',
+      key: 'r1',
+      enforced: false,
+    });
+    assert.equal(
+      rowSummary(shadow),
+      'permission · asked you · would auto-allow · leaned allow 72% · shadow',
     );
   });
 
@@ -96,6 +135,10 @@ describe('toRowData', () => {
     assert.equal(rowVisible(unsure, 'notable'), true);
     assert.equal(rowVisible({ ...plain, applied: true }, 'notable'), true);
     assert.equal(rowVisible({ ...plain, error: 'x' }, 'notable'), true);
+    const routine = { ...plain, enforced: true };
+    assert.equal(rowVisible(routine, 'notable'), false, 'an enforced log is routine');
+    assert.equal(rowVisible({ ...unsure, enforced: true }, 'notable'), false);
+    assert.equal(rowVisible({ ...routine, attention: true }, 'notable'), true);
     assert.equal(rowVisible(plain, 'off'), false);
     assert.equal(rowVisible(manual, 'off'), true);
   });

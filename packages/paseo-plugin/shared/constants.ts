@@ -10,7 +10,20 @@ export const ROW_VERSION = 1;
 /** Policies the plugin drives from hooks; each has its own plugin-side mode. */
 export const HOOK_POLICIES = ['turn-outcome', 'permission', 'routing'] as const;
 
+/**
+ * Set on every agent the plugin opens: the policies it runs itself, so the Claude Code and Codex
+ * hooks (`packages/hooks/src/run.ts`) inside that agent skip them instead of deciding twice.
+ */
+export const HOST_POLICIES_ENV = 'LOCAL_DECIDER_HOST_POLICIES';
+
 export const PLUGIN_MODES = ['off', 'shadow', 'act'] as const;
+
+/**
+ * Lowering an auto-allow threshold (permission `verdict.allow`, default 0.95): below `soft` the
+ * settings warn that more requests are auto-allowed, below `strong` that unsure ones are too.
+ * `floor` mirrors core's `ALLOW_THRESHOLD_FLOOR`, which the gateway enforces (test/policies).
+ */
+export const ALLOW_THRESHOLD = { soft: 0.9, strong: 0.8, floor: 0.5 } as const;
 
 /** Where the status item sits in the sidebar, or hidden. */
 export const SIDEBAR_POSITIONS = ['footer', 'header', 'hidden'] as const;

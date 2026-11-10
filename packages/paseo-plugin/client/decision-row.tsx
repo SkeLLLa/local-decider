@@ -11,7 +11,8 @@ import type { Theme } from './ui.tsx';
 
 /**
  * "Right answer?" chips: one per option of the primary question. Tapping one reports it to the
- * gateway as a `user` outcome, the ground truth behind `local-decider stats`.
+ * gateway as a `user` outcome, the ground truth behind `local-decider stats`. Not on permission
+ * rows, whose outcome is the user's Accept/Deny.
  */
 function Feedback({
   row,
@@ -76,6 +77,14 @@ function Feedback({
   );
 }
 
+/** The user's own answer to the permission prompt, reported by `agent.permission.after`. */
+function permissionFeedback(resolution: string): string {
+  if (resolution === 'allow') {
+    return '✓ You allowed';
+  }
+  return resolution === 'deny' ? '✗ You denied' : `You answered: ${resolution}`;
+}
+
 export function DecisionRowView({
   item,
   theme,
@@ -105,7 +114,10 @@ export function DecisionRowView({
     };
   }, [row.attention, row.applied, theme]);
   const details = values?.rows.details ?? true;
-  const feedback = (values?.rows.feedback ?? true) && row.options.length > 1 && row.error === null;
+  // Permission rows have no chips: the user's Accept/Deny is the one ground-truth outcome.
+  const permission = row.source === 'permission';
+  const feedback =
+    !permission && (values?.rows.feedback ?? true) && row.options.length > 1 && row.error === null;
 
   return (
     <View
@@ -120,6 +132,9 @@ export function DecisionRowView({
         <Text style={styles.detail} numberOfLines={1}>
           {rowDetail(row)}
         </Text>
+      ) : null}
+      {permission && row.feedback !== null ? (
+        <Text style={styles.detail}>{permissionFeedback(row.feedback)}</Text>
       ) : null}
       {feedback ? <Feedback row={row} agentId={agentId} theme={theme} /> : null}
     </View>

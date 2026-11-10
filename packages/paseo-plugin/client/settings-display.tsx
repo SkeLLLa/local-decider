@@ -77,7 +77,7 @@ export function RowsSection({ values, save }: SectionProps): ReactNode {
       <SettingsCard>
         <SettingsSelect
           label="Show"
-          hint="Notable: changed something, needs attention, failed, or was below 70% confidence. /decide results always show."
+          hint="Notable: changed something, needs attention, failed, or was below 70% confidence in shadow. /decide results always show."
           value={rows.show}
           options={choices(ROW_VISIBILITY, {
             all: 'Every decision',

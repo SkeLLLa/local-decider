@@ -11,9 +11,11 @@ import type { PostResult } from '../shared/gateway.ts';
 import { parsePaths, type PathEntry } from '../shared/paths.ts';
 import {
   parsePolicyPrompt,
+  parsePolicyThresholds,
   parsePolicyVariants,
   parseRoutingSettings,
   type PolicyPrompt,
+  type PolicyThresholds,
   type PolicyVariants,
   type RoutingSettings,
 } from '../shared/policies.ts';
@@ -170,6 +172,32 @@ export async function setPolicyVariant(
     deps,
     `policy ${input.policy} variant ${input.variant}`,
     async (gw) => gw.setPolicyVariant(input.policy, input.variant, { timeoutMs: 10_000 }),
+    () => null,
+  );
+  return { ok, error };
+}
+
+/** The rule thresholds in effect for policy `id` (its answering variant's), with defaults. */
+export async function listPolicyThresholds(
+  deps: Pick<HookDeps, 'gateway'>,
+  id: string,
+): Promise<PolicyThresholds> {
+  const gateway = await deps.gateway();
+  if (gateway === null) {
+    return { ok: false, error: BAD_URL, policy: null, thresholds: [] };
+  }
+  return parsePolicyThresholds(await gateway.policies({ timeoutMs: 3000 }), id);
+}
+
+/** Override rule thresholds of `policy` (null restores a default); the gateway validates keys. */
+export async function setPolicyThresholds(
+  deps: Deps,
+  input: { policy: string; thresholds: Readonly<Record<string, number | null>> },
+): Promise<{ ok: boolean; error: string | null }> {
+  const { ok, error } = await call(
+    deps,
+    `policy ${input.policy} thresholds ${Object.keys(input.thresholds).join(', ')}`,
+    async (gw) => gw.setPolicyThresholds(input.policy, input.thresholds, { timeoutMs: 10_000 }),
     () => null,
   );
   return { ok, error };

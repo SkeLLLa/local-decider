@@ -91,4 +91,16 @@ describe('feedback RPC', () => {
     );
     assert.equal(paseo.agent.appended.length, 0);
   });
+
+  it('rejects permission rows, whose outcome is the Accept/Deny', async () => {
+    const gw = fakeGateway(() => null);
+    const paseo = fakePaseo([]);
+    const row = toRowData(response(), { source: 'permission', key: 'r1', enforced: false });
+    await assert.rejects(
+      recordFeedback(deps(settings(), gw), paseo, { agentId: 'a1', row, outcome: 'done' }),
+      /Accept or Deny/,
+    );
+    assert.deepEqual(gw.outcomes, []);
+    assert.equal(paseo.agent.appended.length, 0);
+  });
 });

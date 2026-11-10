@@ -9,7 +9,7 @@ import {
   SettingsSelect,
   SettingsSwitch,
 } from '@getpaseo/plugin/client/ui';
-import { useState, type ReactNode } from 'react';
+import { Fragment, useState, type ReactNode } from 'react';
 import { Text, View } from 'react-native';
 
 import { HOOK_POLICIES, PLUGIN_MODES } from '../shared/constants.ts';
@@ -22,13 +22,14 @@ import { RowsSection, SidebarSection } from './settings-display.tsx';
 import { EngineSection } from './settings-engines.tsx';
 import { PathsSection } from './settings-paths.tsx';
 import { RoutingSection } from './settings-routing.tsx';
+import { ThresholdsSection } from './settings-thresholds.tsx';
 import { Page, type Theme } from './ui.tsx';
 
 function GatewaySection({ values, save }: SectionProps): ReactNode {
   const [draft, setDraft] = useState(values.gatewayUrl);
   const normalised = normaliseBaseUrl(draft);
   return (
-    <SettingsSection title="Gateway">
+    <SettingsSection title="Advanced">
       <SettingsCard>
         <SettingsInput
           label="Gateway URL"
@@ -48,36 +49,6 @@ function GatewaySection({ values, save }: SectionProps): ReactNode {
             }
           }}
         />
-      </SettingsCard>
-    </SettingsSection>
-  );
-}
-
-function PolicySection({ values, save }: SectionProps): ReactNode {
-  const setGatewayMode = useRpc(policyModeRpc);
-  return (
-    <SettingsSection
-      title="Policies"
-      info="Shadow records what would have happened. Act lets the decider change Paseo's behaviour. Choosing a mode here sets it in the gateway too."
-    >
-      <SettingsCard>
-        {HOOK_POLICIES.map((policy) => (
-          <SettingsSelect
-            key={policy}
-            label={policy}
-            value={values.modes[policy]}
-            options={choices(PLUGIN_MODES, {
-              off: 'Off',
-              shadow: 'Shadow (record only)',
-              act: 'Act (when the gateway does)',
-            })}
-            onValueChange={(mode) => {
-              save({ ...values, modes: { ...values.modes, [policy]: mode } });
-              // The gateway's own mode decides whether a decision is enforced: keep both in step.
-              void setGatewayMode({ policy, mode });
-            }}
-          />
-        ))}
         <SettingsSwitch
           label="Add the decide MCP tool to agents"
           hint="Injects <gateway>/mcp into every agent session. Providers without MCP support then fail to open; leave off unless you need it."
@@ -95,6 +66,37 @@ function PolicySection({ values, save }: SectionProps): ReactNode {
   );
 }
 
+function PolicySection({ values, save }: SectionProps): ReactNode {
+  const setGatewayMode = useRpc(policyModeRpc);
+  return (
+    <SettingsSection
+      title="Policies"
+      info="Shadow records what would have happened. Act lets the decider change Paseo's behaviour. Choosing a mode here sets it in the gateway too. How sure the model must be is under Decision thresholds."
+    >
+      <SettingsCard>
+        {HOOK_POLICIES.map((policy) => (
+          <Fragment key={policy}>
+            <SettingsSelect
+              label={policy}
+              value={values.modes[policy]}
+              options={choices(PLUGIN_MODES, {
+                off: 'Off',
+                shadow: 'Shadow (record only)',
+                act: 'Act (when the gateway does)',
+              })}
+              onValueChange={(mode) => {
+                save({ ...values, modes: { ...values.modes, [policy]: mode } });
+                // The gateway's own mode decides whether a decision is enforced: keep both in step.
+                void setGatewayMode({ policy, mode });
+              }}
+            />
+          </Fragment>
+        ))}
+      </SettingsCard>
+    </SettingsSection>
+  );
+}
+
 function Message({ theme, text }: { theme: Theme; text: string }): ReactNode {
   return (
     <View style={{ padding: 16 }}>
@@ -103,6 +105,10 @@ function Message({ theme, text }: { theme: Theme; text: string }): ReactNode {
   );
 }
 
+/**
+ * Sections run from what a user is most likely to change to what they rarely touch: health, how
+ * each policy acts, routing and the model, how decisions show up, then connection details.
+ */
 export function SettingsScreen({ theme, navigation }: PluginSurfaceProps): ReactNode {
   const settings = useSettings(deciderSettings);
   if (settings.status === 'loading') {
@@ -131,12 +137,7 @@ export function SettingsScreen({ theme, navigation }: PluginSurfaceProps): React
     <View style={{ gap: 16 }}>
       {settings.saveError === null ? null : <Message theme={theme} text={settings.saveError} />}
       <StatusSection theme={theme} gatewayUrl={values.gatewayUrl} />
-      <GatewaySection values={values} save={save} />
-      <EngineSection theme={theme} gatewayUrl={values.gatewayUrl} />
-      <PathsSection theme={theme} gatewayUrl={values.gatewayUrl} />
       <PolicySection values={values} save={save} />
-      <RowsSection values={values} save={save} />
-      <SidebarSection values={values} save={save} />
       <RoutingSection
         theme={theme}
         navigation={navigation}
@@ -144,6 +145,12 @@ export function SettingsScreen({ theme, navigation }: PluginSurfaceProps): React
         values={values}
         save={save}
       />
+      <EngineSection theme={theme} gatewayUrl={values.gatewayUrl} />
+      <RowsSection values={values} save={save} />
+      <SidebarSection values={values} save={save} />
+      <GatewaySection values={values} save={save} />
+      <ThresholdsSection theme={theme} gatewayUrl={values.gatewayUrl} />
+      <PathsSection theme={theme} gatewayUrl={values.gatewayUrl} />
       <SettingsSection title="Reset">
         <SettingsCard>
           <SettingsAction

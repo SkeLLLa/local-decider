@@ -8,6 +8,8 @@ import { shortModel } from './models.ts';
 const MAX_OPTIONS = 12;
 /** Below this confidence a shadow row counts as notable. */
 const LOW_CONFIDENCE = 0.7;
+/** Below this confidence the summary says `unsure` instead of presenting the answer. */
+const UNSURE_CONFIDENCE = 0.5;
 
 export const decisionRowSchema = z.object({
   decisionId: z.string(),
@@ -88,7 +90,8 @@ export function toRowData(res: DecideResponse, ctx: RowContext): DecisionRow {
 
 /**
  * Whether a row is appended under the user's chat-row setting. `notable` keeps rows that changed
- * something, need attention, failed, or were unsure.
+ * something, need attention or failed, plus unsure rows only while not enforced (shadow), where
+ * they help calibration. A routine enforced row (e.g. `log` after every turn in act) is hidden.
  */
 export function rowVisible(row: DecisionRow, show: RowVisibility): boolean {
   if (row.source === 'manual' || show === 'all') {
@@ -100,9 +103,8 @@ export function rowVisible(row: DecisionRow, show: RowVisibility): boolean {
   return (
     row.applied ||
     row.attention ||
-    row.enforced ||
     row.error !== null ||
-    (row.answer !== '' && row.confidence < LOW_CONFIDENCE)
+    (!row.enforced && row.answer !== '' && row.confidence < LOW_CONFIDENCE)
   );
 }
 
@@ -115,15 +117,39 @@ function percent(confidence: number): string {
   return `${Math.round(Math.max(0, Math.min(1, confidence)) * 100)}%`;
 }
 
-/** One-line summary: `turn-outcome · needs_input 82% · notify · shadow`. */
+/** The model's answer, never presented as the answer when weak: `leaned done 80%`, `unsure 40%`. */
+function leaning(row: DecisionRow): string {
+  if (row.answer === '') {
+    return 'no answer';
+  }
+  const pct = percent(row.confidence);
+  return row.confidence < UNSURE_CONFIDENCE ? `unsure ${pct}` : `leaned ${row.answer} ${pct}`;
+}
+
+/** What happened: permission rows say whether we allowed or left it to the user. */
+function outcome(row: DecisionRow): string {
+  if (row.source !== 'permission') {
+    return row.action;
+  }
+  if (row.applied) {
+    return 'auto-allowed';
+  }
+  return !row.enforced && row.action === 'allow' ? 'asked you · would auto-allow' : 'asked you';
+}
+
+function modeLabel(row: DecisionRow): string {
+  if (row.enforced) {
+    return 'act';
+  }
+  return row.gatewayMode === 'act' ? 'act (plugin: shadow)' : row.gatewayMode;
+}
+
+/**
+ * One line, what happened first: `permission · asked you · leaned allow 72% · act`,
+ * `turn-outcome · notify · leaned needs_input 82% · shadow`.
+ */
 export function rowSummary(row: DecisionRow): string {
-  const answer = row.answer === '' ? 'no answer' : `${row.answer} ${percent(row.confidence)}`;
-  const mode = row.enforced
-    ? 'act'
-    : row.gatewayMode === 'act'
-      ? 'act (plugin: shadow)'
-      : row.gatewayMode;
-  return `${row.policy} · ${answer} · ${row.action} · ${mode}`;
+  return `${row.policy} · ${outcome(row)} · ${leaning(row)} · ${modeLabel(row)}`;
 }
 
 export function rowDetail(row: DecisionRow): string {

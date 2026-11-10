@@ -104,7 +104,25 @@ export function fakeGateway(
     setLifecycle: record('setLifecycle'),
     setPolicyMode: record('setPolicyMode'),
     policies: async () => [
-      { id: 'permission', mode: 'shadow', description: 'p', routes: [], variants: ['permission'] },
+      {
+        id: 'permission',
+        mode: 'shadow',
+        description: 'p',
+        routes: [],
+        variants: ['permission'],
+        thresholds: [
+          {
+            key: 'verdict.allow',
+            question: 'verdict',
+            answer: 'allow',
+            action: 'allow',
+            kind: 'minProbability',
+            default: 0.95,
+            value: 0.9,
+            floor: 0.5,
+          },
+        ],
+      },
       {
         id: 'routing',
         mode: 'act',
@@ -121,6 +139,8 @@ export function fakeGateway(
       },
     ],
     setPolicyVariant: async (policy, variant) => record('setPolicyVariant')({ policy, variant }),
+    setPolicyThresholds: async (policy, thresholds) =>
+      record('setPolicyThresholds')({ policy, thresholds }),
     config: async () => ({
       file: '/home/u/.config/local-decider/config.yaml',
       config: { routing: { presets: { paseo: { cheap: { model: 'claude/haiku' } } } } },

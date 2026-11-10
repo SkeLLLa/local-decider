@@ -90,6 +90,10 @@ export async function recordFeedback(
   input: { agentId: string; row: DecisionRow; outcome: string },
 ): Promise<DecisionRow> {
   const { row, outcome } = input;
+  if (row.source === 'permission') {
+    // Accept/Deny on the prompt is the outcome; a second, possibly contradicting one would win.
+    throw new Error('Permission decisions take your Accept or Deny as feedback.');
+  }
   if (!row.options.includes(outcome)) {
     throw new Error(`"${outcome}" is not an option of this decision.`);
   }

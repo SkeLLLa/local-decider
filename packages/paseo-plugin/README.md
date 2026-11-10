@@ -56,6 +56,25 @@ Run `paseo plugin ls` and check that `local-decider` shows `running`. To upgrade
 Then open **Settings → Local decider** to pick the engine and model (with download buttons),
 check the NPU, choose each policy's mode, and control the gateway service.
 
+## Permissions and agent modes
+
+The permission policy only sees requests that the agent's provider shows to Paseo as a prompt.
+Which requests those are depends on the agent's mode:
+
+- **Always Ask (`default`) or Accept File Edits:** every prompt goes to the local model first.
+  When it is confident, the request is allowed without asking you. Otherwise it stays pending
+  for you. This is where the plugin saves time and model calls.
+- **Auto mode:** the provider's own classifier reviews each action first, and it runs on a
+  hosted model, not on your machine. For Claude, that is a Sonnet model by default. The plugin
+  only sees what the classifier passes on as a prompt, so the classifier's calls still happen
+  and are still billed. You save nothing over auto mode alone, and the local model only adds a
+  second opinion on what is left.
+- **Bypass:** nothing is asked, so the plugin has nothing to decide.
+
+To have the local model handle routine permissions instead of a hosted model, run agents in
+Always Ask with the permission policy in `act`, and lower the auto-allow threshold in settings
+if it asks too often.
+
 ## Privacy and what it runs
 
 - Agent transcripts and tool requests are sent only to the gateway URL in settings (default

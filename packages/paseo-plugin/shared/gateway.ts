@@ -71,6 +71,15 @@ export interface Gateway {
   policies(options?: CallOptions): Promise<unknown>;
   /** `POST /v1/policies/:id/variant`: which variant answers for a policy; persisted. */
   setPolicyVariant(policy: string, variant: string, options?: CallOptions): Promise<PostResult>;
+  /**
+   * `POST /v1/policies/:id/thresholds`: override rule thresholds by `<question>.<answer>`, null
+   * restores the policy file's value; persisted in config.yaml.
+   */
+  setPolicyThresholds(
+    policy: string,
+    thresholds: Readonly<Record<string, number | null>>,
+    options?: CallOptions,
+  ): Promise<PostResult>;
   /** `POST /v1/policies/reload`: re-read the policy files, e.g. after adding one. */
   reloadPolicies(options?: CallOptions): Promise<PostResult>;
   /** `GET /v1/config`: config.yaml's path, schemas and content as the gateway applies it. */
@@ -254,6 +263,12 @@ export function createGateway(options: GatewayOptions = {}): Gateway | null {
     policies: async (call) => request('GET', '/v1/policies', undefined, call),
     setPolicyVariant: async (policy, variant, call) =>
       post(`/v1/policies/${encodeURIComponent(policy)}/variant`, { variant }, call),
+    setPolicyThresholds: async (policy, thresholds, call) =>
+      post(
+        `/v1/policies/${encodeURIComponent(policy)}/thresholds`,
+        { thresholds: { ...thresholds } },
+        call,
+      ),
     reloadPolicies: async (call) => post('/v1/policies/reload', {}, call),
     config: async (call) => request('GET', '/v1/config', undefined, call),
     setRoutingPreset: async (update, call) => post('/v1/routing/presets', { ...update }, call),

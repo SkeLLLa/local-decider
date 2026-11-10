@@ -9,7 +9,8 @@ import { describe, it } from 'node:test';
 
 import { Background } from '../server/background.ts';
 import type { HookDeps } from '../server/deps.ts';
-import { createMcpHandler, mcpServerConfig } from '../server/mcp.ts';
+import { mcpServerConfig } from '../server/mcp.ts';
+import { createOpenHandler, hostEnv } from '../server/open.ts';
 import { allowResponse, createPermissionHandlers } from '../server/permission.ts';
 import { createRoutingHandler, type CreateRequest } from '../server/routing.ts';
 import { createStatusHandler, manualDecide } from '../server/rpc.ts';
@@ -211,6 +212,75 @@ describe('agent.permission.before', () => {
     assert.deepEqual(gw.outcomes, [{ decisionId: 'd-1', outcome: 'deny', source: 'user' }]);
   });
 
+  it('reports one user outcome and redraws the row with it', async () => {
+    const gw = fakeGateway(() => response({ policy: 'permission', action: 'ask' }));
+    const paseo = fakePaseo(turn);
+    const handlers = permissionHandlers(deps(settings(), gw));
+    await handlers.request(paseo);
+    await handlers.after({ agent, requestId: 'r1', resolution: { behavior: 'allow' } });
+    await handlers.after({ agent, requestId: 'r1', resolution: { behavior: 'allow' } });
+    assert.deepEqual(gw.outcomes, [{ decisionId: 'd-1', outcome: 'allow', source: 'user' }]);
+    assert.equal(paseo.agent.appended.length, 2);
+    assert.equal(paseo.agent.appended[1]?.id, paseo.agent.appended[0]?.id, 'same row id');
+    assert.equal(flag(paseo.agent.appended[0], 'feedback'), null);
+    assert.equal(flag(paseo.agent.appended[1], 'feedback'), 'allow');
+  });
+
+  it('keeps a user answer that arrives before the decision lands', async () => {
+    const gate = Promise.withResolvers<void>();
+    const gw = fakeGateway(async () => {
+      await gate.promise;
+      return response({ policy: 'permission', action: 'allow', mode: 'act', enforced: true });
+    });
+    const paseo = fakePaseo(turn);
+    const handlers = createPermissionHandlers(deps(actMode, gw), bg);
+    await handlers.before({ agent, request: toolRequest }, ctx(paseo));
+    // Let the detached task reach `decide`.
+    await new Promise((resolve) => setImmediate(resolve));
+    await handlers.after({ agent, requestId: 'r1', resolution: { behavior: 'deny' } });
+    gate.resolve();
+    await bg.idle();
+    assert.deepEqual(paseo.agent.responses, [], 'no allow after the user answered');
+    assert.deepEqual(gw.outcomes, [{ decisionId: 'd-1', outcome: 'deny', source: 'user' }]);
+    assert.equal(paseo.agent.appended.length, 1);
+    assert.equal(flag(paseo.agent.appended[0], 'feedback'), 'deny');
+    assert.equal(flag(paseo.agent.appended[0], 'applied'), false);
+  });
+
+  it('does not report its own auto-allow when after fires mid-response', async () => {
+    const gw = fakeGateway(() =>
+      response({ policy: 'permission', action: 'allow', mode: 'act', enforced: true }),
+    );
+    let handlers: ReturnType<typeof createPermissionHandlers> | null = null;
+    const paseo = fakePaseo(turn, async () => {
+      await handlers?.after({ agent, requestId: 'r1', resolution: { behavior: 'allow' } });
+    });
+    handlers = createPermissionHandlers(deps(actMode, gw), bg);
+    await handlers.before({ agent, request: toolRequest }, ctx(paseo));
+    await bg.idle();
+    assert.deepEqual(gw.outcomes, []);
+    assert.equal(paseo.agent.appended.length, 1);
+    assert.equal(flag(paseo.agent.appended[0], 'applied'), true);
+    assert.equal(flag(paseo.agent.appended[0], 'feedback'), null);
+  });
+
+  it('reports the user when their answer beat our allow', async () => {
+    const gw = fakeGateway(() =>
+      response({ policy: 'permission', action: 'allow', mode: 'act', enforced: true }),
+    );
+    let handlers: ReturnType<typeof createPermissionHandlers> | null = null;
+    const paseo = fakePaseo(turn, async () => {
+      await handlers?.after({ agent, requestId: 'r1', resolution: { behavior: 'deny' } });
+      throw new Error('Permission request r1 is not pending');
+    });
+    handlers = createPermissionHandlers(deps(actMode, gw), bg);
+    await handlers.before({ agent, request: toolRequest }, ctx(paseo));
+    await bg.idle();
+    assert.deepEqual(gw.outcomes, [{ decisionId: 'd-1', outcome: 'deny', source: 'user' }]);
+    assert.equal(flag(paseo.agent.appended[0], 'applied'), false);
+    assert.equal(flag(paseo.agent.appended[0], 'feedback'), 'deny');
+  });
+
   it('selects the primary allow action when the request offers actions', () => {
     assert.deepEqual(
       allowResponse({
@@ -376,15 +446,28 @@ const open = (purpose: 'interactive' | 'history'): { request: PluginSessionOpenR
 describe('agent.open.before', () => {
   it('injects the gateway MCP server only when enabled', async () => {
     const gw = fakeGateway(() => null);
-    const on = createMcpHandler(deps(settings({ injectMcp: true }), gw), () => undefined);
+    const on = createOpenHandler(deps(settings({ injectMcp: true }), gw), () => undefined);
     const out = await on(open('interactive'));
     assert.deepEqual(out?.mcpServers, {
       'local-decider': { type: 'http', url: 'http://127.0.0.1:8765/mcp' },
     });
     assert.equal(await on(open('history')), undefined);
+    const off = await createOpenHandler(deps(settings(), gw), () => undefined)(open('interactive'));
+    assert.deepEqual(off?.mcpServers, {});
+  });
+
+  it('tells the harness hooks which policies Paseo runs', async () => {
+    const gw = fakeGateway(() => null);
+    const out = await createOpenHandler(deps(settings(), gw), () => undefined)(open('interactive'));
+    assert.equal(out?.env['LOCAL_DECIDER_HOST_POLICIES'], 'turn-outcome,permission,routing');
+  });
+
+  it('keeps policies already listed in the env', () => {
+    const env = hostEnv({ PATH: '/bin', LOCAL_DECIDER_HOST_POLICIES: 'command-risk, routing' });
+    assert.equal(env['PATH'], '/bin');
     assert.equal(
-      await createMcpHandler(deps(settings(), gw), () => undefined)(open('interactive')),
-      undefined,
+      env['LOCAL_DECIDER_HOST_POLICIES'],
+      'command-risk,routing,turn-outcome,permission',
     );
   });
 
