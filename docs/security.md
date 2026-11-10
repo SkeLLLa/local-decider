@@ -30,3 +30,7 @@
 - **CPU latency.** On CPU the 2B model takes seconds per decision, too slow for a per-tool-call
   guard; there it suits shadow logging, turn outcomes and routing hints.
 - **Claude Code auto mode** ignores hook `allow` (anthropics/claude-code#94740).
+- **Service node path.** The systemd unit and launchd plist pin the absolute path of the node
+  that ran `gateway start`; after removing that node version, run `gateway start` again.
+- **Paseo 0.15.3** passes no first prompt to `agent.create.before`, so routing sees only the
+  agent title and rarely fires there.

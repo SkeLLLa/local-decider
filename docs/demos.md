@@ -60,3 +60,23 @@ Codex printed `hook: Stop` / `hook: Stop Completed`; shadow-log records:
 ```
 
 `PermissionRequest` did not fire: the read-only sandbox ran `cat` without asking.
+
+## Paseo 0.15.3 (2026-11-10)
+
+```text
+$ paseo plugin install /home/m03geek/Dev/os/local-decider/packages/paseo-plugin
+local-decider   running   yes   /home/m03geek/Dev/os/local-decider/packages/paseo-plugin
+$ paseo plugin logs local-decider
+2026-11-10T12:49:22.114Z  stdout  [paseo] Loading plugin
+2026-11-10T12:49:22.960Z  stdout  [paseo] Plugin ready
+```
+
+The orchestrator agent's own turn ended (asking the user to reply) and `agent.turn.after`
+classified it:
+
+```text
+12:49:53 paseo turn-outcome shadow action=log outcome=needs_input(0.28) 3574ms
+  probabilities: needs_input 0.46, done 0.40, stuck 0.10, failed 0.04
+```
+
+Low confidence: no rule matched, so the policy default (`log`) applied.
