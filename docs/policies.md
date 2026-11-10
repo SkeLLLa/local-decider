@@ -68,15 +68,19 @@ has the same selector. Each harness maps preset names to models under
 `routing.presets.<harness>` in `config.yaml`; a preset without a mapping changes nothing:
 
 ```sh
-local-decider routing map paseo premium codex/gpt-5.5 full-access   # provider/model, mode
+local-decider routing map paseo premium codex/gpt-5.5 --mode full-access   # provider/model, mode
+local-decider routing map paseo fast codex/gpt-6-luna --thinking xhigh      # thinking level
+local-decider routing map paseo deep --profile design-opus                  # Paseo agent profile
 local-decider routing map claude-code cheap haiku
-local-decider routing map codex premium gpt-5.5
+local-decider routing map codex premium gpt-5.5 --thinking high
 ```
 
 The gateway attaches the harness's target to each routing decision (`route` in the response).
-Paseo switches the new agent's provider, model and mode. Claude Code and Codex cannot switch the
-session model from a hook, so their hint names the model: Claude Code can pass it to the
-subagents it starts, and the user can switch with `/model`.
+Paseo switches the new agent's provider, model, mode and thinking level, or starts it from a Paseo
+agent profile (`--profile`, Paseo only; fields set next to it override the profile). Claude Code
+and Codex cannot switch the session model from a hook, so their hint names the model (and the
+thinking level): Claude Code can pass it to the subagents it starts, and the user can switch with
+`/model`.
 
 Policy files can start with `# yaml-language-server: $schema=../schemas/policy.schema.json` (the
 shipped ones do) to get completion and validation in editors.

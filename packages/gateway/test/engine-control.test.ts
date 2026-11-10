@@ -1,5 +1,14 @@
 import assert from 'node:assert/strict';
-import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import {
+  chmodSync,
+  existsSync,
+  lstatSync,
+  mkdirSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs';
 import { join } from 'node:path';
 import { describe, it } from 'node:test';
 
@@ -268,6 +277,83 @@ describe('EngineControl state', () => {
     assert.equal(control.settings.routing.presets.paseo?.['cheap']?.model, 'claude/haiku');
   });
 
+  it('keeps an outside edit not yet applied when the settings page saves', async () => {
+    const paths = tempPaths();
+    const { control } = setup({ paths, persist: true });
+    const file = join(paths.config, 'config.yaml');
+    control.setPolicyMode('permission', 'act');
+    writeFileSync(file, `${readFileSync(file, 'utf8')}# my note\nlifecycle: { mode: eager }\n`);
+    control.setPolicyMode('turn-outcome', 'act');
+    const text = readFileSync(file, 'utf8');
+    assert.match(text, /# my note/);
+    assert.match(text, /mode: eager/);
+    assert.equal(text.match(/yaml-language-server/g)?.length, 1, 'one schema header');
+    await control.reloadConfig();
+    assert.equal(control.engine.lifecycle.lifecycle, 'eager', 'the watcher path still applies it');
+    writeFileSync(file, 'port: nope\n');
+    assert.throws(() => control.setPolicyMode('permission', 'off'), /invalid; fix them first/);
+    assert.equal(readFileSync(file, 'utf8'), 'port: nope\n', 'the invalid edit is not clobbered');
+  });
+
+  it('removes keys whose section does not exist as a no-op', async () => {
+    const paths = tempPaths();
+    const { control } = setup({ paths, persist: true });
+    control.setRoutingPreset('paseo', 'fast', null);
+    control.setPolicyVariant('routing', 'routing');
+    const flm = fakeFlm(paths);
+    assert.equal((await control.setPath('tools.flm', null)).value, null);
+    assert.ok(flm);
+  });
+
+  it('goes back to the default variant when config.yaml no longer names one', async () => {
+    const paths = tempPaths();
+    const { control, decider } = setup({ paths, persist: true });
+    control.setPolicyVariant('routing', 'routing-budget');
+    writeFileSync(join(paths.config, 'config.yaml'), '# emptied by hand\n');
+    await control.reloadConfig();
+    assert.equal(decider.activeVariant('routing'), 'routing');
+  });
+
+  it('applies the rest of a config change when a policy file is broken, and retries policies', async () => {
+    const paths = tempPaths();
+    const { control } = setup({ paths, persist: true });
+    mkdirSync(join(paths.config, 'policies'), { recursive: true });
+    writeFileSync(join(paths.config, 'policies', 'half.yaml'), 'id: [unclosed');
+    writeFileSync(
+      join(paths.config, 'config.yaml'),
+      'lifecycle: { mode: eager }\npolicies: { routing: { mode: act } }\n',
+    );
+    const { notes } = await control.reloadConfig();
+    assert.match(notes.join('\n'), /policies not reloaded/);
+    assert.equal(control.engine.lifecycle.lifecycle, 'eager');
+    writeFileSync(join(paths.config, 'policies', 'half.yaml'), '');
+    rmSync(join(paths.config, 'policies', 'half.yaml'));
+    assert.deepEqual((await control.reloadConfig()).notes, [], 'retried and applied');
+  });
+
+  it('refuses routing preset changes on a remote (token) gateway', () => {
+    const remote = new EngineControl({
+      store: new MemoryConfigStore(parseConfig({})),
+      paths: tempPaths(),
+      pathsEditable: false,
+      create: (c) => new ModelEngine(c),
+    });
+    assert.throws(() => remote.setRoutingPreset('paseo', 'fast', { model: 'x/y' }), /loopback/);
+  });
+
+  it('writes through a symlinked config.yaml', () => {
+    const paths = tempPaths();
+    mkdirSync(paths.config, { recursive: true });
+    const real = join(paths.data, 'dotfiles-config.yaml');
+    mkdirSync(paths.data, { recursive: true });
+    writeFileSync(real, '# managed elsewhere\n');
+    symlinkSync(real, join(paths.config, 'config.yaml'));
+    const { control } = setup({ paths, persist: true });
+    control.setRoutingPreset('codex', 'deep', { model: 'gpt-6.1-sol', thinking: 'high' });
+    assert.ok(lstatSync(join(paths.config, 'config.yaml')).isSymbolicLink());
+    assert.match(readFileSync(real, 'utf8'), /thinking: high/);
+  });
+
   it('folds a pre-YAML state.json into config.yaml once', () => {
     const paths = tempPaths();
     mkdirSync(paths.data, { recursive: true });
@@ -276,7 +362,7 @@ describe('EngineControl state', () => {
       JSON.stringify({
         selection: { engine: 'fastflowlm', model: 'd3:nano' },
         lifecycle: { lifecycle: 'eager', idleUnloadMinutes: 20 },
-        paths: { 'dirs.hfCache': '/tmp', 'bogus.key': '/x' },
+        paths: { 'dirs.hfCache': '/tmp', 'bogus.key': '/x', 'tools.uv': '' },
         policyModes: { permission: 'act', bad: 'loud' },
         policyVariants: { routing: 'routing-budget' },
       }),
@@ -404,6 +490,27 @@ describe('control routes', () => {
       });
       assert.equal(
         (await post('/v1/routing/presets', { harness: 'x', preset: 'deep', model: 'a' })).status,
+        400,
+      );
+      const profiled = await post('/v1/routing/presets', {
+        harness: 'paseo',
+        preset: 'fast',
+        profile: 'implementer-luna',
+        thinking: 'xhigh',
+      });
+      assert.deepEqual(((await profiled.json()) as { presets: unknown }).presets, {
+        fast: { profile: 'implementer-luna', thinking: 'xhigh' },
+      });
+      await post('/v1/routing/presets', { harness: 'paseo', preset: 'fast' });
+      assert.equal(
+        (
+          await post('/v1/routing/presets', {
+            harness: 'paseo',
+            preset: 'fast',
+            thinking: 'x'.repeat(101),
+            model: 'a/b',
+          })
+        ).status,
         400,
       );
       const described = (await (await fetch(`${gw.url}/v1/config`)).json()) as {

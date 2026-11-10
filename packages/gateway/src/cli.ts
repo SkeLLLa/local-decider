@@ -46,7 +46,8 @@ Usage:
   local-decider policies reload                     re-read policy files without a restart
   local-decider policies prompt [policy]            AI prompt for writing your own variant (routing)
   local-decider routing                             preset → model per harness
-  local-decider routing map <harness> <preset> <model> [mode] | unmap <harness> <preset>
+  local-decider routing map <harness> <preset> [model] [--thinking <level>] [--mode <mode>] [--profile <id>]
+  local-decider routing unmap <harness> <preset>
   local-decider config [path|schema [dir]|check|reload]  config.yaml location, JSON Schemas, validation
 
 Settings live in config.yaml (\`local-decider config path\`); the gateway applies edits to it and

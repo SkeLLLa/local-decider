@@ -81,11 +81,14 @@ export interface Gateway {
   policyPrompt(policy: string, options?: CallOptions): Promise<unknown>;
 }
 
+/** Without a model and a profile, the mapping is removed. */
 export interface PresetUpdate {
   readonly harness: 'paseo';
   readonly preset: string;
-  readonly model: string | null;
+  readonly model?: string;
+  readonly profile?: string;
   readonly mode?: string;
+  readonly thinking?: string;
 }
 
 export interface Lifecycle {

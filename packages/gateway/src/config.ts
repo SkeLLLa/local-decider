@@ -69,6 +69,7 @@ const presetTargetSchema = z
       .string()
       .min(1)
       .max(300)
+      .optional()
       .describe(
         'Model the harness switches to or is told about. Paseo: `provider/model` (e.g. `claude/haiku`); Claude Code: `haiku`, `sonnet`, `opus` or a full id; Codex: a model id.',
       ),
@@ -79,8 +80,27 @@ const presetTargetSchema = z
       .describe(
         'Paseo only: provider mode id for the new agent; unset keeps the provider default.',
       ),
+    thinking: z
+      .string()
+      .max(100)
+      .optional()
+      .describe(
+        'Thinking or reasoning level, e.g. `low`, `high`, `xhigh`, `max` (Paseo: the thinking option id of the model). Paseo applies it; Claude Code and Codex hints name it.',
+      ),
+    profile: z
+      .string()
+      .max(200)
+      .optional()
+      .describe(
+        'Paseo only: id of a Paseo agent profile (provider, model, mode, thinking, features). Fields set here override the profile.',
+      ),
+  })
+  .refine((t) => t.model !== undefined || t.profile !== undefined, {
+    message: 'a preset target needs a model or a profile',
   })
   .describe('Where one routing preset sends a task in one harness.');
+
+export type PresetTarget = z.infer<typeof presetTargetSchema>;
 
 const routingSchema = z
   .strictObject({

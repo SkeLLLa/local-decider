@@ -21,7 +21,7 @@ import {
   type PolicyVariants,
   type RoutingSettings,
 } from '../shared/policies.ts';
-import { parsePresetModel, presetModelOptions, withCurrent } from '../shared/presets.ts';
+import { modelThinking, presetModelOptions } from '../shared/presets.ts';
 import {
   policyVariantRpc,
   policyVariantsRpc,
@@ -30,6 +30,7 @@ import {
   routingSettingsRpc,
 } from '../shared/rpc.ts';
 import { outcomeOf, useAction } from './hooks.ts';
+import { PresetTable } from './preset-table.tsx';
 import type { SectionProps } from './settings-common.ts';
 import { InlineMessage, Mono, type Theme } from './ui.tsx';
 import { WritePolicyRows } from './write-policy.tsx';
@@ -103,71 +104,6 @@ function useLegacyPresetMove(
       await queryClient.invalidateQueries({ queryKey: ['local-decider', 'routing-settings'] });
     });
   }, [routing, values, save, setPreset, queryClient]);
-}
-
-type ModelOptions = readonly { label: string; value: string }[];
-
-function PresetRows({
-  preset,
-  used,
-  target,
-  modelOptions,
-}: {
-  preset: string;
-  used: boolean;
-  target: { model: string; mode?: string | undefined } | undefined;
-  modelOptions: ModelOptions;
-}): ReactNode {
-  const paseo = usePaseo();
-  const setPreset = useRpc(routingPresetRpc);
-  const queryClient = useQueryClient();
-  const setting = { model: target?.model ?? '', modeId: target?.mode ?? '' };
-  const provider = parsePresetModel(setting.model)?.provider ?? null;
-  const modes = useQuery({
-    queryKey: ['local-decider', 'provider-modes', provider],
-    queryFn: async () => (provider === null ? null : paseo.providers.listModes(provider)),
-    enabled: provider !== null,
-    staleTime: Number.POSITIVE_INFINITY,
-    retry: false,
-  });
-  const modeOptions = withCurrent(
-    [
-      { label: 'Provider default', value: '' },
-      ...(modes.data?.modes ?? []).map((m) => ({ label: m.label, value: m.id })),
-    ],
-    setting.modeId,
-  );
-  const write = async (model: string | null, modeId: string): Promise<void> => {
-    await setPreset({ preset, model, ...(modeId === '' ? {} : { mode: modeId }) });
-    await queryClient.invalidateQueries({ queryKey: ['local-decider', 'routing-settings'] });
-  };
-  const update = (next: { model?: string; modeId?: string }): void => {
-    const model = next.model ?? setting.model;
-    void write(model === '' ? null : model, next.modeId ?? setting.modeId);
-  };
-  const remove = (): void => void write(null, '');
-  return (
-    <>
-      <SettingsSelect
-        label={`route:${preset}`}
-        {...(used ? {} : { hint: 'Not used by the selected routing policy.' })}
-        value={setting.model}
-        options={withCurrent(modelOptions, setting.model)}
-        onValueChange={(model) => update({ model, modeId: '' })}
-      />
-      {provider === null ? null : (
-        <SettingsSelect
-          label={`route:${preset} mode`}
-          value={setting.modeId}
-          options={modeOptions}
-          onValueChange={(modeId) => update({ modeId })}
-        />
-      )}
-      {used ? null : (
-        <SettingsAction label={`route:${preset}`} actionLabel="Remove" onPress={remove} />
-      )}
-    </>
-  );
 }
 
 /** The variant select, where the settings live, and a reload button. */
@@ -289,15 +225,13 @@ export function RoutingSection({
         {routingError === null ? null : (
           <InlineMessage theme={theme} tone="error" text={routingError} />
         )}
-        {presetRows(routes, presets).map(({ name, used }) => (
-          <PresetRows
-            key={name}
-            preset={name}
-            used={used}
-            target={presets[name]}
-            modelOptions={modelOptions}
-          />
-        ))}
+        <PresetTable
+          theme={theme}
+          rows={presetRows(routes, presets)}
+          presets={presets}
+          models={modelOptions}
+          thinking={modelThinking(models.data ?? [])}
+        />
         <WritePolicyRows theme={theme} navigation={navigation} modelOptions={modelOptions} />
         <ProviderModelsRow models={models} />
       </SettingsCard>

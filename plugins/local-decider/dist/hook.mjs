@@ -538,14 +538,34 @@ function permissionAllow() {
   });
 }
 var MODEL_ID = /^[\w.:@+/[\]-]{1,200}$/;
-function routingAdvice(harness, model) {
-  return harness === "claude" ? ` Start subagents for it with model "${model}"; to run this session on it, the user can type /model ${model}.` : ` To run this session on it, the user can type /model and pick ${model}.`;
+var THINKING_LEVEL = /^[a-z][a-z0-9-]{0,30}$/;
+function adviceOf(res) {
+  const model = res.route?.model;
+  if (model === void 0 || !MODEL_ID.test(model)) {
+    return void 0;
+  }
+  const thinking = res.route?.thinking;
+  return thinking !== void 0 && THINKING_LEVEL.test(thinking) ? { model, thinking } : { model };
+}
+function targetLabel(harness, advice) {
+  if (advice.thinking === void 0) {
+    return `model ${advice.model}`;
+  }
+  const kind = harness === "claude" ? "effort" : "reasoning";
+  return `model ${advice.model}, ${kind} ${advice.thinking}`;
+}
+function routingAdvice(harness, { model, thinking }) {
+  if (harness === "claude") {
+    const effort = thinking === void 0 ? "" : ` and set effort ${thinking}`;
+    return ` Start subagents for it with model "${model}"; to run this session on it, the user can type /model ${model}${effort}.`;
+  }
+  const reasoning = thinking === void 0 ? "" : ` with ${thinking} reasoning`;
+  return ` To run this session on it, the user can type /model and pick ${model}${reasoning}.`;
 }
 function routingContext(harness, res) {
   const preset = res.action.slice("route:".length);
-  const model = res.route?.model;
-  const mapped = model !== void 0 && MODEL_ID.test(model);
-  const text = mapped ? `${PREFIX}: routing suggests the "${preset}" preset (model ${model}) for this task.${routingAdvice(harness, model)}` : `${PREFIX}: routing suggests the "${preset}" model preset for this task.`;
+  const advice = adviceOf(res);
+  const text = advice === void 0 ? `${PREFIX}: routing suggests the "${preset}" model preset for this task.` : `${PREFIX}: routing suggests the "${preset}" preset (${targetLabel(harness, advice)}) for this task.${routingAdvice(harness, advice)}`;
   return json({
     hookSpecificOutput: { hookEventName: "UserPromptSubmit", additionalContext: text }
   });

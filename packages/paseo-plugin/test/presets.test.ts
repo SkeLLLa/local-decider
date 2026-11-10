@@ -6,6 +6,7 @@ import {
   parsePresetModel,
   presetFromAction,
   presetModelOptions,
+  modelThinking,
   presetTarget,
   routeTarget,
   withCurrent,
@@ -57,6 +58,89 @@ describe('presets', () => {
     });
     assert.equal(routeTarget({ model: 'haiku' }), null, 'not provider/model');
     assert.equal(routeTarget({ model: 42 }), null);
+  });
+
+  it('expands a Paseo profile, letting fields set beside it win', () => {
+    const profiles = [
+      {
+        id: 'implementer-luna',
+        name: 'Implementer · Luna max',
+        provider: 'codex',
+        model: 'gpt-6-luna',
+        modeId: 'auto',
+        thinkingOptionId: 'max',
+        featureValues: { fast: true },
+      },
+    ];
+    assert.deepEqual(routeTarget({ profile: 'implementer-luna' }, profiles), {
+      provider: 'codex',
+      model: 'gpt-6-luna',
+      modeId: 'auto',
+      thinkingOptionId: 'max',
+      featureValues: { fast: true },
+    });
+    assert.equal(
+      routeTarget({ profile: 'implementer-luna', thinking: 'xhigh' }, profiles)?.thinkingOptionId,
+      'xhigh',
+    );
+    assert.equal(routeTarget({ profile: 'gone' }, profiles), null, 'unknown profile, no model');
+    assert.deepEqual(routeTarget({ model: 'codex/gpt-6-luna', thinking: 'xhigh' }), {
+      provider: 'codex',
+      model: 'gpt-6-luna',
+      modeId: '',
+      thinkingOptionId: 'xhigh',
+    });
+  });
+
+  it('applies thinking level and feature values, on the same or another provider', () => {
+    const target = {
+      provider: 'codex',
+      model: 'gpt-6-luna',
+      modeId: '',
+      thinkingOptionId: 'xhigh',
+    };
+    assert.deepEqual(
+      applyPreset(
+        { provider: 'codex', cwd: '/p', model: 'gpt-6-sol', thinkingOptionId: 'low' },
+        target,
+      ),
+      { provider: 'codex', cwd: '/p', model: 'gpt-6-luna', thinkingOptionId: 'xhigh' },
+    );
+    assert.deepEqual(
+      applyPreset(
+        { provider: 'claude', cwd: '/p', model: 'opus', thinkingOptionId: 'high' },
+        { ...target, featureValues: { fast: true } },
+      ),
+      {
+        provider: 'codex',
+        cwd: '/p',
+        model: 'gpt-6-luna',
+        thinkingOptionId: 'xhigh',
+        featureValues: { fast: true },
+      },
+    );
+  });
+
+  it('lists thinking options per model', () => {
+    const thinking = modelThinking([
+      {
+        provider: 'codex',
+        models: [
+          {
+            id: 'gpt-6-luna',
+            label: 'GPT-6-Luna',
+            thinkingOptions: [{ id: 'xhigh', label: 'xhigh' }],
+            defaultThinkingOptionId: 'medium',
+          },
+          { id: 'plain', label: 'Plain' },
+        ],
+      },
+    ]);
+    assert.deepEqual(thinking.get('codex/gpt-6-luna'), {
+      options: [{ label: 'xhigh', value: 'xhigh' }],
+      defaultId: 'medium',
+    });
+    assert.equal(thinking.has('codex/plain'), false);
   });
 
   it('changes only the model on the same provider', () => {

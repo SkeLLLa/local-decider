@@ -17,16 +17,20 @@ changes. Paseo's settings page writes to the same file.
    - `local-decider policies mode <policy> off|shadow|act`
    - `local-decider policies use routing <variant>` (e.g. `routing-budget`, `routing-task-kind`)
    - `local-decider routing` shows preset targets; `local-decider routing map <harness> <preset>
-     <model> [mode]` and `local-decider routing unmap <harness> <preset>` change them. Harness ids
-     are `paseo` (model as `provider/model`, optional mode id), `claude-code` (`haiku`, `sonnet`,
-     `opus` or a full model id) and `codex` (a model id).
+     <model> [--thinking <level>] [--mode <mode>]` and `local-decider routing unmap <harness>
+     <preset>` change them. Harness ids are `paseo` (model as `provider/model`, plus optional
+     `--mode <mode-id>` and `--profile <paseo-profile-id>`), `claude-code` (`haiku`, `sonnet`,
+     `opus` or a full model id) and `codex` (a model id). `--thinking` sets a thinking or
+     reasoning level such as `low`, `medium`, `high`, `xhigh` or `max`.
 4. Or edit `config.yaml` directly, keeping its comments, then run `local-decider config check`.
    The keys are `policies.<id>.mode`, `policies.<id>.variant` and
-   `routing.presets.<harness>.<preset>.model`/`.mode`.
+   `routing.presets.<harness>.<preset>.model`/`.thinking`/`.mode`/`.profile` (`mode` and
+   `profile` apply to Paseo only).
 5. Changes to `host`, `port`, `engine` or `decisionTimeoutMs` need
    `local-decider gateway restart`; everything else applies within a second.
 
 Policies ship in shadow mode. Confirm with the user before switching one to `act`, because
 the hooks then change behaviour (auto-allowing permission requests, denying risky commands).
 Claude Code and Codex cannot switch the session model from a hook: a mapped routing preset is
-passed to the session as advice naming the model.
+passed to the session as advice naming the model and, when mapped, the thinking level (the user
+sets it with `/model` and the harness's effort or reasoning control).

@@ -88,6 +88,8 @@ routing:
     paseo:
       cheap: { model: claude/haiku }              # provider/model, optional mode: <mode id>
       premium: { model: codex/gpt-5.5, mode: full-access }
+      fast: { model: codex/gpt-6-luna, thinking: xhigh }   # thinking/reasoning level
+      deep: { profile: design-opus }              # Paseo only: a Paseo agent profile id
     claude-code:
       cheap: { model: haiku }                     # named in the hook's hint; Claude Code passes it to subagents
     codex:

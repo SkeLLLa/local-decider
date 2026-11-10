@@ -15,7 +15,13 @@ describe('routing presets per harness', () => {
     const gw = await startGateway({
       config: testConfig({
         policies: { routing: { mode: 'act' } },
-        routing: { presets: { 'claude-code': { fast: { model: 'haiku' } } } },
+        routing: {
+          presets: {
+            'claude-code': { fast: { model: 'haiku' } },
+            'paseo': { fast: { profile: 'implementer-luna', thinking: 'xhigh' } },
+            'codex': { fast: { model: 'gpt-6-luna', thinking: 'xhigh' } },
+          },
+        },
       }),
       paths,
       engine: new FakeEngine({ fast: 0.9, standard: 0.05, deep: 0.05 }),
@@ -33,7 +39,17 @@ describe('routing presets per harness', () => {
       const claude = await decide('claude-code');
       assert.equal(claude['action'], 'route:fast');
       assert.deepEqual(claude['route'], { preset: 'fast', model: 'haiku' });
-      assert.equal((await decide('codex'))['route'], undefined, 'codex has no mapping');
+      assert.deepEqual((await decide('codex'))['route'], {
+        preset: 'fast',
+        model: 'gpt-6-luna',
+        thinking: 'xhigh',
+      });
+      assert.deepEqual((await decide('paseo'))['route'], {
+        preset: 'fast',
+        thinking: 'xhigh',
+        profile: 'implementer-luna',
+      });
+      assert.equal((await decide('mcp'))['route'], undefined, 'mcp has no mapping');
     } finally {
       await gw.close();
     }

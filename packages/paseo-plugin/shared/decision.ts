@@ -50,10 +50,14 @@ export interface UsageReport {
 /** A routing preset resolved for one harness (`routing.presets.<harness>.<preset>`). */
 export interface RouteTarget {
   readonly preset: string;
-  /** Paseo: `provider/model`; Claude Code and Codex: a model name or id. */
-  readonly model: string;
+  /** Paseo: `provider/model`; Claude Code and Codex: a model name or id. Absent with a profile. */
+  readonly model?: string;
   /** Paseo only: provider mode id. */
   readonly mode?: string;
+  /** Thinking or reasoning level (Paseo: thinking option id). */
+  readonly thinking?: string;
+  /** Paseo only: agent profile id; the plugin expands it. */
+  readonly profile?: string;
 }
 
 export interface DecideResponse {

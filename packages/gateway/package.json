@@ -31,7 +31,7 @@
   },
   "scripts": {
     "build": "rm -rf dist policies schemas && tsc -p tsconfig.build.json && cp -r ../../policies policies && cp -r ../../schemas schemas",
-    "schemas": "node --conditions=source src/cli.ts config schema ../../schemas",
+    "schemas": "node --conditions=source src/cli.ts config schema ../../schemas && cd ../.. && oxfmt schemas",
     "test": "node --test --conditions=source --experimental-test-coverage --test-coverage-include='src/**' 'test/**/*.test.ts'",
     "typecheck": "tsc -p tsconfig.json"
   },

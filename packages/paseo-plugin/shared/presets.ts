@@ -1,10 +1,29 @@
-/** Routing presets (`route:<preset>`) → a Paseo provider/model/mode, and model lists. */
+/**
+ * Routing presets (`route:<preset>`) → a Paseo provider, model, mode and thinking level (or a
+ * Paseo agent profile that bundles them), and model lists.
+ */
 
 export interface PresetTarget {
   readonly provider: string;
+  /** '' = the provider's default model. */
   readonly model: string;
   /** '' = leave the provider's default mode. */
   readonly modeId: string;
+  /** '' = the model's default thinking option. */
+  readonly thinkingOptionId?: string;
+  /** From a profile; replaces the agent's feature values. */
+  readonly featureValues?: Record<string, unknown>;
+}
+
+/** The fields of a Paseo agent profile routing uses (`paseo.config.get()` → `agentProfiles`). */
+export interface ProfileLike {
+  readonly id: string;
+  readonly name?: string;
+  readonly provider: string;
+  readonly model?: string | undefined;
+  readonly modeId?: string | undefined;
+  readonly thinkingOptionId?: string | undefined;
+  readonly featureValues?: Record<string, unknown> | undefined;
 }
 
 export interface PresetSetting {
@@ -43,11 +62,43 @@ export function presetTarget(
   return parsed === null ? null : { ...parsed, modeId: setting.modeId.trim() };
 }
 
-/** The gateway's resolved `route` (`provider/model`, optional mode) as a target, or null. */
-export function routeTarget(route: { model: unknown; mode?: unknown }): PresetTarget | null {
-  const parsed = typeof route.model === 'string' ? parsePresetModel(route.model.trim()) : null;
-  const modeId = typeof route.mode === 'string' ? route.mode.trim() : '';
-  return parsed === null ? null : { ...parsed, modeId };
+function text(value: unknown): string {
+  return typeof value === 'string' ? value.trim() : '';
+}
+
+function profileTarget(profile: ProfileLike): PresetTarget {
+  return {
+    provider: profile.provider,
+    model: text(profile.model),
+    modeId: text(profile.modeId),
+    thinkingOptionId: text(profile.thinkingOptionId),
+    ...(profile.featureValues === undefined ? {} : { featureValues: profile.featureValues }),
+  };
+}
+
+/**
+ * The gateway's resolved `route` as a target, or null when it names neither a usable
+ * `provider/model` nor a known profile. Fields set beside a profile override it.
+ */
+export function routeTarget(
+  route: { model?: unknown; mode?: unknown; thinking?: unknown; profile?: unknown },
+  profiles: readonly ProfileLike[] = [],
+): PresetTarget | null {
+  const profileId = text(route.profile);
+  const profile = profileId === '' ? undefined : profiles.find((p) => p.id === profileId);
+  const parsed = text(route.model) === '' ? null : parsePresetModel(text(route.model));
+  const base = profile === undefined ? null : profileTarget(profile);
+  const target = parsed === null ? base : { modeId: '', ...base, ...parsed };
+  if (target === null) {
+    return null;
+  }
+  const modeId = text(route.mode);
+  const thinking = text(route.thinking);
+  return {
+    ...target,
+    ...(modeId === '' ? {} : { modeId }),
+    ...(thinking === '' ? {} : { thinkingOptionId: thinking }),
+  };
 }
 
 interface ConfigLike {
@@ -59,32 +110,35 @@ interface ConfigLike {
   readonly featureValues?: Record<string, unknown>;
 }
 
+/** The fields a target sets; empty ones keep what the agent (or the provider default) has. */
+function targetFields(target: PresetTarget): Record<string, unknown> {
+  const thinking = target.thinkingOptionId ?? '';
+  return {
+    ...(target.model === '' ? {} : { model: target.model }),
+    ...(target.modeId === '' ? {} : { modeId: target.modeId }),
+    ...(thinking === '' ? {} : { thinkingOptionId: thinking }),
+    ...(target.featureValues === undefined ? {} : { featureValues: target.featureValues }),
+  };
+}
+
 /**
- * Apply a preset to an agent config. Same provider: change model (and mode when the preset names
- * one). Another provider: provider-specific fields (mode, thinking option, provider options,
- * feature values) are dropped so the new provider starts from its defaults.
+ * Apply a preset to an agent config. Same provider: change model, and mode, thinking option and
+ * feature values when the preset names them. Another provider: provider-specific fields are
+ * dropped first so the new provider starts from its defaults.
  */
 export function applyPreset<C extends ConfigLike>(config: C, target: PresetTarget): C {
   if (config.provider === target.provider) {
-    return {
-      ...config,
-      model: target.model,
-      ...(target.modeId === '' ? {} : { modeId: target.modeId }),
-    };
+    return { ...config, ...targetFields(target) };
   }
   const {
     modeId: _mode,
     thinkingOptionId: _thinking,
     providerOptions: _options,
     featureValues: _features,
+    model: _model,
     ...rest
   } = config;
-  return {
-    ...rest,
-    provider: target.provider,
-    model: target.model,
-    ...(target.modeId === '' ? {} : { modeId: target.modeId }),
-  } as unknown as C;
+  return { ...rest, provider: target.provider, ...targetFields(target) } as unknown as C;
 }
 
 export interface ModelOption {
@@ -99,8 +153,38 @@ interface ProviderModelsLike {
         readonly id: string;
         readonly label: string;
         readonly isSelectable?: boolean | undefined;
+        readonly thinkingOptions?:
+          | readonly { readonly id: string; readonly label: string }[]
+          | null
+          | undefined;
+        readonly defaultThinkingOptionId?: string | null | undefined;
       }[]
     | undefined;
+}
+
+export interface ThinkingChoices {
+  readonly options: readonly ModelOption[];
+  /** The model's own default, shown as the unset choice. */
+  readonly defaultId: string;
+}
+
+/** `provider/model` → its thinking options, for models that have any. */
+export function modelThinking(
+  results: readonly ProviderModelsLike[],
+): ReadonlyMap<string, ThinkingChoices> {
+  const out = new Map<string, ThinkingChoices>();
+  for (const result of results) {
+    for (const model of result.models ?? []) {
+      const options = model.thinkingOptions ?? [];
+      if (options.length > 0) {
+        out.set(`${result.provider}/${model.id}`, {
+          options: options.map((o) => ({ label: o.label || o.id, value: o.id })),
+          defaultId: model.defaultThinkingOptionId ?? '',
+        });
+      }
+    }
+  }
+  return out;
 }
 
 /** Options for the preset selects, from `providers.listModels()` results. */

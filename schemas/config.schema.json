@@ -217,18 +217,27 @@
               "type": "object",
               "properties": {
                 "model": {
+                  "description": "Model the harness switches to or is told about. Paseo: `provider/model` (e.g. `claude/haiku`); Claude Code: `haiku`, `sonnet`, `opus` or a full id; Codex: a model id.",
                   "type": "string",
                   "minLength": 1,
-                  "maxLength": 300,
-                  "description": "Model the harness switches to or is told about. Paseo: `provider/model` (e.g. `claude/haiku`); Claude Code: `haiku`, `sonnet`, `opus` or a full id; Codex: a model id."
+                  "maxLength": 300
                 },
                 "mode": {
                   "description": "Paseo only: provider mode id for the new agent; unset keeps the provider default.",
                   "type": "string",
                   "maxLength": 200
+                },
+                "thinking": {
+                  "description": "Thinking or reasoning level, e.g. `low`, `high`, `xhigh`, `max` (Paseo: the thinking option id of the model). Paseo applies it; Claude Code and Codex hints name it.",
+                  "type": "string",
+                  "maxLength": 100
+                },
+                "profile": {
+                  "description": "Paseo only: id of a Paseo agent profile (provider, model, mode, thinking, features). Fields set here override the profile.",
+                  "type": "string",
+                  "maxLength": 200
                 }
               },
-              "required": ["model"],
               "additionalProperties": false,
               "description": "Where one routing preset sends a task in one harness."
             }

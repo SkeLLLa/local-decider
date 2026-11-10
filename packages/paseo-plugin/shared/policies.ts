@@ -60,10 +60,15 @@ export function parsePolicyVariants(body: unknown, id: string): PolicyVariants {
  */
 export function presetRows(
   routes: readonly string[],
-  saved: Readonly<Record<string, { readonly model: string }>>,
+  saved: Readonly<
+    Record<string, { readonly model?: string | undefined; readonly profile?: string | undefined }>
+  >,
 ): { name: string; used: boolean }[] {
   const extra = Object.entries(saved)
-    .filter(([name, setting]) => setting.model !== '' && !routes.includes(name))
+    .filter(
+      ([name, setting]) =>
+        ((setting.model ?? '') !== '' || setting.profile !== undefined) && !routes.includes(name),
+    )
     .map(([name]) => name)
     .toSorted();
   return [
@@ -73,9 +78,12 @@ export function presetRows(
 }
 
 const presetTargetSchema = z.object({
-  model: z.string().max(300),
+  model: z.string().max(300).optional(),
   mode: z.string().max(200).optional(),
+  thinking: z.string().max(100).optional(),
+  profile: z.string().max(200).optional(),
 });
+export type PresetTargetSetting = z.output<typeof presetTargetSchema>;
 
 export const routingSettingsSchema = z.object({
   ok: z.boolean(),

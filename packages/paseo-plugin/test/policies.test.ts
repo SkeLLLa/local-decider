@@ -123,13 +123,13 @@ describe('routing settings in config.yaml', () => {
       presets: { cheap: { model: 'claude/haiku' } },
     });
     await setRoutingPreset(d, { preset: 'deep', model: 'codex/gpt-5.5', mode: 'full-access' });
-    await setRoutingPreset(d, { preset: 'cheap', model: null, mode: '' });
+    await setRoutingPreset(d, { preset: 'cheap', mode: '' });
     assert.deepEqual(gw.posts, [
       {
         name: 'setRoutingPreset',
         input: { harness: 'paseo', preset: 'deep', model: 'codex/gpt-5.5', mode: 'full-access' },
       },
-      { name: 'setRoutingPreset', input: { harness: 'paseo', preset: 'cheap', model: null } },
+      { name: 'setRoutingPreset', input: { harness: 'paseo', preset: 'cheap' } },
     ]);
   });
 

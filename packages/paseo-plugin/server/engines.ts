@@ -201,19 +201,27 @@ export async function routingSettings(deps: Pick<HookDeps, 'gateway'>): Promise<
 }
 
 /** Map one Paseo preset in config.yaml, or remove it with a null model. */
+/** Map one Paseo preset in config.yaml to a model or a profile; with neither, remove it. */
 export async function setRoutingPreset(
   deps: Deps,
-  input: { preset: string; model: string | null; mode?: string | undefined },
+  input: {
+    preset: string;
+    model?: string | undefined;
+    profile?: string | undefined;
+    mode?: string | undefined;
+    thinking?: string | undefined;
+  },
 ): Promise<{ ok: boolean; error: string | null }> {
-  const update = {
-    harness: 'paseo' as const,
-    preset: input.preset,
-    model: input.model,
-    ...(input.mode === undefined || input.mode === '' ? {} : { mode: input.mode }),
-  };
+  const fields = Object.fromEntries(
+    (['model', 'profile', 'mode', 'thinking'] as const)
+      .map((key) => [key, input[key]?.trim() ?? ''] as const)
+      .filter(([, value]) => value !== ''),
+  );
+  const update = { harness: 'paseo' as const, preset: input.preset, ...fields };
+  const label = fields['profile'] ?? fields['model'] ?? 'unmapped';
   const { ok, error } = await call(
     deps,
-    `route:${input.preset} → ${input.model ?? 'unmapped'}`,
+    `route:${input.preset} → ${label}`,
     async (gw) => gw.setRoutingPreset(update, { timeoutMs: 10_000 }),
     () => null,
   );

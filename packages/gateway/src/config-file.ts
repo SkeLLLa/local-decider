@@ -7,6 +7,7 @@ import {
   existsSync,
   mkdirSync,
   readFileSync,
+  realpathSync,
   renameSync,
   watch,
   writeFileSync,
@@ -36,7 +37,7 @@ export interface ConfigStore {
 }
 
 /** Relative to the config dir, so the same header works wherever that dir is. */
-const CONFIG_SCHEMA_HEADER = ' yaml-language-server: $schema=schemas/config.schema.json';
+const CONFIG_SCHEMA_HEADER = '# yaml-language-server: $schema=schemas/config.schema.json\n';
 
 /** Remove maps an edit left empty, so removing the last key of a section drops the section. */
 function prune(doc: Document, path: readonly string[]): void {
@@ -56,8 +57,12 @@ function applyEdits(doc: Document, edits: readonly ConfigEdit[]): void {
   }
   for (const { path, value } of edits) {
     if (value === undefined) {
-      doc.deleteIn(path);
-      prune(doc, path);
+      // deleteIn throws when a parent is missing; nothing to remove then.
+      const parent = path.length > 1 ? doc.getIn(path.slice(0, -1), true) : doc.contents;
+      if (isMap(parent) && doc.hasIn(path)) {
+        doc.deleteIn(path);
+        prune(doc, path);
+      }
     } else {
       doc.setIn(path, value);
     }
@@ -122,31 +127,57 @@ export class ConfigFile implements ConfigStore {
     const store = new ConfigFile(paths.config, file, text, parseText(text, file).config);
     const legacy = join(paths.data, 'state.json');
     if (existsSync(legacy)) {
-      const edits = stateEdits(legacy);
-      if (edits.length > 0) {
-        store.update(edits);
+      // One edit at a time: a value the schema now rejects is dropped, not fatal.
+      for (const edit of stateEdits(legacy)) {
+        try {
+          store.update([edit]);
+        } catch {
+          // Skipped; the original stays in state.json.migrated.
+        }
       }
       renameSync(legacy, `${legacy}.migrated`);
     }
     return store;
   }
 
+  /** The file's text now, adopting an outside edit; throws when that edit is invalid. */
+  #latest(): string {
+    const text = existsSync(this.file) ? readFileSync(this.file, 'utf8') : '';
+    if (text !== this.#text) {
+      try {
+        this.#current = parseText(text, this.file).config;
+      } catch (error) {
+        throw new Error(
+          `not saved: ${this.file} has unsaved-over changes that are invalid; fix them first (${error instanceof Error ? error.message : String(error)})`,
+          { cause: error },
+        );
+      }
+      this.#text = text;
+    }
+    return text;
+  }
+
   get current(): GatewayConfig {
     return this.#current;
   }
 
+  /**
+   * Edit the file as it is on disk now, so an outside edit not yet applied is kept rather than
+   * overwritten (the watcher applies it). A symlinked config.yaml is written through the link.
+   */
   update(edits: readonly ConfigEdit[]): GatewayConfig {
-    const { doc } = parseText(this.#text, this.file);
+    const { doc } = parseText(this.#latest(), this.file);
     applyEdits(doc, edits);
-    if (!(doc.commentBefore ?? '').includes('yaml-language-server')) {
-      doc.commentBefore = [CONFIG_SCHEMA_HEADER, doc.commentBefore].filter(Boolean).join('\n');
-    }
-    const text = doc.toString();
+    const body = doc.toString();
+    const text = body.includes('yaml-language-server: $schema=')
+      ? body
+      : CONFIG_SCHEMA_HEADER + body;
     const config = parseText(text, this.file).config;
     mkdirSync(this.#dir, { recursive: true, mode: 0o700 });
-    const tmp = `${this.file}.${String(process.pid)}.tmp`;
+    const target = existsSync(this.file) ? realpathSync(this.file) : this.file;
+    const tmp = `${target}.${String(process.pid)}.tmp`;
     writeFileSync(tmp, text, { mode: 0o600 });
-    renameSync(tmp, this.file);
+    renameSync(tmp, target);
     this.#text = text;
     this.#current = config;
     return config;

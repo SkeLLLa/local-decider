@@ -4,6 +4,7 @@
  */
 import { HARNESSES, MODES } from '@local-decider/core';
 import { join } from 'node:path';
+import { parseArgs } from 'node:util';
 
 import { ConfigFile, type ConfigEdit } from './config-file.ts';
 import type { Paths } from './paths.ts';
@@ -47,18 +48,94 @@ export function configCommand(paths: Paths, args: readonly string[]): string {
   throw new SettingsUsageError();
 }
 
-/** `routing [map <harness> <preset> <model> [mode] | unmap <harness> <preset>]`. */
+type Target = { model?: string; mode?: string; thinking?: string; profile?: string };
+
+const MAP_OPTIONS = {
+  thinking: { type: 'string' },
+  mode: { type: 'string' },
+  profile: { type: 'string' },
+} as const;
+
+/** Fields only Paseo can apply (it starts the agent); other harnesses only get a hint. */
+const PASEO_ONLY = {
+  mode: 'a hook cannot switch the session mode',
+  profile: 'it names a Paseo agent profile',
+} as const;
+
+function parseMapArgs(args: readonly string[]): {
+  positionals: string[];
+  values: Partial<Record<keyof typeof MAP_OPTIONS, string>>;
+} {
+  try {
+    return parseArgs({
+      args: [...args],
+      options: MAP_OPTIONS,
+      strict: true,
+      allowPositionals: true,
+    });
+  } catch (error) {
+    throw new SettingsUsageError(error instanceof Error ? error.message : String(error));
+  }
+}
+
+/** `<harness> <preset> [model] [mode] [--thinking l] [--mode m] [--profile id]` → a target. */
+function mapTarget(args: readonly string[]): { harness: string; preset: string; target: Target } {
+  const { positionals, values } = parseMapArgs(args);
+  const [harnessArg, preset, model, positionalMode, ...extra] = positionals;
+  if (preset === undefined || extra.length > 0) throw new SettingsUsageError();
+  const harness = harnessOf(harnessArg);
+  if (positionalMode !== undefined && values.mode !== undefined) {
+    throw new SettingsUsageError('give the mode either positionally or with --mode, not both');
+  }
+  const target = definedFields({ model, ...values, mode: values.mode ?? positionalMode });
+  if (target.model === undefined && target.profile === undefined) {
+    throw new SettingsUsageError('routing map needs a model or --profile <id>');
+  }
+  checkHarnessFields(harness, target);
+  return { harness, preset, target };
+}
+
+function definedFields(target: Record<string, string | undefined>): Target {
+  return Object.fromEntries(Object.entries(target).filter(([, v]) => v !== undefined));
+}
+
+function checkHarnessFields(harness: string, target: Target): void {
+  if (harness === 'paseo') return;
+  for (const [field, why] of Object.entries(PASEO_ONLY)) {
+    if (target[field as keyof typeof PASEO_ONLY] !== undefined) {
+      throw new SettingsUsageError(`--${field} is Paseo only (${why}), not for ${harness}`);
+    }
+  }
+}
+
+/** `codex/gpt-6-luna (thinking xhigh)` or `profile design-opus`. */
+function describeTarget({ model, profile, mode, thinking }: Target): string {
+  const head = model ?? `profile ${String(profile)}`;
+  const extras = [
+    model !== undefined && profile !== undefined ? `profile ${profile}` : undefined,
+    mode === undefined ? undefined : `mode ${mode}`,
+    thinking === undefined ? undefined : `thinking ${thinking}`,
+  ].filter((part) => part !== undefined);
+  return extras.length === 0 ? head : `${head} (${extras.join(', ')})`;
+}
+
+function mapPreset(paths: Paths, args: readonly string[]): string {
+  const { harness, preset, target } = mapTarget(args);
+  edit(paths, [{ path: ['routing', 'presets', harness, preset], value: target }]);
+  return `route:${preset} → ${describeTarget(target)} for ${harness}`;
+}
+
+/**
+ * `routing [map <harness> <preset> [model] [--thinking l] [--mode m] [--profile id]
+ * | unmap <harness> <preset>]`. The old positional `[mode]` after the model still works.
+ */
 export function routingCommand(paths: Paths, args: readonly string[]): string {
-  const [sub, harness, preset, model, mode] = args;
+  const [sub, harness, preset] = args;
   if (sub === undefined) {
     const store = ConfigFile.open(paths);
     return JSON.stringify(store.current.routing.presets, null, 2);
   }
-  if (sub === 'map' && preset !== undefined && model !== undefined) {
-    const value = { model, ...(mode === undefined ? {} : { mode }) };
-    edit(paths, [{ path: ['routing', 'presets', harnessOf(harness), preset], value }]);
-    return `route:${preset} → ${model} for ${String(harness)}`;
-  }
+  if (sub === 'map') return mapPreset(paths, args.slice(1));
   if (sub === 'unmap' && preset !== undefined) {
     edit(paths, [{ path: ['routing', 'presets', harnessOf(harness), preset], value: undefined }]);
     return `route:${preset} unmapped for ${String(harness)}`;

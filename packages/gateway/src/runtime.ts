@@ -118,15 +118,14 @@ function watchSettings(
   return store.watch({
     onConfig: () => {
       try {
-        if (!store.reload()) {
-          return;
-        }
+        store.reload();
       } catch (error) {
         fail(error);
         return;
       }
+      // Diff-based: a no-op after our own write, and it also catches an outside edit that a
+      // settings-page save already folded into the file.
       control.applyConfig().then((notes) => {
-        log(`applied ${store.file}`);
         notes.forEach(log);
       }, fail);
     },

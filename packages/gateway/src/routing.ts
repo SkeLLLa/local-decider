@@ -23,9 +23,17 @@ function routeOf(
   const preset = action.slice(ROUTE_PREFIX.length);
   const targets = targetsOf(config, harness);
   const target = Object.hasOwn(targets, preset) ? targets[preset] : undefined;
-  return target === undefined
-    ? undefined
-    : { preset, model: target.model, ...(target.mode === undefined ? {} : { mode: target.mode }) };
+  if (target === undefined) {
+    return undefined;
+  }
+  const { model, mode, thinking, profile } = target;
+  return {
+    preset,
+    ...(model === undefined ? {} : { model }),
+    ...(mode === undefined ? {} : { mode }),
+    ...(thinking === undefined ? {} : { thinking }),
+    ...(profile === undefined ? {} : { profile }),
+  };
 }
 
 /** Give a request without its own `models.routes` the configured ones, for savings stats. */
@@ -33,13 +41,14 @@ export function withConfiguredRoutes(config: GatewayConfig, request: DecideReque
   if (request.models?.routes !== undefined) {
     return request;
   }
-  const entries = Object.entries(targetsOf(config, request.harness));
+  // A profile-only target names no model here; the harness can send that route itself.
+  const entries = Object.entries(targetsOf(config, request.harness)).flatMap(([preset, t]) =>
+    t.model === undefined ? [] : [[`${ROUTE_PREFIX}${preset}`, t.model] as const],
+  );
   if (entries.length === 0) {
     return request;
   }
-  const routes = Object.fromEntries(
-    entries.map(([preset, t]) => [`${ROUTE_PREFIX}${preset}`, t.model]),
-  );
+  const routes = Object.fromEntries(entries);
   return { ...request, models: { ...request.models, routes } };
 }
 

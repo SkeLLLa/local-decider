@@ -12,6 +12,7 @@ import {
   type Device,
   type EngineConfig,
   type GatewayConfig,
+  type PresetTarget,
 } from './config.ts';
 import type { Decider } from './decider.ts';
 import { DownloadError, Downloads, type Download } from './downloads.ts';
@@ -149,6 +150,11 @@ function lifecycleFrom(config: GatewayConfig): LifecycleOptions {
   };
 }
 
+/** The settings a policy reload depends on. */
+function policiesKey(config: GatewayConfig): string {
+  return JSON.stringify([config.policies, config.policyDirs]);
+}
+
 /** Settings that only take effect when the gateway starts. */
 function startupKey(config: GatewayConfig): string {
   return JSON.stringify([config.host, config.port, config.engine, config.decisionTimeoutMs]);
@@ -270,6 +276,7 @@ export class EngineControl {
       throw new EngineSwitchError(400, `unknown policy "${id}"`);
     }
     this.#save([{ path: ['policies', id, 'mode'], value: mode }]);
+    this.#applied = { ...this.#applied, policies: this.#config.policies };
   }
 
   /** Answer policy `id` with policy `variant` (`id` itself = the default); persisted. */
@@ -280,6 +287,7 @@ export class EngineControl {
     this.#save([
       { path: ['policies', id, 'variant'], value: variant === id ? undefined : variant },
     ]);
+    this.#applied = { ...this.#applied, policies: this.#config.policies };
   }
 
   /** Where the settings live and what they are, for `GET /v1/config`. */
@@ -305,7 +313,7 @@ export class EngineControl {
     } catch (error) {
       throw new EngineSwitchError(400, error instanceof Error ? error.message : String(error));
     }
-    return { changed, notes: changed ? await this.applyConfig() : [] };
+    return { changed, notes: await this.applyConfig() };
   }
 
   /** The authoring prompt for a variant of policy `id`, and the directory an agent should work in. */
@@ -325,11 +333,11 @@ export class EngineControl {
   }
 
   /** Point `preset` at `target` for `harness`, or remove it with null; persisted. */
-  setRoutingPreset(
-    harness: string,
-    preset: string,
-    target: { model: string; mode?: string } | null,
-  ): void {
+  setRoutingPreset(harness: string, preset: string, target: PresetTarget | null): void {
+    // Presets pick the model and mode of new local agents: not from a remote client.
+    if (!this.pathsEditable) {
+      throw new EngineSwitchError(403, 'routing presets can only be changed on a loopback gateway');
+    }
     this.#save([{ path: ['routing', 'presets', harness, preset], value: target ?? undefined }]);
   }
 
@@ -352,13 +360,20 @@ export class EngineControl {
     return [...next.keys()];
   }
 
-  /** Modes come with the loaded policies (config.yaml beats the file); variants are set here. */
+  /**
+   * Modes come with the loaded policies (config.yaml beats the file). Variants are set for every
+   * base policy, so one removed from config.yaml goes back to the default.
+   */
   #applyPolicyState(decider: Decider): void {
-    for (const [id, settings] of Object.entries(this.#config.policies)) {
-      if (settings.mode !== undefined) {
-        decider.setMode(id, settings.mode);
+    const { policies } = this.#config;
+    for (const { policy } of decider.policies.values()) {
+      const settings = Object.hasOwn(policies, policy.id) ? policies[policy.id] : undefined;
+      if (settings?.mode !== undefined) {
+        decider.setMode(policy.id, settings.mode);
       }
-      decider.setVariant(id, settings.variant ?? id);
+      if (policy.variantOf === undefined) {
+        decider.setVariant(policy.id, settings?.variant ?? policy.id);
+      }
     }
   }
 
@@ -378,10 +393,9 @@ export class EngineControl {
   async applyConfig(): Promise<string[]> {
     const previous = this.#applied;
     const config = this.#config;
-    this.#applied = config;
-    if (this.#decider !== undefined) {
-      this.reloadPolicies();
-    }
+    const notes = this.#applyPolicies(previous, config);
+    // A failed policy reload is retried with the next change.
+    this.#applied = notes.length === 0 ? config : { ...config, policies: previous.policies };
     if (JSON.stringify(previous.lifecycle) !== JSON.stringify(config.lifecycle)) {
       this.#engine.setLifecycle(lifecycleFrom(config));
     }
@@ -400,8 +414,27 @@ export class EngineControl {
       });
     }
     return startupKey(previous) === startupKey(config)
-      ? []
-      : ['host, port, engine or decisionTimeoutMs changed: restart the gateway to apply'];
+      ? notes
+      : [...notes, 'host, port, engine or decisionTimeoutMs changed: restart the gateway to apply'];
+  }
+
+  /** Re-read policies when their settings or directories changed; problems become notes. */
+  #applyPolicies(previous: GatewayConfig, config: GatewayConfig): string[] {
+    if (this.#decider === undefined) {
+      return [];
+    }
+    if (policiesKey(previous) === policiesKey(config)) {
+      // Cheap, and catches choices a settings-page save made since the last apply.
+      this.#applyPolicyState(this.#decider);
+      return [];
+    }
+    try {
+      this.reloadPolicies();
+      return [];
+    } catch (error) {
+      this.#applyPolicyState(this.#decider);
+      return [`policies not reloaded: ${error instanceof Error ? error.message : String(error)}`];
+    }
   }
 
   /** Rebuild the toolchain from the config and restart the engine on it. */

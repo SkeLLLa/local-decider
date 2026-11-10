@@ -5,8 +5,15 @@
  */
 import type { AgentSessionConfig } from '@getpaseo/protocol/agent-types';
 
-import type { DecisionModels } from '../shared/decision.ts';
-import { applyPreset, presetTarget, routeTarget } from '../shared/presets.ts';
+import type { DecideResponse, DecisionModels } from '../shared/decision.ts';
+import {
+  applyPreset,
+  presetTarget,
+  routeTarget,
+  type PresetTarget,
+  type ProfileLike,
+} from '../shared/presets.ts';
+import type { DeciderSettings } from '../shared/settings.ts';
 import { errorText, type HookDeps } from './deps.ts';
 import { buildRoutingInput } from './history.ts';
 import { pluginEnforces } from './turn.ts';
@@ -15,6 +22,22 @@ import type { UsageLinks } from './usage.ts';
 const ROUTING_POLICY = 'routing';
 const ROUTING_BUDGET_MS = 2000;
 const SHADOW_TIMEOUT_MS = 30_000;
+
+/** Where Paseo agent profiles come from: the hook context's `paseo.config`. */
+export interface ProfileSource {
+  readonly config: {
+    get(): Promise<{ config: { agentProfiles?: readonly ProfileLike[] | undefined } }>;
+  };
+}
+
+/** Paseo's agent profiles; none when unavailable (an older Paseo, or the call failed). */
+async function loadProfiles(paseo: ProfileSource | undefined): Promise<readonly ProfileLike[]> {
+  try {
+    return (await paseo?.config.get())?.config.agentProfiles ?? [];
+  } catch {
+    return [];
+  }
+}
 
 export interface CreateRequest {
   config: AgentSessionConfig;
@@ -27,12 +50,12 @@ export function createRoutingHandler(
   usage?: UsageLinks,
 ): (
   payload: { request: CreateRequest },
-  ctx: { signal: AbortSignal },
+  ctx: { signal: AbortSignal; paseo?: ProfileSource },
 ) => Promise<CreateRequest | undefined> {
   return async ({ request }, ctx) => {
     const budget = AbortSignal.any([ctx.signal, AbortSignal.timeout(budgetMs)]);
     try {
-      return await withBudget(route(deps, request, budget, usage), budget);
+      return await withBudget(route(deps, request, budget, usage, ctx.paseo), budget);
     } catch (error) {
       deps.log(`routing skipped: ${errorText(error)}`);
       return undefined;
@@ -77,11 +100,25 @@ export function routingModels(
   return { ...(model === '' ? {} : { requested: `${config.provider}/${model}` }), routes };
 }
 
+/** The gateway resolves presets from config.yaml; settings.presets is the pre-config.yaml map. */
+async function targetOf(
+  res: DecideResponse,
+  presets: DeciderSettings['presets'],
+  paseo: ProfileSource | undefined,
+): Promise<PresetTarget | null> {
+  if (res.route === undefined) {
+    return presetTarget(presets, res.action);
+  }
+  const profiles = res.route.profile === undefined ? [] : await loadProfiles(paseo);
+  return routeTarget(res.route, profiles);
+}
+
 async function route(
   deps: HookDeps,
   request: CreateRequest,
   signal: AbortSignal,
   usage: UsageLinks | undefined,
+  paseo: ProfileSource | undefined,
 ): Promise<CreateRequest | undefined> {
   // Internal helper agents (commit messages, titles) are not user tasks.
   if (request.config.internal === true || deps.gatewayKnownDown?.() === true) {
@@ -124,9 +161,7 @@ async function route(
   if (res === null || !pluginEnforces(res, mode)) {
     return undefined;
   }
-  // The gateway resolves presets from config.yaml; settings.presets is the pre-config.yaml map.
-  const target =
-    res.route === undefined ? presetTarget(settings.presets, res.action) : routeTarget(res.route);
+  const target = await targetOf(res, settings.presets, paseo);
   if (target === null) {
     return undefined;
   }

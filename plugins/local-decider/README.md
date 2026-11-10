@@ -60,10 +60,12 @@ Decision settings are shared with Paseo and live in the gateway's
 
 - `local-decider policies mode <policy> off|shadow|act` and
   `local-decider policies use routing <variant>` set policy modes and the routing policy;
-- `local-decider routing map claude-code <preset> <model>` (`haiku`, `sonnet`, `opus` or a full
-  id) and `local-decider routing map codex <preset> <model>` map routing presets. Hooks cannot
-  switch the session model, so the routing hint names the model; Claude Code can pass it to the
-  subagents it starts, and you can switch with `/model`.
+- `local-decider routing map claude-code <preset> <model> [--thinking <level>]` (`haiku`,
+  `sonnet`, `opus` or a full id) and `local-decider routing map codex <preset> <model>
+  [--thinking <level>]` map routing presets to a model and, optionally, a thinking level (`low`,
+  `medium`, `high`, `xhigh`, `max`). Hooks cannot switch the session model, so the routing hint
+  names the model and level; Claude Code can pass the model to the subagents it starts, and you
+  can switch with `/model` and Claude Code's effort control or Codex's reasoning level.
 
 The file has a JSON Schema (`local-decider config schema`), so agents can edit it directly. The
 plugin ships two skills for that: `local-decider-settings` (view and change settings) and

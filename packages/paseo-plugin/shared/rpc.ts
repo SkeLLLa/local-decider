@@ -133,8 +133,12 @@ export const routingPresetRpc = defineRpc({
   name: 'routing-preset',
   input: z.object({
     preset: presetName,
-    model: z.string().min(1).max(300).nullable(),
+    /** `provider/model`; with neither a model nor a profile the mapping is removed. */
+    model: z.string().max(300).optional(),
+    /** A Paseo agent profile id. */
+    profile: z.string().max(200).optional(),
     mode: z.string().max(200).optional(),
+    thinking: z.string().max(100).optional(),
   }),
   output: z.object({ ok: z.boolean(), error: failure }),
 });
