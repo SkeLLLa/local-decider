@@ -27,7 +27,7 @@ All four hooks fired; shadow-log records (`decisions-2026-11-10.jsonl`, summaris
 
 ```text
 12:43:46 claude-code routing      shadow action=abstain tier=standard(0.37)     1561ms
-12:43:49 claude-code command-risk shadow action=abstain risk=safe(0.97)         1617ms
+12:43:49 claude-code command-risk shadow action=log risk=safe(0.97)         1617ms
 12:43:51 claude-code permission   shadow action=ask     verdict=allow(0.69)     1766ms
 12:43:56 claude-code turn-outcome shadow action=notify  outcome=needs_input(0.65) 2260ms
 ```
@@ -55,7 +55,7 @@ Codex printed `hook: Stop` / `hook: Stop Completed`; shadow-log records:
 
 ```text
 12:47:32 codex routing      shadow action=abstain tier=standard(0.22) 1420ms
-12:47:37 codex command-risk shadow action=abstain risk=safe(0.97)     1531ms
+12:47:37 codex command-risk shadow action=log risk=safe(0.97)     1531ms
 12:47:40 codex turn-outcome shadow action=log     outcome=done(0.90)  1617ms
 ```
 
