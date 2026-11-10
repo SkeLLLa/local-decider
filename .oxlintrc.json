@@ -13,7 +13,14 @@
     "builtin": true,
     "node": true
   },
-  "ignorePatterns": ["**/dist/", "**/coverage/", "**/node_modules/", "**/temp/", "**/*.xxx.*"],
+  "ignorePatterns": [
+    "**/dist/",
+    "plugins/local-decider/hooks/register.mjs",
+    "**/coverage/",
+    "**/node_modules/",
+    "**/temp/",
+    "**/*.xxx.*"
+  ],
   "rules": {
     "typescript/no-explicit-any": "error",
     "typescript/consistent-type-imports": [

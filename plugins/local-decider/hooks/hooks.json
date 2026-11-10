@@ -1,5 +1,6 @@
 {
   "description": "local-decider: deterministic command guard plus local decision-model policies (fail-open)",
+  "modules": ["./register.mjs"],
   "hooks": {
     "PreToolUse": [
       {

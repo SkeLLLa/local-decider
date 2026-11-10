@@ -454,14 +454,73 @@ function guardCommand(command) {
   return checkPipeToShell(segments);
 }
 
-// src/mapping.ts
-import { basename } from "node:path";
+// src/turns.ts
+var HISTORY_CHARS = 8e3;
+var TURN_CHARS = 1500;
+function clip(text, max) {
+  return text.length <= max ? text : `${text.slice(0, max)}…`;
+}
+function clipTask(text) {
+  return text.length <= TURN_CHARS ? text : `${text.slice(0, TURN_CHARS - 1)}…`;
+}
+function historyText(turns, maxChars = HISTORY_CHARS) {
+  const lines = [];
+  let used = 0;
+  for (let i = turns.length - 1; i >= 0 && used < maxChars; i--) {
+    const turn = turns[i];
+    if (turn !== void 0) {
+      const line = `${turn.role === "user" ? "User" : "Assistant"}: ${clip(turn.text, TURN_CHARS)}`;
+      lines.unshift(line);
+      used += line.length + 1;
+    }
+  }
+  return lines.join("\n");
+}
+function firstUserText(turns) {
+  return turns.find((t) => t.role === "user")?.text;
+}
+function lastUserText(turns) {
+  return turns.findLast((t) => t.role === "user")?.text;
+}
+function taskText(first, latest) {
+  const initial = first?.trim() ?? "";
+  const current = latest?.trim() ?? "";
+  if (initial === "" && current === "") {
+    return void 0;
+  }
+  const lines = [];
+  if (initial !== "") {
+    lines.push(`First request: ${clipTask(initial)}`);
+  }
+  if (current !== "" && current !== initial) {
+    lines.push(`Latest request: ${clipTask(current)}`);
+  }
+  return lines.join("\n");
+}
+function lastAssistantText(turns) {
+  return turns.findLast((t) => t.role === "assistant")?.text;
+}
+
+// src/permission-input.ts
+function projectLabel(cwd) {
+  const name = cwd.replace(/\/+$/, "").split("/").at(-1) ?? "";
+  return `${name === "" ? cwd : name} (${cwd})`;
+}
+function permissionInput(parts) {
+  const input = {
+    project: parts.cwd === void 0 ? void 0 : projectLabel(parts.cwd),
+    history: historyText(parts.tail),
+    task: taskText(firstUserText(parts.head), lastUserText(parts.tail)),
+    tool: parts.tool,
+    request: parts.request,
+    subject: parts.subject
+  };
+  return Object.fromEntries(Object.entries(input).filter(([, v]) => v !== void 0 && v !== ""));
+}
 
 // src/transcript.ts
 import { closeSync, fstatSync, openSync, readSync } from "node:fs";
 var SLICE_BYTES = 16 * 1024;
-var HISTORY_CHARS = 8e3;
-var TURN_CHARS = 1500;
 function readAt(fd, position, length) {
   const buf = Buffer.alloc(length);
   const n = readSync(fd, buf, 0, length, position);
@@ -538,49 +597,6 @@ function parseTurns(jsonl) {
   }
   return turns;
 }
-function clip(text, max) {
-  return text.length <= max ? text : `${text.slice(0, max)}…`;
-}
-function clipTask(text) {
-  return text.length <= TURN_CHARS ? text : `${text.slice(0, TURN_CHARS - 1)}…`;
-}
-function historyText(turns, maxChars = HISTORY_CHARS) {
-  const lines = [];
-  let used = 0;
-  for (let i = turns.length - 1; i >= 0 && used < maxChars; i--) {
-    const turn = turns[i];
-    if (turn !== void 0) {
-      const line = `${turn.role === "user" ? "User" : "Assistant"}: ${clip(turn.text, TURN_CHARS)}`;
-      lines.unshift(line);
-      used += line.length + 1;
-    }
-  }
-  return lines.join("\n");
-}
-function firstUserText(turns) {
-  return turns.find((t) => t.role === "user")?.text;
-}
-function lastUserText(turns) {
-  return turns.findLast((t) => t.role === "user")?.text;
-}
-function taskText(first, latest) {
-  const initial = first?.trim() ?? "";
-  const current = latest?.trim() ?? "";
-  if (initial === "" && current === "") {
-    return void 0;
-  }
-  const lines = [];
-  if (initial !== "") {
-    lines.push(`First request: ${clipTask(initial)}`);
-  }
-  if (current !== "" && current !== initial) {
-    lines.push(`Latest request: ${clipTask(current)}`);
-  }
-  return lines.join("\n");
-}
-function lastAssistantText(turns) {
-  return turns.findLast((t) => t.role === "assistant")?.text;
-}
 
 // src/mapping.ts
 var HOOK_HARNESSES = ["claude", "codex"];
@@ -600,7 +616,7 @@ function parseHarness(name) {
 }
 function projectOf(hook) {
   const cwd = str(hook["cwd"]);
-  return cwd === void 0 ? void 0 : `${basename(cwd)} (${cwd})`;
+  return cwd === void 0 ? void 0 : projectLabel(cwd);
 }
 function compact(input) {
   return Object.fromEntries(Object.entries(input).filter(([, v]) => v !== void 0 && v !== ""));
@@ -626,18 +642,15 @@ var Transcript = class {
     return parseTurns(this.#get()?.head ?? "");
   }
 };
-function permissionInput(hook, t) {
-  const head = t.head();
-  const tail = t.tail();
-  const subject = permissionSubject(hook);
-  return {
-    project: projectOf(hook),
-    history: historyText(tail),
-    task: taskText(firstUserText(head), lastUserText(tail)),
+function permissionHookInput(hook, t) {
+  return permissionInput({
+    cwd: str(hook["cwd"]),
     tool: str(hook["tool_name"]),
     request: hook["tool_input"],
-    ...subject === void 0 ? {} : { subject }
-  };
+    subject: permissionSubject(hook),
+    head: t.head(),
+    tail: t.tail()
+  });
 }
 function commandRiskInput(hook) {
   return {
@@ -659,7 +672,7 @@ function routingInput(hook) {
 }
 var BUILDERS = {
   PreToolUse: (hook) => commandRiskInput(hook),
-  PermissionRequest: permissionInput,
+  PermissionRequest: permissionHookInput,
   Stop: turnOutcomeInput,
   UserPromptSubmit: (hook) => routingInput(hook)
 };

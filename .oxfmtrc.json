@@ -16,6 +16,7 @@
   },
   "ignorePatterns": [
     "**/dist/",
+    "plugins/local-decider/hooks/register.mjs",
     "**/coverage/",
     "**/node_modules/",
     "**/temp/",
