@@ -44,7 +44,7 @@ Usage:
   local-decider policies [check <file>]             list policies, or validate a policy file
   local-decider policies eval <policy> <file>       report decisions on JSONL fixtures
   local-decider policies use <policy> <variant>     answer <policy> with one of its variants
-  local-decider policies mode <policy> off|shadow|act
+  local-decider policies mode <policy> off|shadow|act [--scope claude-auto]
   local-decider policies reload                     re-read policy files without a restart
   local-decider policies prompt [policy]            AI prompt for writing your own variant (routing)
   local-decider routing                             preset → model per harness
@@ -285,8 +285,16 @@ const POLICY_SUBCOMMANDS: Readonly<Record<string, PolicySubcommand>> = {
   prompt: promptPolicy,
   use: async (ctx, first, second) =>
     console.log(useVariant(ctx.paths, requiredPolicyArg(first), requiredPolicyArg(second))),
-  mode: async (ctx, first, second) =>
-    console.log(setMode(ctx.paths, requiredPolicyArg(first), requiredPolicyArg(second))),
+  mode: async (ctx, first, second) => {
+    const { values } = parseArgs({
+      args: ctx.args.slice(1),
+      options: { scope: { type: 'string' } },
+      allowPositionals: true,
+    });
+    console.log(
+      setMode(ctx.paths, requiredPolicyArg(first), requiredPolicyArg(second), values.scope),
+    );
+  },
   reload: async (ctx) => gatewayPost(ctx, '/v1/policies/reload', {}),
 };
 

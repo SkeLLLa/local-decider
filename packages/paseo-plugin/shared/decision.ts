@@ -68,6 +68,7 @@ export interface DecideResponse {
   /** The policy that answered when the user selected a variant of `policy`. */
   readonly variant?: string;
   readonly mode: Mode;
+  readonly scope?: 'claude-auto';
   readonly action: Action;
   /** Where `action` (`route:<preset>`) sends this harness, from config.yaml; absent if unmapped. */
   readonly route?: RouteTarget;
@@ -98,4 +99,4 @@ export interface GatewayHealth {
   readonly p50Ms?: number;
 }
 
-export type OutcomeSource = 'user' | 'harness' | 'heuristic' | 'supervised';
+export type OutcomeSource = 'user' | 'harness' | 'heuristic' | 'supervised' | 'classifier';

@@ -120,6 +120,18 @@ describe('settings commands', () => {
     assert.throws(() => setMode(paths, 'routing', 'loud'), SettingsUsageError);
   });
 
+  it('set a scope mode and refuse an unknown scope', () => {
+    const paths = tempPaths();
+    assert.equal(
+      setMode(paths, 'permission', 'act', 'claude-auto'),
+      'permission (claude-auto): act',
+    );
+    assert.deepEqual(ConfigFile.open(paths).current.policies, {
+      permission: { scopes: { 'claude-auto': { mode: 'act' } } },
+    });
+    assert.throws(() => setMode(paths, 'permission', 'act', 'other'), SettingsUsageError);
+  });
+
   it('write schemas, check the file and print where things are', () => {
     const paths = tempPaths();
     const written = configCommand(paths, ['schema']).split('\n');

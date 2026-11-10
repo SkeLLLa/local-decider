@@ -28,7 +28,7 @@ import {
   type CatalogEngine,
 } from './models.ts';
 import type { Paths } from './paths.ts';
-import { loadPolicies, policyDirs, type LoadedPolicy } from './policies.ts';
+import { loadPolicies, policyDirs, scopeModes, type LoadedPolicy } from './policies.ts';
 import {
   checkPath,
   PATH_KEYS,
@@ -448,6 +448,7 @@ export class EngineControl {
       if (settings?.mode !== undefined) {
         decider.setMode(policy.id, settings.mode);
       }
+      decider.setScopeModes(policy.id, scopeModes(settings));
       if (policy.variantOf === undefined) {
         decider.setVariant(policy.id, settings?.variant ?? policy.id);
       }

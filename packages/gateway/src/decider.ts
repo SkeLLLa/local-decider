@@ -16,10 +16,12 @@ import {
   type DecideRequest,
   type DecideResponse,
   type LogRecord,
+  minMode,
   type Mode,
   type Policy,
   type PolicyThreshold,
   type PrecedentTally,
+  type Scope,
   type ShadowRecord,
   type SystemOneRequest,
   type SystemOneResponse,
@@ -120,6 +122,23 @@ export class Decider {
     return true;
   }
 
+  /** Set the per-scope mode caps of policy `id`; `{}` clears them. False for an unknown policy. */
+  setScopeModes(id: string, modes: Partial<Record<Scope, Mode>>): boolean {
+    const loaded = this.#policies.get(id);
+    if (loaded === undefined) {
+      return false;
+    }
+    this.#policies.set(id, { ...loaded, scopes: modes });
+    return true;
+  }
+
+  /** The mode policy `id` runs in for `scope`: its own, capped by the scope's (default shadow). */
+  effectiveMode(id: string, scope?: Scope): Mode {
+    const loaded = this.#policies.get(id);
+    const mode = loaded?.mode ?? 'off';
+    return scope === undefined ? mode : minMode(mode, loaded?.scopes?.[scope] ?? 'shadow');
+  }
+
   /**
    * Override rule thresholds of policy `id` (its own rules, also when it answers as a variant);
    * `{}` restores the file's. Keys naming no rule are dropped. False when the policy is unknown.
@@ -218,7 +237,7 @@ export class Decider {
    * The requested policy's mode with the selected variant's questions and rules, the rules with
    * that variant's threshold overrides.
    */
-  #resolve(policyId: string): { mode: Mode; policy: Policy; variant?: string } {
+  #resolve(policyId: string, scope?: Scope): { mode: Mode; policy: Policy; variant?: string } {
     const loaded = this.#policies.get(policyId);
     if (loaded === undefined) {
       throw new UnknownPolicyError(`unknown policy "${policyId}"`);
@@ -229,9 +248,8 @@ export class Decider {
       answering.policy,
       this.#thresholds.get(answering.policy.id) ?? {},
     );
-    return answering === loaded
-      ? { mode: loaded.mode, policy }
-      : { mode: loaded.mode, policy, variant: answering.policy.id };
+    const mode = this.effectiveMode(policyId, scope);
+    return answering === loaded ? { mode, policy } : { mode, policy, variant: answering.policy.id };
   }
 
   /**
@@ -268,13 +286,14 @@ export class Decider {
     request: DecideRequest,
     signal: AbortSignal,
   ): Promise<DecideResponse> {
-    const { policy, mode, variant } = this.#resolve(policyId);
+    const { policy, mode, variant } = this.#resolve(policyId, request.scope);
     const decisionId = randomUUID();
     const base = {
       decisionId,
       policy: policyId,
       ...(variant === undefined ? {} : { variant }),
       mode,
+      ...(request.scope === undefined ? {} : { scope: request.scope }),
       engine: this.#engine.id,
       model: this.#engine.model,
     };
@@ -432,6 +451,7 @@ export class Decider {
       policy: response.policy,
       ...(response.variant === undefined ? {} : { variant: response.variant }),
       mode: response.mode,
+      ...callFields(request),
       inputHash: state.hash,
       ...(response.precedentKey === undefined ? {} : { precedentKey: response.precedentKey }),
       ...(response.precedent === undefined ? {} : { precedent: response.precedent }),
@@ -448,6 +468,19 @@ export class Decider {
     this.#log.append(record);
     this.#precedent.noteDecision(record);
   }
+}
+
+/** `scope`, `callId`, `permissionMode` and `subagent`, from the request's `scope` and `call`. */
+function callFields(
+  request: DecideRequest,
+): Pick<ShadowRecord, 'scope' | 'callId' | 'permissionMode' | 'subagent'> {
+  const { call, scope } = request;
+  return {
+    ...(scope === undefined ? {} : { scope }),
+    ...(call === undefined ? {} : { callId: call.id }),
+    ...(call?.permissionMode === undefined ? {} : { permissionMode: call.permissionMode }),
+    ...(call?.agent === undefined ? {} : { subagent: call.agent }),
+  };
 }
 
 /** `requestedModel` and the model `action` routes to, from the request's `models`. */

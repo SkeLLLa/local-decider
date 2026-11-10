@@ -1,6 +1,9 @@
 import {
   HARNESSES,
+  PERMISSION_MODES,
   policyRoutes,
+  SCOPES,
+  type DecideCall,
   type DecideRequest,
   type DecisionModels,
   type OutcomeRecord,
@@ -101,12 +104,41 @@ function parseDecideRequest(body: unknown): DecideRequest {
   const sessionId =
     typeof body['sessionId'] === 'string' ? body['sessionId'].slice(0, 200) : undefined;
   const models = parseModels(body['models']);
+  const call = parseCall(body['call']);
+  const scope = parseScope(body['scope']);
   return {
     harness: harness as DecideRequest['harness'],
     input: body['input'],
+    ...(call === undefined ? {} : { call }),
+    ...(scope === undefined ? {} : { scope }),
     ...(sessionId === undefined ? {} : { sessionId }),
     ...(models === undefined ? {} : { models }),
   };
+}
+
+/** Tool-use and call ids: also the `GET /v1/calls/:id` path segment. */
+export const CALL_ID = /^[\w-]{1,128}$/;
+
+/** Tolerant like `models`: an invalid `call` is dropped, never a 400. */
+function parseCall(value: unknown): DecideCall | undefined {
+  if (!isRecord(value) || typeof value['id'] !== 'string' || !CALL_ID.test(value['id'])) {
+    return undefined;
+  }
+  const mode = value['permissionMode'];
+  const permissionMode = (PERMISSION_MODES as readonly unknown[]).includes(mode)
+    ? (mode as DecideCall['permissionMode'])
+    : undefined;
+  return {
+    id: value['id'],
+    ...(permissionMode === undefined ? {} : { permissionMode }),
+    ...(typeof value['agent'] === 'boolean' ? { agent: value['agent'] } : {}),
+  };
+}
+
+function parseScope(value: unknown): DecideRequest['scope'] {
+  return (SCOPES as readonly unknown[]).includes(value)
+    ? (value as DecideRequest['scope'])
+    : undefined;
 }
 
 /** `provider/model` ids: logged and matched against the price table, never used otherwise. */
@@ -155,6 +187,8 @@ function parseSystemOne(body: unknown): SystemOneRequest {
   return body as unknown as SystemOneRequest;
 }
 
+const OUTCOME_SOURCES = new Set<unknown>(['harness', 'heuristic', 'supervised', 'classifier']);
+
 function parseOutcome(body: unknown): OutcomeRecord {
   if (
     !isRecord(body) ||
@@ -169,8 +203,7 @@ function parseOutcome(body: unknown): OutcomeRecord {
     ts: new Date().toISOString(),
     decisionId: body['decisionId'].slice(0, 100),
     outcome: body['outcome'].slice(0, 100),
-    source:
-      source === 'harness' || source === 'heuristic' || source === 'supervised' ? source : 'user',
+    source: OUTCOME_SOURCES.has(source) ? (source as OutcomeRecord['source']) : 'user',
   };
 }
 

@@ -1,4 +1,4 @@
-import { parsePolicy, type Mode, type Policy } from '@local-decider/core';
+import { parsePolicy, SCOPES, type Mode, type Policy, type Scope } from '@local-decider/core';
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -21,6 +21,8 @@ export function policyDirs(config: GatewayConfig, paths: Paths): string[] {
 export interface LoadedPolicy {
   readonly policy: Policy;
   readonly mode: Mode;
+  /** `policies.<id>.scopes.<scope>.mode` caps for scoped requests; unset scopes run in shadow. */
+  readonly scopes?: Partial<Record<Scope, Mode>>;
   readonly source: string;
 }
 
@@ -37,6 +39,20 @@ function readDir(dir: string): { file: string; policy: Policy }[] {
     });
 }
 
+/** The `scopes.<scope>.mode` caps configured for a policy. */
+export function scopeModes(
+  settings: GatewayConfig['policies'][string] | undefined,
+): Partial<Record<Scope, Mode>> {
+  const out: Partial<Record<Scope, Mode>> = {};
+  for (const scope of SCOPES) {
+    const mode = settings?.scopes?.[scope]?.mode;
+    if (mode !== undefined) {
+      out[scope] = mode;
+    }
+  }
+  return out;
+}
+
 /** Load defaults then each configured dir; a later policy with the same id replaces earlier. */
 export function loadPolicies(
   config: GatewayConfig,
@@ -46,7 +62,12 @@ export function loadPolicies(
   for (const dir of dirs ?? [defaultPolicyDir(), ...config.policyDirs]) {
     for (const { file, policy } of readDir(dir)) {
       const mode = config.policies[policy.id]?.mode ?? policy.mode;
-      out.set(policy.id, { policy, mode, source: file });
+      out.set(policy.id, {
+        policy,
+        mode,
+        scopes: scopeModes(config.policies[policy.id]),
+        source: file,
+      });
     }
   }
   return out;

@@ -178,6 +178,25 @@
             "type": "string",
             "pattern": "^[a-z][a-z0-9_-]*$"
           },
+          "scopes": {
+            "description": "Per-scope settings, by scope (`claude-auto`: the Claude Code auto-mode mod). A scoped request never runs above its scope mode.",
+            "type": "object",
+            "propertyNames": {
+              "type": "string",
+              "enum": ["claude-auto"]
+            },
+            "additionalProperties": {
+              "type": "object",
+              "properties": {
+                "mode": {
+                  "description": "Mode cap for requests carrying this scope: they run at the lower of the policy mode and this one (off < shadow < act). Unset: shadow.",
+                  "type": "string",
+                  "enum": ["off", "shadow", "act"]
+                }
+              },
+              "additionalProperties": false
+            }
+          },
           "thresholds": {
             "description": "Rule thresholds by `<question>.<answer>` (e.g. `verdict.allow: 0.9`), 0..1. Each replaces the `minProbability` of the policy rules with that question and answer, else their `minConfidence`. Applies to this policy file's own rules, so set a variant's thresholds under the variant's id. Unset: the policy file decides.",
             "type": "object",

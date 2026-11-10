@@ -8,12 +8,40 @@ import type { Answers } from './systemone.ts';
 export const HARNESSES = ['paseo', 'claude-code', 'codex', 'mcp', 'cli'] as const;
 export type Harness = (typeof HARNESSES)[number];
 
+/** Claude Code permission modes a decide request's `call` may report. */
+export const PERMISSION_MODES = [
+  'default',
+  'plan',
+  'acceptEdits',
+  'auto',
+  'dontAsk',
+  'bypassPermissions',
+] as const;
+export type PermissionMode = (typeof PERMISSION_MODES)[number];
+
+/** Request scopes: a scope has its own enforcement ceiling (`policies.<id>.scopes.<scope>.mode`). */
+export const SCOPES = ['claude-auto'] as const;
+export type Scope = (typeof SCOPES)[number];
+
+/** The harness tool call a decision belongs to, so other callers can look the decision up. */
+export interface DecideCall {
+  /** The harness's tool-use id (`^[\w-]{1,128}$`). */
+  readonly id: string;
+  readonly permissionMode?: PermissionMode;
+  /** True when a subagent made the call. */
+  readonly agent?: boolean;
+}
+
 export interface DecideRequest {
   readonly harness: Harness;
   /** Harness session or agent id, for joining outcomes later. Never sent to the engine. */
   readonly sessionId?: string;
   /** Structured, untrusted input; the policy's `state.sections` say which keys become state. */
   readonly input: Readonly<Record<string, unknown>>;
+  /** The tool call this decision is about; the gateway keeps it for `GET /v1/calls/:id`. */
+  readonly call?: DecideCall;
+  /** Caps the effective mode at `policies.<id>.scopes.<scope>.mode` (default shadow). */
+  readonly scope?: Scope;
   /** Models for savings stats (`provider/model`). Logged, never sent to the engine. */
   readonly models?: DecisionModels;
 }
@@ -45,7 +73,10 @@ export interface DecideResponse {
   readonly policy: string;
   /** The policy that answered when the user selected a variant of `policy`. */
   readonly variant?: string;
+  /** The effective mode: the policy's, capped by the request scope's. */
   readonly mode: Mode;
+  /** Echoes `DecideRequest.scope`. */
+  readonly scope?: Scope;
   readonly action: Action;
   /** Where `action` (`route:<preset>`) sends this harness, from config.yaml; absent if unmapped. */
   readonly route?: RouteTarget;
@@ -78,6 +109,12 @@ export interface ShadowRecord {
   readonly policy: string;
   readonly variant?: string;
   readonly mode: Mode;
+  readonly scope?: Scope;
+  /** `DecideRequest.call.id`, to join the record with the harness's own tool call. */
+  readonly callId?: string;
+  readonly permissionMode?: PermissionMode;
+  /** True when a subagent made the call. */
+  readonly subagent?: boolean;
   readonly inputHash: string;
   /** Exact-match precedent hash, never the subject itself. */
   readonly precedentKey?: string;
@@ -107,7 +144,7 @@ export interface OutcomeRecord {
   readonly source: OutcomeSource;
 }
 
-export type OutcomeSource = 'user' | 'harness' | 'heuristic' | 'supervised';
+export type OutcomeSource = 'user' | 'harness' | 'heuristic' | 'supervised' | 'classifier';
 
 export interface PrecedentTally {
   readonly allows: number;

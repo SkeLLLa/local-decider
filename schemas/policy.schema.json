@@ -117,7 +117,7 @@
           "type": "array",
           "items": {
             "type": "string",
-            "enum": ["user", "supervised", "harness", "heuristic"]
+            "enum": ["user", "supervised", "harness", "heuristic", "classifier"]
           }
         }
       },

@@ -2,7 +2,7 @@
  * `local-decider config|routing|policies use|mode`: settings commands. They edit config.yaml
  * directly, so they work while the gateway is down; a running gateway applies the edit itself.
  */
-import { HARNESSES, MODES } from '@local-decider/core';
+import { HARNESSES, MODES, SCOPES } from '@local-decider/core';
 import { join } from 'node:path';
 import { parseArgs } from 'node:util';
 
@@ -165,11 +165,18 @@ export function useVariant(paths: Paths, id: string, variant: string): string {
   return `${id} → ${variant}`;
 }
 
-/** `policies mode <policy> off|shadow|act`. */
-export function setMode(paths: Paths, id: string, mode: string): string {
+/** `policies mode <policy> off|shadow|act [--scope claude-auto]`. */
+export function setMode(paths: Paths, id: string, mode: string, scope?: string): string {
   if (!(MODES as readonly string[]).includes(mode)) {
     throw new SettingsUsageError(`mode must be one of ${MODES.join(', ')}`);
   }
-  edit(paths, [{ path: ['policies', id, 'mode'], value: mode }]);
-  return `${id}: ${mode}`;
+  if (scope === undefined) {
+    edit(paths, [{ path: ['policies', id, 'mode'], value: mode }]);
+    return `${id}: ${mode}`;
+  }
+  if (!(SCOPES as readonly string[]).includes(scope)) {
+    throw new SettingsUsageError(`scope must be one of ${SCOPES.join(', ')}`);
+  }
+  edit(paths, [{ path: ['policies', id, 'scopes', scope, 'mode'], value: mode }]);
+  return `${id} (${scope}): ${mode}`;
 }

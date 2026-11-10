@@ -11,6 +11,11 @@ import type { StateSection } from './truncate.ts';
 export const MODES = ['off', 'shadow', 'act'] as const;
 export type Mode = (typeof MODES)[number];
 
+/** The lower of two modes, ordered off < shadow < act. */
+export function minMode(a: Mode, b: Mode): Mode {
+  return MODES.indexOf(a) <= MODES.indexOf(b) ? a : b;
+}
+
 /**
  * `abstain` means "no opinion, harness default"; `log` records only; `notify` asks the adapter to
  * surface the decision; `route:<preset>` names a routing preset.
@@ -70,7 +75,9 @@ const precedentSchema = z.strictObject({
     .describe('Harness input key used for exact-match outcome precedent; never rendered as state.'),
   minAllows: z.number().int().min(2).default(3),
   maxAgeDays: z.number().int().min(1).max(90).default(14),
-  sources: z.array(z.enum(['user', 'supervised', 'harness', 'heuristic'])).default(['user']),
+  sources: z
+    .array(z.enum(['user', 'supervised', 'harness', 'heuristic', 'classifier']))
+    .default(['user']),
 });
 
 const ruleSchema = z.strictObject({

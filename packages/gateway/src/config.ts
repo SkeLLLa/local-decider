@@ -1,4 +1,4 @@
-import { HARNESSES, MODES } from '@local-decider/core';
+import { HARNESSES, MODES, SCOPES } from '@local-decider/core';
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { parse as parseYaml } from 'yaml';
@@ -128,6 +128,22 @@ const policySettingsSchema = z
       .optional()
       .describe(
         'Id of a policy with `variantOf: <this policy>` that answers instead of it. Unset: the policy itself.',
+      ),
+    scopes: z
+      .partialRecord(
+        z.enum(SCOPES),
+        z.strictObject({
+          mode: z
+            .enum(MODES)
+            .optional()
+            .describe(
+              'Mode cap for requests carrying this scope: they run at the lower of the policy mode and this one (off < shadow < act). Unset: shadow.',
+            ),
+        }),
+      )
+      .optional()
+      .describe(
+        'Per-scope settings, by scope (`claude-auto`: the Claude Code auto-mode mod). A scoped request never runs above its scope mode.',
       ),
     thresholds: z
       .record(

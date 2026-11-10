@@ -8,6 +8,9 @@ export {
 } from './client.ts';
 export {
   HARNESSES,
+  PERMISSION_MODES,
+  SCOPES,
+  type DecideCall,
   type DecideRequest,
   type DecideResponse,
   type DecisionModels,
@@ -15,7 +18,9 @@ export {
   type LogRecord,
   type OutcomeRecord,
   type OutcomeSource,
+  type PermissionMode,
   type PrecedentTally,
+  type Scope,
   type ShadowRecord,
   type UsageRecord,
   type RouteTarget,
@@ -24,6 +29,7 @@ export { inputHash } from './hash.ts';
 export {
   ALLOW_THRESHOLD_FLOOR,
   evaluateRules,
+  minMode,
   MODES,
   parsePolicy,
   PolicyError,
