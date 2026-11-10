@@ -11,19 +11,17 @@ import {
 
 import { guardCommand } from './guard.ts';
 import {
-  commandOf,
+  callOf,
   EVENT_POLICY,
-  isShellTool,
   mapEvent,
   parseEvent,
   parseHarness,
-  str,
   type HookEvent,
   type HookHarness,
-  type HookInput,
   type ReadTranscript,
 } from './mapping.ts';
 import { guardDeny, translate } from './output.ts';
+import { commandOf, isShellTool, str, type HookInput } from './subject.ts';
 import { readSlice } from './transcript.ts';
 
 export type Env = Readonly<Record<string, string | undefined>>;
@@ -103,9 +101,11 @@ interface Context {
 async function decideAndTranslate(ctx: Context): Promise<string> {
   const call = mapEvent(ctx.event, ctx.hook, ctx.deps.readTranscript ?? readSlice);
   const sessionId = str(ctx.hook['session_id']);
+  const toolCall = callOf(ctx.harness, ctx.event, ctx.hook);
   const request: DecideRequest = {
     harness: ctx.harness === 'claude' ? 'claude-code' : 'codex',
     ...(sessionId === undefined ? {} : { sessionId }),
+    ...(toolCall === undefined ? {} : { call: toolCall }),
     input: call.input,
   };
   const decide = ctx.deps.decide ?? clientFromEnv(ctx.env);
@@ -115,7 +115,7 @@ async function decideAndTranslate(ctx: Context): Promise<string> {
       ? `${call.policy}: no answer (gateway down, slow or erroring); abstaining`
       : `${call.policy}: action=${res.action} enforced=${String(res.enforced)} id=${res.decisionId}`,
   );
-  return translate(ctx.harness, ctx.event, res);
+  return translate(ctx.harness, ctx.event, res, ctx.hook['permission_mode'] === 'auto');
 }
 
 async function handle(ctx: Context): Promise<string> {

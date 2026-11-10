@@ -79,6 +79,16 @@ var GatewayClient = class {
   }
 };
 
+// ../core/src/decision.ts
+var PERMISSION_MODES = [
+  "default",
+  "plan",
+  "acceptEdits",
+  "auto",
+  "dontAsk",
+  "bypassPermissions"
+];
+
 // src/shell.ts
 var SEPARATORS = /* @__PURE__ */ new Set([";", "&", "|", "\n", "(", ")", "`"]);
 function endWord(s) {
@@ -348,7 +358,97 @@ function guardCommand(command) {
 }
 
 // src/mapping.ts
-import { basename, relative, resolve } from "node:path";
+import { basename } from "node:path";
+
+// src/subject.ts
+function str(value) {
+  return typeof value === "string" && value !== "" ? value : void 0;
+}
+function commandOf(hook) {
+  const toolInput = hook["tool_input"];
+  if (typeof toolInput !== "object" || toolInput === null) {
+    return void 0;
+  }
+  const command = toolInput["command"];
+  if (Array.isArray(command)) {
+    return command.filter((c) => typeof c === "string").map(shellQuote).join(" ");
+  }
+  return str(command);
+}
+var SHELL_SAFE = /^[\w@%+=:,./-]+$/;
+function shellQuote(word) {
+  return SHELL_SAFE.test(word) ? word : `'${word.replaceAll("'", String.raw`'\''`)}'`;
+}
+function isShellTool(hook) {
+  const tool = str(hook["tool_name"]) ?? "";
+  return tool !== "apply_patch" && !/^(?:Edit|Write|MultiEdit|NotebookEdit)$/.test(tool);
+}
+function permissionSubject(hook) {
+  const tool = str(hook["tool_name"]);
+  if (tool === void 0) {
+    return void 0;
+  }
+  const input = hook["tool_input"];
+  const fields = asRecord(input);
+  const command = isShellTool(hook) ? commandOf(hook) : void 0;
+  const path = firstString(fields, ["file_path", "filePath", "path"]);
+  const url = firstString(fields, ["url"]);
+  const cwd = str(hook["cwd"]) ?? "";
+  const value = command !== void 0 ? stripCwd(command, cwd) : path !== void 0 ? posixRelative(cwd, path).replaceAll("\\", "/") : url ?? stableToolInput(input);
+  return collapse(`${tool}: ${value}`);
+}
+function asRecord(value) {
+  return typeof value === "object" && value !== null && !Array.isArray(value) ? value : void 0;
+}
+function firstString(value, keys) {
+  for (const key of keys) {
+    const candidate = value?.[key];
+    if (typeof candidate === "string" && candidate !== "") {
+      return candidate;
+    }
+  }
+  return void 0;
+}
+function stableToolInput(value) {
+  const fields = asRecord(value);
+  if (fields === void 0) {
+    return canonicalJson(value) ?? "";
+  }
+  const input = { ...fields };
+  delete input["description"];
+  return canonicalJson(input);
+}
+function stripCwd(command, cwd) {
+  const line = collapse(command);
+  const prefix = `cd ${collapse(cwd)} && `;
+  return line.startsWith(prefix) ? line.slice(prefix.length) : line;
+}
+function collapse(value) {
+  return value.replace(/\s+/g, " ").trim();
+}
+function normalizeSegments(path) {
+  const out = [];
+  for (const part of path.split("/")) {
+    if (part === "..") {
+      out.pop();
+    } else if (part !== "" && part !== ".") {
+      out.push(part);
+    }
+  }
+  return out;
+}
+function resolveSegments(base, path) {
+  return normalizeSegments(path.startsWith("/") ? path : `/${base}/${path}`);
+}
+function posixRelative(base, path) {
+  const from = resolveSegments("", base);
+  const to = resolveSegments(base.startsWith("/") ? base : `/${base}`, path);
+  let common = 0;
+  while (common < from.length && common < to.length && from[common] === to[common]) {
+    common += 1;
+  }
+  return [...from.slice(common).map(() => ".."), ...to.slice(common)].join("/");
+}
 
 // src/transcript.ts
 import { closeSync, fstatSync, openSync, readSync } from "node:fs";
@@ -484,9 +584,6 @@ var EVENT_POLICY = {
   Stop: "turn-outcome",
   UserPromptSubmit: "routing"
 };
-function str(value) {
-  return typeof value === "string" && value !== "" ? value : void 0;
-}
 function parseEvent(name) {
   const pascal = name.replace(/(?:^|[-_])([a-z])/g, (_m, c) => c.toUpperCase());
   return HOOK_EVENTS.find((e) => e === pascal);
@@ -497,25 +594,6 @@ function parseHarness(name) {
 function projectOf(hook) {
   const cwd = str(hook["cwd"]);
   return cwd === void 0 ? void 0 : `${basename(cwd)} (${cwd})`;
-}
-function commandOf(hook) {
-  const toolInput = hook["tool_input"];
-  if (typeof toolInput !== "object" || toolInput === null) {
-    return void 0;
-  }
-  const command = toolInput["command"];
-  if (Array.isArray(command)) {
-    return command.filter((c) => typeof c === "string").map(shellQuote).join(" ");
-  }
-  return str(command);
-}
-var SHELL_SAFE = /^[\w@%+=:,./-]+$/;
-function shellQuote(word) {
-  return SHELL_SAFE.test(word) ? word : `'${word.replaceAll("'", String.raw`'\''`)}'`;
-}
-function isShellTool(hook) {
-  const tool = str(hook["tool_name"]) ?? "";
-  return tool !== "apply_patch" && !/^(?:Edit|Write|MultiEdit|NotebookEdit)$/.test(tool);
 }
 function compact(input) {
   return Object.fromEntries(Object.entries(input).filter(([, v]) => v !== void 0 && v !== ""));
@@ -554,49 +632,6 @@ function permissionInput(hook, t) {
     ...subject === void 0 ? {} : { subject }
   };
 }
-function permissionSubject(hook) {
-  const tool = str(hook["tool_name"]);
-  if (tool === void 0) {
-    return void 0;
-  }
-  const input = hook["tool_input"];
-  const fields = asRecord(input);
-  const command = isShellTool(hook) ? commandOf(hook) : void 0;
-  const path = firstString(fields, ["file_path", "filePath", "path"]);
-  const url = firstString(fields, ["url"]);
-  const cwd = str(hook["cwd"]) ?? "";
-  const value = command !== void 0 ? stripCwd(command, cwd) : path !== void 0 ? relative(cwd, resolve(cwd, path)).replaceAll("\\", "/") : url ?? stableToolInput(input);
-  return collapse(`${tool}: ${value}`);
-}
-function asRecord(value) {
-  return typeof value === "object" && value !== null && !Array.isArray(value) ? value : void 0;
-}
-function firstString(value, keys) {
-  for (const key of keys) {
-    const candidate = value?.[key];
-    if (typeof candidate === "string" && candidate !== "") {
-      return candidate;
-    }
-  }
-  return void 0;
-}
-function stableToolInput(value) {
-  const fields = asRecord(value);
-  if (fields === void 0) {
-    return canonicalJson(value) ?? "";
-  }
-  const input = { ...fields };
-  delete input["description"];
-  return canonicalJson(input);
-}
-function stripCwd(command, cwd) {
-  const line = collapse(command);
-  const prefix = `cd ${collapse(cwd)} && `;
-  return line.startsWith(prefix) ? line.slice(prefix.length) : line;
-}
-function collapse(value) {
-  return value.replace(/\s+/g, " ").trim();
-}
 function commandRiskInput(hook) {
   return {
     project: projectOf(hook),
@@ -621,6 +656,16 @@ var BUILDERS = {
   Stop: turnOutcomeInput,
   UserPromptSubmit: (hook) => routingInput(hook)
 };
+var CALL_ID = /^[\w-]{1,128}$/;
+function callOf(harness, event, hook) {
+  const id = str(hook["tool_use_id"]);
+  if (harness !== "claude" || event !== "PreToolUse" || id === void 0 || !CALL_ID.test(id)) {
+    return void 0;
+  }
+  const mode = hook["permission_mode"];
+  const permissionMode = PERMISSION_MODES.includes(mode) ? mode : void 0;
+  return { id, ...permissionMode === void 0 ? {} : { permissionMode } };
+}
 function mapEvent(event, hook, read) {
   const input = BUILDERS[event](hook, new Transcript(str(hook["transcript_path"]), read));
   return { policy: EVENT_POLICY[event], input: compact(input) };
@@ -687,21 +732,21 @@ function reasonOf(res) {
   const detail = answer === void 0 ? "" : ` (${answer[0]}=${answer[1].answer}, confidence ${answer[1].confidence.toFixed(2)})`;
   return `${PREFIX} ${res.policy} policy: ${res.action}${detail}. Decision ${res.decisionId}.`;
 }
-function preToolUseOutput(harness, res) {
+function preToolUseOutput(harness, res, autoMode) {
   if (res.action === "deny") {
     return preToolUse("deny", reasonOf(res));
   }
-  if (res.action === "ask" && harness === "claude") {
+  if (res.action === "ask" && harness === "claude" && !autoMode) {
     return preToolUse("ask", reasonOf(res));
   }
   return "";
 }
-function translate(harness, event, res) {
+function translate(harness, event, res, autoMode = false) {
   if (res === null || !res.enforced) {
     return "";
   }
   if (event === "PreToolUse") {
-    return preToolUseOutput(harness, res);
+    return preToolUseOutput(harness, res, autoMode);
   }
   if (event === "PermissionRequest") {
     return res.action === "allow" ? permissionAllow() : "";
@@ -751,9 +796,11 @@ function guardOutput(hook, env) {
 async function decideAndTranslate(ctx) {
   const call = mapEvent(ctx.event, ctx.hook, ctx.deps.readTranscript ?? readSlice);
   const sessionId = str(ctx.hook["session_id"]);
+  const toolCall = callOf(ctx.harness, ctx.event, ctx.hook);
   const request = {
     harness: ctx.harness === "claude" ? "claude-code" : "codex",
     ...sessionId === void 0 ? {} : { sessionId },
+    ...toolCall === void 0 ? {} : { call: toolCall },
     input: call.input
   };
   const decide = ctx.deps.decide ?? clientFromEnv(ctx.env);
@@ -761,7 +808,7 @@ async function decideAndTranslate(ctx) {
   ctx.log(
     res === null ? `${call.policy}: no answer (gateway down, slow or erroring); abstaining` : `${call.policy}: action=${res.action} enforced=${String(res.enforced)} id=${res.decisionId}`
   );
-  return translate(ctx.harness, ctx.event, res);
+  return translate(ctx.harness, ctx.event, res, ctx.hook["permission_mode"] === "auto");
 }
 async function handle(ctx) {
   if (ctx.event === "PreToolUse") {

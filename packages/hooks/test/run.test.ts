@@ -496,3 +496,100 @@ describe('policies run by the host', () => {
     );
   });
 });
+
+const pre = (extra: Record<string, unknown>): string =>
+  JSON.stringify({ ...HOOKS.PreToolUse, ...extra });
+
+describe('tool call identity for the gateway', () => {
+  it('sends tool_use_id and permission_mode of a Claude PreToolUse as call', async () => {
+    const { decide, calls } = fake('log', true);
+    await run(
+      'claude',
+      'PreToolUse',
+      pre({ tool_use_id: 'toolu_01AbC-x', permission_mode: 'auto' }),
+      {},
+      { decide },
+    );
+    assert.deepEqual(calls[0]?.request.call, { id: 'toolu_01AbC-x', permissionMode: 'auto' });
+  });
+
+  it('leaves out an absent or invalid id, and an invalid mode', async () => {
+    const { decide, calls } = fake('log', true);
+    const send = async (extra: Record<string, unknown>): Promise<void> => {
+      await run('claude', 'PreToolUse', pre(extra), {}, { decide });
+    };
+    await send({ permission_mode: 'auto' });
+    await send({ tool_use_id: 'bad id/../x', permission_mode: 'auto' });
+    await send({ tool_use_id: 'x'.repeat(129) });
+    await send({ tool_use_id: 'toolu_2', permission_mode: 'root' });
+    assert.equal(calls[0]?.request.call, undefined);
+    assert.equal(calls[1]?.request.call, undefined);
+    assert.equal(calls[2]?.request.call, undefined);
+    assert.deepEqual(calls[3]?.request.call, { id: 'toolu_2' });
+  });
+
+  it('sends no call for Codex or for other Claude events', async () => {
+    const { decide, calls } = fake('log', true);
+    const extra = { tool_use_id: 'toolu_3', permission_mode: 'auto' };
+    await run('codex', 'PreToolUse', pre(extra), {}, { decide });
+    await run(
+      'claude',
+      'PermissionRequest',
+      JSON.stringify({ ...HOOKS.PermissionRequest, ...extra }),
+      {},
+      { decide },
+    );
+    assert.equal(calls.length, 2);
+    assert.equal(calls[0]?.request.call, undefined);
+    assert.equal(calls[1]?.request.call, undefined);
+  });
+});
+
+const auto = (action: string, harness = 'claude', mode = 'auto'): Promise<string> => {
+  const { decide } = fake(action, true);
+  return run(
+    harness,
+    'PreToolUse',
+    JSON.stringify({ ...HOOKS.PreToolUse, permission_mode: mode }),
+    {},
+    { decide, readTranscript: noTranscript },
+  ).then((res) => res.stdout);
+};
+
+describe('Claude auto mode', () => {
+  it('turns a command-risk ask into no output', async () => {
+    assert.equal(await auto('ask'), '');
+  });
+
+  it('keeps ask in every other permission mode', async () => {
+    for (const mode of ['default', 'acceptEdits', 'plan', 'dontAsk', 'bypassPermissions']) {
+      const out = parsed(await auto('ask', 'claude', mode)) as {
+        hookSpecificOutput: { permissionDecision: string };
+      };
+      assert.equal(out.hookSpecificOutput.permissionDecision, 'ask', mode);
+    }
+  });
+
+  it('leaves deny unchanged', async () => {
+    const out = parsed(await auto('deny')) as {
+      hookSpecificOutput: { permissionDecision: string };
+    };
+    assert.equal(out.hookSpecificOutput.permissionDecision, 'deny');
+  });
+
+  it('keeps the guard in auto mode and Codex unchanged', async () => {
+    const { decide, calls } = fake('ask', true);
+    const rm = { ...BASE, tool_name: 'Bash', tool_input: { command: 'rm -rf /' } };
+    const guarded = await run(
+      'claude',
+      'PreToolUse',
+      JSON.stringify({ ...rm, permission_mode: 'auto' }),
+      {},
+      { decide },
+    );
+    assert.match(guarded.stdout, /"permissionDecision":"deny"/);
+    assert.equal(calls.length, 0);
+    assert.equal(await auto('ask', 'codex'), '');
+    assert.match(await auto('deny', 'codex'), /"permissionDecision":"deny"/);
+  });
+});

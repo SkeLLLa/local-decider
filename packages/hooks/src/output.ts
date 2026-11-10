@@ -100,28 +100,33 @@ function reasonOf(res: DecideResponse): string {
   return `${PREFIX} ${res.policy} policy: ${res.action}${detail}. Decision ${res.decisionId}.`;
 }
 
-function preToolUseOutput(harness: HookHarness, res: DecideResponse): string {
+function preToolUseOutput(harness: HookHarness, res: DecideResponse, autoMode: boolean): string {
   if (res.action === 'deny') {
     return preToolUse('deny', reasonOf(res));
   }
-  // Codex rejects `ask` (and `allow` without `updatedInput`) from PreToolUse: deny-only there.
-  if (res.action === 'ask' && harness === 'claude') {
+  // Codex rejects `ask` (and `allow` without `updatedInput`) from PreToolUse: deny-only there. In
+  // Claude's auto mode an `ask` stays silent: the auto-mode classifier decides, not the user.
+  if (res.action === 'ask' && harness === 'claude' && !autoMode) {
     return preToolUse('ask', reasonOf(res));
   }
   return '';
 }
 
-/** Translate a gateway answer for an event. `null` (gateway down, slow, error) → abstain. */
+/**
+ * Translate a gateway answer for an event. `null` (gateway down, slow, error) → abstain.
+ * `autoMode`: Claude Code runs in auto mode (`permission_mode: auto`).
+ */
 export function translate(
   harness: HookHarness,
   event: HookEvent,
   res: DecideResponse | null,
+  autoMode = false,
 ): string {
   if (res === null || !res.enforced) {
     return '';
   }
   if (event === 'PreToolUse') {
-    return preToolUseOutput(harness, res);
+    return preToolUseOutput(harness, res, autoMode);
   }
   if (event === 'PermissionRequest') {
     // v1 never denies from the model: anything but an enforced allow leaves the normal prompt

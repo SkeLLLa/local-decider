@@ -174,18 +174,18 @@ describe('scope modes', () => {
   });
 });
 
+async function start(
+  engine: FakeEngine,
+  policies: Record<string, unknown>,
+): Promise<{ gw: Gateway; paths: ReturnType<typeof tempPaths> }> {
+  const paths = tempPaths();
+  const gw = await startGateway({ config: testConfig({ policies }), paths, engine, env: {} });
+  return { gw, paths };
+}
+
+const getCall = (gw: Gateway, id: string): Promise<Response> => fetch(`${gw.url}/v1/calls/${id}`);
+
 describe('GET /v1/calls/:id', () => {
-  async function start(
-    engine: FakeEngine,
-    policies: Record<string, unknown>,
-  ): Promise<{ gw: Gateway; paths: ReturnType<typeof tempPaths> }> {
-    const paths = tempPaths();
-    const gw = await startGateway({ config: testConfig({ policies }), paths, engine, env: {} });
-    return { gw, paths };
-  }
-
-  const getCall = (gw: Gateway, id: string): Promise<Response> => fetch(`${gw.url}/v1/calls/${id}`);
-
   it('returns the decisions and scope modes recorded for a call', async () => {
     const { gw } = await start(new FakeEngine({ allow: 0.97, ask: 0.02, deny: 0.01 }), {
       permission: { mode: 'act', scopes: { 'claude-auto': { mode: 'act' } } },

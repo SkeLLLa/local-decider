@@ -1,10 +1,11 @@
-import { canonicalJson } from '@local-decider/core';
 /**
  * Event → policy mapping. Each hook event becomes one gateway policy call whose input keys match
  * the policy's `state.sections[].from` (see policies/*.yaml).
  */
-import { basename, relative, resolve } from 'node:path';
+import { PERMISSION_MODES, type DecideCall, type PermissionMode } from '@local-decider/core';
+import { basename } from 'node:path';
 
+import { commandOf, permissionSubject, str, type HookInput } from './subject.ts';
 import {
   firstUserText,
   historyText,
@@ -22,8 +23,6 @@ export type HookHarness = (typeof HOOK_HARNESSES)[number];
 const HOOK_EVENTS = ['PreToolUse', 'PermissionRequest', 'Stop', 'UserPromptSubmit'] as const;
 export type HookEvent = (typeof HOOK_EVENTS)[number];
 
-export type HookInput = Readonly<Record<string, unknown>>;
-
 /** The gateway policy each hook event runs. */
 export const EVENT_POLICY: Readonly<Record<HookEvent, string>> = {
   PreToolUse: 'command-risk',
@@ -39,10 +38,6 @@ export interface PolicyCall {
 
 export type ReadTranscript = (path: string) => TranscriptSlice | null;
 
-export function str(value: unknown): string | undefined {
-  return typeof value === 'string' && value !== '' ? value : undefined;
-}
-
 /** Accept `PreToolUse` and `pre-tool-use` spellings. */
 export function parseEvent(name: string): HookEvent | undefined {
   const pascal = name.replace(/(?:^|[-_])([a-z])/g, (_m, c: string) => c.toUpperCase());
@@ -56,38 +51,6 @@ export function parseHarness(name: string): HookHarness | undefined {
 function projectOf(hook: HookInput): string | undefined {
   const cwd = str(hook['cwd']);
   return cwd === undefined ? undefined : `${basename(cwd)} (${cwd})`;
-}
-
-/**
- * The shell command a tool call runs: Bash (`command` string or argv array), Codex `apply_patch`
- * (patch text in `command`), else `undefined`.
- */
-export function commandOf(hook: HookInput): string | undefined {
-  const toolInput = hook['tool_input'];
-  if (typeof toolInput !== 'object' || toolInput === null) {
-    return undefined;
-  }
-  const command = (toolInput as Record<string, unknown>)['command'];
-  if (Array.isArray(command)) {
-    // Quoted, so an argv like ["bash", "-lc", "rm -rf /"] keeps its inline script as one word.
-    return command
-      .filter((c) => typeof c === 'string')
-      .map(shellQuote)
-      .join(' ');
-  }
-  return str(command);
-}
-
-const SHELL_SAFE = /^[\w@%+=:,./-]+$/;
-
-function shellQuote(word: string): string {
-  return SHELL_SAFE.test(word) ? word : `'${word.replaceAll("'", String.raw`'\''`)}'`;
-}
-
-/** Tools whose `command` is file content, not a shell command. */
-export function isShellTool(hook: HookInput): boolean {
-  const tool = str(hook['tool_name']) ?? '';
-  return tool !== 'apply_patch' && !/^(?:Edit|Write|MultiEdit|NotebookEdit)$/.test(tool);
 }
 
 function compact(input: Record<string, unknown>): Record<string, unknown> {
@@ -134,65 +97,6 @@ function permissionInput(hook: HookInput, t: Transcript): Record<string, unknown
   };
 }
 
-function permissionSubject(hook: HookInput): string | undefined {
-  const tool = str(hook['tool_name']);
-  if (tool === undefined) {
-    return undefined;
-  }
-  const input = hook['tool_input'];
-  const fields = asRecord(input);
-  const command = isShellTool(hook) ? commandOf(hook) : undefined;
-  const path = firstString(fields, ['file_path', 'filePath', 'path']);
-  const url = firstString(fields, ['url']);
-  const cwd = str(hook['cwd']) ?? '';
-  const value =
-    command !== undefined
-      ? stripCwd(command, cwd)
-      : path !== undefined
-        ? relative(cwd, resolve(cwd, path)).replaceAll('\\', '/')
-        : (url ?? stableToolInput(input));
-  return collapse(`${tool}: ${value}`);
-}
-
-function asRecord(value: unknown): Record<string, unknown> | undefined {
-  return typeof value === 'object' && value !== null && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : undefined;
-}
-
-function firstString(
-  value: Record<string, unknown> | undefined,
-  keys: readonly string[],
-): string | undefined {
-  for (const key of keys) {
-    const candidate = value?.[key];
-    if (typeof candidate === 'string' && candidate !== '') {
-      return candidate;
-    }
-  }
-  return undefined;
-}
-
-function stableToolInput(value: unknown): string {
-  const fields = asRecord(value);
-  if (fields === undefined) {
-    return canonicalJson(value) ?? '';
-  }
-  const input = { ...fields };
-  delete input['description'];
-  return canonicalJson(input);
-}
-
-function stripCwd(command: string, cwd: string): string {
-  const line = collapse(command);
-  const prefix = `cd ${collapse(cwd)} && `;
-  return line.startsWith(prefix) ? line.slice(prefix.length) : line;
-}
-
-function collapse(value: string): string {
-  return value.replace(/\s+/g, ' ').trim();
-}
-
 function commandRiskInput(hook: HookInput): Record<string, unknown> {
   return {
     project: projectOf(hook),
@@ -222,6 +126,28 @@ const BUILDERS: Record<HookEvent, InputBuilder> = {
   Stop: turnOutcomeInput,
   UserPromptSubmit: (hook) => routingInput(hook),
 };
+
+const CALL_ID = /^[\w-]{1,128}$/;
+
+/**
+ * The Claude Code tool call a PreToolUse event is about (`tool_use_id`, `permission_mode`), so the
+ * gateway can serve it to other callers; absent or malformed values are left out.
+ */
+export function callOf(
+  harness: HookHarness,
+  event: HookEvent,
+  hook: HookInput,
+): DecideCall | undefined {
+  const id = str(hook['tool_use_id']);
+  if (harness !== 'claude' || event !== 'PreToolUse' || id === undefined || !CALL_ID.test(id)) {
+    return undefined;
+  }
+  const mode = hook['permission_mode'];
+  const permissionMode = (PERMISSION_MODES as readonly unknown[]).includes(mode)
+    ? (mode as PermissionMode)
+    : undefined;
+  return { id, ...(permissionMode === undefined ? {} : { permissionMode }) };
+}
 
 /** Build the gateway call for an event. Transcript reads happen only for policies that use them. */
 export function mapEvent(event: HookEvent, hook: HookInput, read: ReadTranscript): PolicyCall {
