@@ -22,3 +22,6 @@ packages/gateway/policies/
 packages/gateway/schemas/
 # The Claude Code / Codex hook bundle is committed (installs copy only the plugin dir).
 !plugins/local-decider/dist/
+
+# Agent review/scratch docs
+docs/review/

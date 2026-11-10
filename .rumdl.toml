@@ -10,7 +10,6 @@ code-blocks = false
 # Research notes quote schemas, URLs and CLI output verbatim.
 [per-file-ignores]
 "docs/research/*.md" = ["MD013"]
-"docs/review/*.md" = ["MD013"]
 
 # Collapsible sections, e.g. the README screenshots.
 [MD033]
