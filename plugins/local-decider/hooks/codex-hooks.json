@@ -1,0 +1,51 @@
+{
+  "description": "local-decider: deterministic command guard plus local decision-model policies (fail-open; PreToolUse is deny-only on Codex)",
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash|apply_patch|mcp__.*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/dist/hook.mjs\" codex PreToolUse",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "PermissionRequest": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/dist/hook.mjs\" codex PermissionRequest",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/dist/hook.mjs\" codex UserPromptSubmit",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/dist/hook.mjs\" codex Stop",
+            "timeout": 5
+          }
+        ]
+      }
+    ]
+  }
+}

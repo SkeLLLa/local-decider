@@ -1,0 +1,12 @@
+{
+  "name": "local-decider",
+  "owner": { "name": "SkeLLLa" },
+  "description": "local-decider plugins for Claude Code",
+  "plugins": [
+    {
+      "name": "local-decider",
+      "source": "./plugins/local-decider",
+      "description": "Local decision-model hooks: command guard, permission triage, routing hints, turn outcomes (fail-open)"
+    }
+  ]
+}

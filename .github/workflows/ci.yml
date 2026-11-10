@@ -110,5 +110,8 @@ jobs:
         run: pnpm -r typecheck
       - name: Build
         run: pnpm -r build
+      # plugins/local-decider/dist/hook.mjs is committed; it must match a fresh build.
+      - name: Hook bundle is up to date
+        run: git diff --exit-code -- plugins/local-decider/dist
       - name: Test
         run: pnpm -r test

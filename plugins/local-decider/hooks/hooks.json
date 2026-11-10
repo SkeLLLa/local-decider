@@ -1,0 +1,51 @@
+{
+  "description": "local-decider: deterministic command guard plus local decision-model policies (fail-open)",
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash|Edit|Write|MultiEdit|NotebookEdit|mcp__.*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/dist/hook.mjs\" claude PreToolUse",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "PermissionRequest": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/dist/hook.mjs\" claude PermissionRequest",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/dist/hook.mjs\" claude UserPromptSubmit",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/dist/hook.mjs\" claude Stop",
+            "timeout": 5
+          }
+        ]
+      }
+    ]
+  }
+}

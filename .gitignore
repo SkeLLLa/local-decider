@@ -19,3 +19,5 @@ lcov.info
 # Runtime data never lives in the repo (it goes to ~/.local/share/local-decider)
 .local-decider/
 packages/gateway/policies/
+# The Claude Code / Codex hook bundle is committed (installs copy only the plugin dir).
+!plugins/local-decider/dist/

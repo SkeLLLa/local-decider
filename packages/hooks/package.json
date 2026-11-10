@@ -1,0 +1,20 @@
+{
+  "name": "@local-decider/hooks",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Claude Code and Codex hook runner for local-decider, bundled into plugins/local-decider/dist/hook.mjs.",
+  "license": "Apache-2.0",
+  "type": "module",
+  "scripts": {
+    "build": "node build.mjs",
+    "test": "node --test --conditions=source --experimental-test-coverage --test-coverage-include='src/**' 'test/**/*.test.ts'",
+    "typecheck": "tsc -p tsconfig.json"
+  },
+  "devDependencies": {
+    "@local-decider/core": "workspace:*",
+    "esbuild": "^0.28.0"
+  },
+  "engines": {
+    "node": ">=24"
+  }
+}
