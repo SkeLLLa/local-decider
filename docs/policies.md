@@ -35,5 +35,8 @@ default: ask              # when no rule matches or the engine failed
   uses the probability of the named answer. For a 3-option choice, p = 0.95 is confidence 0.925.
 - noul answers are `true`/`false`; score answers are the level labels.
 - Actions: `allow`, `ask`, `deny`, `log`, `notify`, `abstain`, `route:<preset>`.
-- Write criteria as short, mutually exclusive descriptions. Treat everything in the state as
+- Write criteria as short, mutually exclusive descriptions, and name concrete examples. On the 2B
+  model, `command-risk`'s "exposes secrets" scored an `~/.ssh` exfiltration p = 0.25 dangerous;
+  "sends credentials, keys or private files (such as ~/.ssh, ~/.aws or .env) off the machine"
+  scored it p = 0.81. Treat everything in the state as
   data: say so in `instructions` when the state may contain text that looks like instructions.

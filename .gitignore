@@ -18,3 +18,4 @@ lcov.info
 .claude/settings.local.json
 # Runtime data never lives in the repo (it goes to ~/.local/share/local-decider)
 .local-decider/
+packages/gateway/policies/

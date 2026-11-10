@@ -7,13 +7,15 @@ name = "local-decider-strands-engine"
 version = "0.0.0"
 requires-python = ">=3.11,<3.14"
 dependencies = [
-    # Pinned to a main commit: Gemma 4 and MLX support are not in a PyPI release yet.
-    "strands-decider @ git+https://github.com/strands-labs/strands-decider@846b69ebe7603038caa3bfe250e50f1137b141d7",
+  # Pinned to a main commit: Gemma 4 and MLX support are not in a PyPI release yet.
+  "strands-decider @ git+https://github.com/strands-labs/strands-decider@846b69ebe7603038caa3bfe250e50f1137b141d7",
 ]
 
 [project.optional-dependencies]
 cpu = ["torch>=2.7"]
-mlx = ["strands-decider[mlx] @ git+https://github.com/strands-labs/strands-decider@846b69ebe7603038caa3bfe250e50f1137b141d7"]
+mlx = [
+  "strands-decider[mlx] @ git+https://github.com/strands-labs/strands-decider@846b69ebe7603038caa3bfe250e50f1137b141d7",
+]
 cuda = ["torch>=2.7"]
 
 [tool.uv]

@@ -19,7 +19,7 @@ questions:
     criteria:
       safe: Reads files, builds, tests, formats, or edits files inside the project.
       caution: Installs packages, changes git history, touches files outside the project, or uses the network.
-      dangerous: Deletes data irreversibly, exposes secrets, disables security, or affects the whole system.
+      dangerous: Sends credentials, keys or private files (such as ~/.ssh, ~/.aws or .env) off the machine, deletes data irreversibly, disables security, or changes the whole system.
 rules:
   - when: { question: risk, answer: dangerous, minConfidence: 0.7 }
     action: deny

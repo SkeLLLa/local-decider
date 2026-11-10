@@ -93,6 +93,11 @@ depends = [
 ]
 run = ["pnpm -r build", "pnpm -r test"]
 
+[tasks."test:integration"]
+description = "Gateway integration tests against a real engine; LOCAL_DECIDER_IT_ENGINE_URL=http://127.0.0.1:PORT of a running `strands-decider serve`"
+dir = "packages/gateway"
+run = "node --test --conditions=source test/integration.test.ts"
+
 [tasks.gateway]
 description = "Run the gateway in the foreground from source; args after --, e.g. mise run gateway -- --port 8765"
 run = "node --conditions=source packages/gateway/src/cli.ts gateway run"

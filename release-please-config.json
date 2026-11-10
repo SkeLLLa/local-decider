@@ -4,8 +4,18 @@
   "include-component-in-tag": true,
   "separate-pull-requests": false,
   "bump-minor-pre-major": true,
-  "plugins": [{ "type": "node-workspace", "merge": false }],
+  "plugins": [
+    {
+      "type": "node-workspace",
+      "merge": false
+    }
+  ],
   "packages": {
-    "packages/core": { "component": "core" }
+    "packages/core": {
+      "component": "core"
+    },
+    "packages/gateway": {
+      "component": "local-decider"
+    }
   }
 }
