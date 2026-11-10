@@ -75,6 +75,7 @@ codex plugin marketplace add SkeLLLa/local-decider; and codex plugin add local-d
 
 Docs: [install and configure](docs/install.md), [architecture](docs/architecture.md),
 [policy authoring](docs/policies.md), [threat model and limits](docs/security.md),
+[supervised child agents](docs/supervised-subagents.md),
 [benchmarks](docs/benchmarks.md), [demos](docs/demos.md), [ADRs](docs/adr/),
 [research notes](docs/research/).
 

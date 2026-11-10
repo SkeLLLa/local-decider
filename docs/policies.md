@@ -67,6 +67,30 @@ lower value in `config.yaml` counts as 0.5. Paseo's settings warn below 0.90 (mo
 auto-allowed without asking) and below 0.80 (the model will often auto-allow requests it is
 unsure about); the shipped default for `permission` is p(allow) ≥ 0.95.
 
+`local-decider stats` may suggest a lower threshold for probability-based allow rules when at least
+100 escalated labels meet the threshold and the Wilson 95% upper bound on the deny rate is at most
+2%. This is advisory only; it never changes policy or config.
+
+## Precedent
+
+A policy may name an input key as its exact-match precedent subject. The gateway redacts the
+subject and hashes it with the policy id and project; it logs the hash, never the subject, and
+does not include the policy version. The subject is never sent to the decision model.
+
+Only the first `allow` or `deny` outcome for an escalated `ask` decision counts. The source must
+appear in `precedent.sources`, and the decision and outcome must be within `maxAgeDays` (1–90,
+default 14). The defaults for `minAllows` and `sources` are 3 and `[user]`.
+
+An allow precedent matches when the exact subject has at least `minAllows` allows and no denies.
+It still requires the current model to select `allow` with p(allow) ≥ 0.6. Any deny vetoes the
+precedent, so it can lower the normal threshold but cannot allow a request the model does not
+still judge likely routine.
+
+The shipped `permission` policy accepts `user` and `supervised` outcomes. See
+[Supervised child agents](supervised-subagents.md) for the Paseo parent-answer flow and per-harness
+limits. Precedent is rebuilt from recent decision and outcome JSONL records at gateway startup;
+in-memory storage is capped at 10,000 keys.
+
 ## Variants
 
 A policy with `variantOf: <id>` is an alternative for policy `<id>`. Adapters keep asking for
@@ -107,6 +131,19 @@ agent profile (`--profile`, Paseo only; fields set next to it override the profi
 and Codex cannot switch the session model from a hook, so their hint names the model (and the
 thinking level): Claude Code can pass it to the subagents it starts, and the user can switch with
 `/model`.
+
+## Testing a policy
+
+Put synthetic `{ "input": { ... }, "expect": "allow" }` cases, one per line, in a JSONL file and
+run them against the gateway:
+
+```sh
+local-decider policies eval permission policies/fixtures/permission.jsonl
+```
+
+The command asks the configured gateway to decide each case with harness `cli` and prints its
+expected action, returned action and selected answer probability. It reports results for review and
+does not fail when an action differs from the expectation.
 
 Policy files can start with `# yaml-language-server: $schema=../schemas/policy.schema.json` (the
 shipped ones do) to get completion and validation in editors.

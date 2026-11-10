@@ -120,3 +120,6 @@ Secrets never go in this file. For a remote gateway, put `LOCAL_DECIDER_TOKEN=..
 3. When the high-confidence buckets are accurate, switch that policy to `act`:
    `local-decider policies mode <policy> act`, Paseo's settings page, or `mode: act` under
    `policies:` in `config.yaml`. The gateway applies it immediately.
+
+For supervised child-agent setup, see [Supervised child agents](supervised-subagents.md), including
+Paseo's parent-answer flow and the limits of standalone CLI hooks.

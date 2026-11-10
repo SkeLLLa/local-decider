@@ -30,6 +30,11 @@
 - **CPU latency.** On CPU the 2B model takes seconds per decision, too slow for a per-tool-call
   guard; there it suits shadow logging, turn outcomes and routing hints.
 - **Claude Code auto mode** ignores hook `allow` (anthropics/claude-code#94740).
+- Any local process can POST an outcome to the loopback gateway, so local outcome labels are not
+  authenticated to a specific user or harness. A `supervised` outcome inherits the parent's
+  trust; inconsistent parent answers can teach precedent to allow an exact repeated request.
+- Paseo parent feedback for child permissions is supervised: the child continues under the
+  parent's answer, so the quality of that feedback depends on the parent's task-scope checks.
 - **Service node path.** The systemd unit and launchd plist pin the absolute path of the node
   that ran `gateway start`; after removing that node version, run `gateway start` again.
 - **Paseo 0.15.3** passes no first prompt to `agent.create.before`, so routing sees only the

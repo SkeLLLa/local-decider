@@ -74,7 +74,9 @@ user unit on Linux, a launchd agent on macOS) or `local-decider gateway run` in 
 4. Look up the decision cache (`inputHash` of policy id + version + state, TTL per policy).
 5. Send `{state, questions}` with sorted keys to the engine; normalise answers so every engine
    reports the same `probabilities` and `confidence` (`core/systemone.ts`).
-6. First matching rule → action, else the policy default (`core/policy.ts`).
+6. First matching rule → action, else the policy default (`core/policy.ts`). A precedent allow
+   rule also requires a current model allow with p(allow) ≥ 0.6, enough recent exact-subject allows,
+   and no deny; precedent never bypasses the model.
 7. `enforced = mode === 'act' && no error`. Append a shadow record; return.
 
 ### Modes and the shadow log
@@ -84,9 +86,12 @@ rollout. Every policy ships in `shadow`. Adapters change harness behaviour only 
 `enforced` is true.
 
 Records go to `~/.local/share/local-decider/logs/decisions-YYYY-MM-DD.jsonl`:
-`{kind: "decision", ts, decisionId, harness, sessionId?, policy, mode, inputHash, stateTokens,
-requestedModel?, routedModel?, answers, action, enforced, engine, model, latencyMs, error?}`.
-Adapters later append `{kind: "outcome", decisionId, outcome, source}` through `/v1/outcomes`
+`{kind: "decision", ts, decisionId, harness, sessionId?, policy, mode, inputHash, precedentKey?,
+precedent?, stateTokens, requestedModel?, routedModel?, answers, action, enforced, engine, model,
+latencyMs, error?}`. `precedentKey` is a hash of policy, project, and redacted normalized subject;
+the subject itself is never logged. Adapters later append
+`{kind: "outcome", decisionId, outcome, source}` through `/v1/outcomes`; sources include `user`,
+`supervised`, `harness`, and `heuristic`.
 and `{kind: "usage", decisionId, turnId?, model?, inputTokens, cachedInputTokens,
 outputTokens, costUsd?}` through `/v1/usage`. No state text is logged, only its hash, so the log
 never holds prompts, code or (unredacted) secrets. `local-decider stats` joins the three kinds
