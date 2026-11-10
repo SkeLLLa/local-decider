@@ -6,3 +6,7 @@ exclude = ["node_modules", "**/node_modules", ".claude", ".serena", "**/CHANGELO
 line-length = 100
 tables = false
 code-blocks = false
+
+# Research notes quote schemas, URLs and CLI output verbatim.
+[per-file-ignores]
+"docs/research/*.md" = ["MD013"]

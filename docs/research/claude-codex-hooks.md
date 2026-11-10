@@ -6,6 +6,7 @@ gateway (`POST /v1/systemone`) with a short timeout and fail open.
 Versions checked: Claude Code 2.1.311, Codex CLI 0.164.0 (2026-11-10).
 
 How each claim was checked:
+
 - **[src]**: openai/codex source on `main` (read with `gh api`).
 - **[doc]**: official docs, code.claude.com or learn.chatgpt.com.
 - **[cli]**: `--help` output from the installed binaries.
@@ -35,7 +36,7 @@ How each claim was checked:
 
 ### Plugin layout [doc: plugins/manifest-reference]
 
-```
+```text
 my-plugin/
 ├── .claude-plugin/plugin.json   # optional manifest; only `name` is required
 ├── hooks/hooks.json             # default hooks file, always loaded if present
@@ -51,6 +52,7 @@ my-plugin/
 - **Name.** It must be kebab-case. A name starting with `claude-`, `anthropic-` or `cc-plugin-` is an error.
 
 Minimal `plugin.json`:
+
 ```json
 {
   "name": "local-decider",
@@ -71,6 +73,7 @@ Minimal `plugin.json`:
 - `${user_config.KEY}` only substitutes into exec-form `args`. Shell-form `command` rejects it.
 
 `hooks/hooks.json`. The `"hooks"` wrapper is required in a file, and `timeout` is in **seconds**:
+
 ```json
 {
   "description": "local-decider hooks",
@@ -135,7 +138,7 @@ File: `<root>/.claude-plugin/marketplace.json`. Required fields are `name`, `own
 
 ### CLI flow [cli]
 
-```
+```text
 claude plugin validate ./                              # marketplace + each relative plugin
 claude plugin marketplace add ./                       # or: add SkeLLLa/local-decider  (--scope user|project|local, --sparse .claude-plugin plugins)
 claude plugin install local-decider@local-decider      # -s user|project|local ; --config key=value for userConfig
@@ -152,11 +155,13 @@ claude --plugin-dir ./plugins/local-decider            # dev: load without insta
 ## 2. Claude Code hook I/O
 
 ### Common stdin fields [doc]
+
 ```json
 { "session_id": "abc123", "prompt_id": "…", "transcript_path": "…/x.jsonl", "cwd": "/repo",
   "permission_mode": "default|acceptEdits|plan|auto|dontAsk|bypassPermissions",
   "effort": "…", "hook_event_name": "PreToolUse", "agent_id": "(subagents only)", "agent_type": "…" }
 ```
+
 The `permission_mode` enum is **UNVERIFIED** beyond `default`; the docs example only shows that value.
 
 ### Exit codes and timeouts [doc]
@@ -170,6 +175,7 @@ The `permission_mode` enum is **UNVERIFIED** beyond `default`; the docs example 
 | timeout | hook cancelled, output discarded, non-blocking. PreToolUse is not blocked unless `"onFailure": "block"` (v2.1.295+) |
 
 Default timeouts:
+
 - 600 s for `command`, `http` and `mcp_tool`.
 - 30 s for those three on `UserPromptSubmit`.
 - 30 s for `prompt` hooks and 60 s for `agent` hooks.
@@ -179,12 +185,15 @@ Universal output fields are `continue`, `stopReason`, `suppressOutput` and `syst
 ### PreToolUse
 
 Input adds `tool_name`, `tool_input` and `tool_use_id`:
+
 ```json
 { "hook_event_name": "PreToolUse", "tool_name": "Bash",
   "tool_input": { "command": "npm test", "description": "Run tests", "timeout": 120000, "run_in_background": false },
   "tool_use_id": "toolu_01…" }
 ```
+
 Output:
+
 ```json
 { "hookSpecificOutput": {
     "hookEventName": "PreToolUse",
@@ -204,50 +213,63 @@ Output:
 ### PermissionRequest
 
 It runs only when Claude Code is about to show a permission prompt, or when it would auto-deny a call that can't prompt. In headless sessions with no hook decision, the call is **denied**.
+
 ```json
 { "hook_event_name": "PermissionRequest", "tool_name": "Bash",
   "tool_input": { "command": "rm -rf node_modules", "description": "…" },
   "permission_suggestions": [ { "type": "addRules", "rules": [{ "toolName": "Bash", "ruleContent": "rm -rf node_modules" }],
                                 "behavior": "allow", "destination": "localSettings" } ] }
 ```
+
 Output:
+
 ```json
 { "hookSpecificOutput": { "hookEventName": "PermissionRequest",
     "decision": { "behavior": "allow", "updatedInput": { "command": "npm run lint" }, "updatedPermissions": [ … ] } } }
 { "hookSpecificOutput": { "hookEventName": "PermissionRequest",
     "decision": { "behavior": "deny", "message": "why (to Claude)", "interrupt": false } } }
 ```
+
 `updatedInput` and `updatedPermissions` apply to allow only. `message` and `interrupt` apply to deny only. To abstain, print nothing.
 
 ### UserPromptSubmit
+
 Input adds `"prompt": "…"`. Output:
+
 ```json
 { "decision": "block", "reason": "shown to user",
   "hookSpecificOutput": { "hookEventName": "UserPromptSubmit",
     "additionalContext": "added alongside the prompt", "sessionTitle": "…", "suppressOriginalPrompt": true } }
 ```
+
 - Plain stdout on exit 0 is also added as context.
 - Omit `decision` to allow the prompt.
 - Exit 2 blocks the prompt.
 
 ### Stop
+
 Input adds these fields:
+
 - `stop_hook_active`: true when this turn is already a stop-hook continuation.
 - `last_assistant_message`
 - `background_tasks[]`
 - `session_crons[]`
 
 Output:
+
 ```json
 { "decision": "block", "reason": "required; tells Claude why to continue" }
 { "hookSpecificOutput": { "hookEventName": "Stop", "additionalContext": "non-error feedback" } }
 ```
+
 **Can Stop add context without blocking?** Only partly:
+
 - `additionalContext` is not labelled an error ("Stop hook feedback"), but **it still continues the conversation**. It goes through the same loop protection: `stop_hook_active` and an 8-continuation cap, which `CLAUDE_CODE_STOP_HOOK_BLOCK_CAP` overrides.
 - No field adds model context and still lets the turn end. `systemMessage` shows text to the user only.
 - To prime the *next* turn, save state at Stop and inject it from `UserPromptSubmit`.
 
 ### Fail-open recipe (Claude and Codex)
+
 - Use an internal HTTP timeout **shorter** than the hook `timeout`, for example a 1500 ms fetch with `"timeout": 3`.
 - On any error (ECONNREFUSED, timeout, non-2xx, bad JSON), print nothing and `exit 0`. Never exit 2 or print a malformed JSON object.
 - Only emit `deny` or `block` when the model is confident. Use abstention, not `ask`, for uncertain cases. In Codex, `ask` is invalid.
@@ -277,6 +299,7 @@ Output:
 **Verdict:** a hook `allow` does **not** override the auto-mode classifier. It can only tighten: `deny`, or `ask` to force a prompt.
 
 **Workarounds:**
+
 1. **Mod `tool.check`** [doc plugins/mods/events, permissions]. In auto mode, "a call the mod approves runs without a classifier check".
    - `tool.check` fires after PreToolUse hooks and *before* the prompt, the classifier and PermissionRequest.
    - It returns `{ decision: 'allow'|'ask'|'deny', reason? }`.
@@ -284,6 +307,7 @@ Output:
    - It can call the gateway with `$.http.fetch`. The hook's own time limit is 10 s, and time inside `$.http.fetch` doesn't count. A `.catch` handler gets 1 s.
    - A throw or timeout means the call gets the decision it would have had without the mod, which is fail-open.
    - Since v2.1.287, the "built-in guard" may restrict installed mods in org setups.
+
    ```js
    // plugins/local-decider/hooks/register.js   (hooks/hooks.json: { "modules": ["./register.js"], "hooks": {…} })
    export function register(on) {
@@ -296,6 +320,7 @@ Output:
      })
    }
    ```
+
    **UNVERIFIED:** the exact `$.http.fetch` signature. Check the generated `.claude-plugin/types/claude-code/index.d.ts`.
 2. **PostToolUse `classifierContext`** feeds the classifier an "unverified, application-provided" note. It is advisory only.
 3. **Narrow `permissions.allow` rules.** Auto mode drops broad interpreter and `Bash(*)` rules.
@@ -305,6 +330,7 @@ Output:
 ## 4. Codex CLI
 
 ### Hook config locations [doc learn.chatgpt.com/docs/hooks, src discovery.rs, local]
+
 - **User and project files:** `~/.codex/hooks.json` and `<repo>/.codex/hooks.json`, or inline `[hooks]` in `config.toml`. Project layers load only if the project is trusted.
 - **Feature flag:** `hooks` is stable and on by default (`codex features list`). `plugin_hooks` is listed as "removed", meaning folded into `hooks`.
 - **Trust.** Non-managed hooks, **including plugin hooks**, must be reviewed and trusted in the TUI via `/hooks`.
@@ -326,6 +352,7 @@ Output:
   The file format is Claude-compatible.
 
 TOML form, copied from a local project config:
+
 ```toml
 [[hooks.PreToolUse]]
 matcher = "^Bash$"
@@ -337,6 +364,7 @@ statusMessage = "Checking command policy"
 ```
 
 ### Events [src app-server-protocol HookEventName]
+
 - `PreModelRequest`, `PostModelRequest`
 - `PreToolUse`, `PermissionRequest`, `PostToolUse`
 - `PreCompact`, `PostCompact`
@@ -359,19 +387,23 @@ Common required fields: `session_id`, `cwd`, `hook_event_name`, `model`, `permis
 All of these schemas have `additionalProperties: false`, so the field sets are exact.
 
 **Host detection inside a shared script:**
+
 - `turn_id` present, or `model` present → Codex.
 - Codex also exports `PLUGIN_ROOT` and `PLUGIN_DATA` next to the `CLAUDE_*` aliases.
 - Simplest: pass `codex` or `claude` as an argv flag from each hooks file.
 
 ### Stdout schemas and semantics [src output_parser.rs, events/*.rs]
+
 - **Universal fields:** `continue`, `stopReason`, `suppressOutput` and `systemMessage`. On PreToolUse and PermissionRequest, `continue:false`, `stopReason` and `suppressOutput` are **rejected as unsupported**: the hook is marked Failed and the call proceeds.
 - **PreToolUse output schema:**
+
   ```json
   { "decision": "approve|block", "reason": "…",
     "hookSpecificOutput": { "hookEventName": "PreToolUse",
       "permissionDecision": "allow|deny|ask", "permissionDecisionReason": "…",
       "updatedInput": {}, "additionalContext": "…" } }
   ```
+
   - `deny` **requires** a non-empty `permissionDecisionReason`. This is the only control effect besides rewriting.
   - `allow` **without** `updatedInput` is rejected ("unsupported permissionDecision:allow").
   - `allow` **with** `updatedInput` rewrites the call.
@@ -381,10 +413,12 @@ All of these schemas have `additionalProperties: false`, so the field sets are e
   - `additionalContext` is accepted.
   - **So Codex PreToolUse is deny-only.**
 - **PermissionRequest output schema:**
+
   ```json
   { "hookSpecificOutput": { "hookEventName": "PermissionRequest",
       "decision": { "behavior": "allow|deny", "message": "…" } } }
   ```
+
   - Setting `updatedInput`, `updatedPermissions` or `interrupt:true` **fails closed**: the hook's output is ignored and marked Failed.
   - Exit 2 with stderr is a deny.
   - Across multiple hooks, **any deny wins**, otherwise the last allow wins, otherwise there is no verdict and the normal flow runs.
@@ -395,6 +429,7 @@ All of these schemas have `additionalProperties: false`, so the field sets are e
 - **Errors.** A non-zero exit other than 2, a timeout or invalid JSON marks the hook Failed and the flow continues, so **fail-open is the default**. Empty stdout with exit 0 means no-op.
 
 ### Interaction with the guardian / auto-review [src core/src/tools/approvals.rs, config.schema.json]
+
 - **Config:** `approvals_reviewer = "user" | "auto_review"` (legacy alias `guardian_subagent`). Feature `guardian_approval` is stable and on.
 - **Order inside `request_approval_with_user_prompt`:**
   1. Policy checks run first.
@@ -411,12 +446,14 @@ All of these schemas have `additionalProperties: false`, so the field sets are e
 ### Codex plugin layout [src core-plugins, utils/plugins; doc learn.chatgpt.com plugins/build; local cache]
 
 **Manifest lookup order** (`DISCOVERABLE_PLUGIN_MANIFEST_PATHS`):
+
 1. `plugin.json` at the plugin root, in the Agent Plugins v1 format. `.codex-plugin/plugin.json` is used as an overlay, unless `extensions.com.openai` is present.
 2. `.codex-plugin/plugin.json`
 3. `.claude-plugin/plugin.json`
 4. `.cursor-plugin/plugin.json`
 
 **Manifest fields:**
+
 - `name`, `version`, `description`, `author`, `homepage`, `repository`, `license`, `keywords`
 - `skills`, `mcpServers`, `apps` (`.app.json`)
 - `hooks`: a path, a path array, an inline object, or an inline array. If set, it **replaces** the default `hooks/hooks.json`.
@@ -427,6 +464,7 @@ All of these schemas have `additionalProperties: false`, so the field sets are e
 **Cache:** `~/.codex/plugins/cache/<marketplace>/<plugin>/<version>/`. Local plugins use version `local`.
 
 Example `.codex-plugin/plugin.json`:
+
 ```json
 {
   "name": "local-decider",
@@ -439,6 +477,7 @@ Example `.codex-plugin/plugin.json`:
                  "developerName": "SkeLLLa", "category": "Productivity", "capabilities": [] }
 }
 ```
+
 Per-project enablement: `config.toml` `[plugins."local-decider@local-decider"] enabled = true` [doc].
 
 **Caveat [doc]:** "Hooks apply only to plugins installed manually in the Codex desktop app. Plugins with hooks aren't eligible for the public directory." **UNVERIFIED** whether the CLI loads hooks from marketplace-installed plugins. Source discovery (`append_plugin_hook_sources`) has no desktop-only gate, so it probably does, after `/hooks` trust. Test this end to end.
@@ -446,6 +485,7 @@ Per-project enablement: `config.toml` `[plugins."local-decider@local-decider"] e
 ### Codex marketplace [src marketplace.rs; cli; doc]
 
 **Lookup order** within a marketplace root:
+
 1. `.agents/plugins/marketplace.json`
 2. `.agents/plugins/api_marketplace.json`
 3. `.claude-plugin/marketplace.json`
@@ -454,6 +494,7 @@ Per-project enablement: `config.toml` `[plugins."local-decider@local-decider"] e
 The personal marketplace is `~/.agents/plugins/marketplace.json`.
 
 Raw schema: top level `{ name, interface?: { displayName }, plugins: [...] }`. Each plugin entry has:
+
 - `name`
 - `source`: a string path, or one of:
   - `{source:"local", path}`
@@ -473,8 +514,10 @@ The docs call `policy` and `category` required, but the code defaults them. Path
                  "policy": { "installation": "AVAILABLE", "authentication": "ON_INSTALL" },
                  "category": "Productivity" } ] }
 ```
+
 CLI [cli]:
-```
+
+```text
 codex plugin marketplace add ./                 # or owner/repo[@ref], https/ssh git URL; --ref, --sparse <PATH>
 codex plugin marketplace list | upgrade [name] | remove <name>
 codex plugin add local-decider@local-decider    # or: codex plugin add local-decider -m local-decider
@@ -497,7 +540,7 @@ codex plugin list | remove
 
 ### Recommended layout (monorepo)
 
-```
+```text
 local-decider/
 ├── .claude-plugin/marketplace.json        # Claude: {name, owner, plugins:[{name:"local-decider", source:"./plugins/local-decider"}]}
 ├── .agents/plugins/marketplace.json       # Codex (checked before .claude-plugin): source {source:"local", path:"./plugins/local-decider"}, policy, category
@@ -515,6 +558,7 @@ local-decider/
 ```
 
 Why it works:
+
 - **Manifest selection.** Codex picks `.codex-plugin/plugin.json` before `.claude-plugin/plugin.json`. Claude reads only `.claude-plugin/`.
 - **Hooks files stay separate.**
   - Codex's explicit `hooks` field stops it loading `hooks/hooks.json`, so Claude-only semantics never reach Codex: PreToolUse `allow`, `ask`, mods, `PermissionDenied`.
@@ -547,6 +591,7 @@ For Codex Stop on exit 0, emit `{}` rather than plain text. Empty stdout is trea
 - **Config:** `"CUSTOM_ROUTER_PATH": "/abs/path/custom-router.js"` in `~/.claude-code-router/config.json`.
 - **Loading:** the module is loaded with `require`. Its cache is cleared on each request.
 - **Export:** the default export or a module function.
+
 ```js
 // custom-router.js (CommonJS)
 module.exports = async function router(req, config, { event }) {
@@ -555,11 +600,13 @@ module.exports = async function router(req, config, { event }) {
   return "providerName,modelName";   // route selector string; return undefined/null to fall back to built-in Router rules
 };
 ```
+
 Any thrown error is logged, and routing falls back to the defaults. The `req.body` field names come from the README convention and are **UNVERIFIED** in the current source.
 
 ---
 
 ## Open questions / to verify by test
+
 1. Does Codex CLI (not desktop) run hooks from a marketplace-installed plugin after `/hooks` trust?
 2. Does Claude PermissionRequest fire in auto mode for classifier-routed calls? The docs don't say. Probably not, since there is no prompt.
 3. What is the exact mods `$.http.fetch` signature, and does the built-in guard affect a user-installed `tool.check` mod on Pro/Max?

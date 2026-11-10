@@ -19,12 +19,14 @@ Sources: repo `strands-labs/strands-decider` (main, cloned 2026-11-10), `src/str
 - Extras on main: `cuda` (= `flash-linear-attention>=0.5`, Linux only; also needs `pip install causal-conv1d --no-build-isolation` against a local nvcc), `mlx` (`mlx>=0.32.2`, `mlx-lm>=0.32,<0.33`), `mps` = `cpu` = nothing extra, `vision` (`pillow`), `train`, `benchmark`, `dev`.
 - PyPI: the README says 0.1.0 has only `train`/`dev`. The Gemma 4 blog says `pip install "strands-decider>=0.2.0"`. Gemma 4 support needs main or 0.2.0. **[docs, conflicting]** Install from main to be safe.
 - CPU-only install, done here in a throwaway venv. Exit 0, and `serve --help` works. Resolved torch 2.15.0+cpu, transformers 5.22.2. **[verified]**
+
   ```sh
   uv venv --python 3.12 /tmp/ld-research/venv
   VIRTUAL_ENV=/tmp/ld-research/venv uv pip install --index-strategy unsafe-best-match \
     --extra-index-url https://download.pytorch.org/whl/cpu "torch>=2.7" \
     "git+https://github.com/strands-labs/strands-decider"
   ```
+
   (fish users: `set -x VIRTUAL_ENV /tmp/ld-research/venv` first. Inline `VAR=x cmd` also works in fish 3.1+.)
 - Mac/MLX: `pip install -e ".[mlx]"` from a clone, then `--device mlx`. That runs 1.4 to 1.6x faster than MPS (v19 on an M4 Pro: 113 ms at 222 tokens). **[docs]**
 
@@ -50,6 +52,7 @@ Sources: repo `strands-labs/strands-decider` (main, cloned 2026-11-10), `src/str
 `strands-decider ask CHECKPOINT --state/-s TEXT [--noul Q]... [--choice "Q?=a,b,c"]... [--score "Q?=low,mid,high"]... [--image F]... [--device D] [--json]`. `--json` prints the raw API response. `strands-decider info CHECKPOINT` is defined in `cli.py`.
 
 Gateway supervision notes:
+
 - uvicorn runs with a single worker.
 - The port binds only after model load plus warmup, so poll `/health` with a generous timeout. On CPU, warmup runs about 35 evaluations with the default `--max-batch 32`. Pass `--max-batch 8` or `--no-warmup` to start faster. On CPU there are no kernels to compile, so warmup buys little there. **[unverified]**
 - The first run downloads the base weights.
@@ -66,6 +69,7 @@ Gateway supervision notes:
 There is no `/v1/models`, no batch route, and no streaming.
 
 Request (pydantic `SystemOneRequest`):
+
 ```jsonc
 {
   "state": "string | object | array",          // required; may be "" ; objects rendered deterministically as JSON
@@ -81,9 +85,11 @@ Request (pydantic `SystemOneRequest`):
   }
 }
 ```
+
 `instructions` may itself be a string or structured content. Only these three types exist.
 
 Response (`SystemOneResponse`, plus a `latency_ms` field the server adds):
+
 ```json
 {
   "model": "strands-decider-2B-qwen3.5-v1-2610",
@@ -98,9 +104,11 @@ Response (`SystemOneResponse`, plus a `latency_ms` field the server adds):
   "latency_ms": 489.01
 }
 ```
+
 (The noul block is a real response from the README. The choice and score values come from the README's CLI example and are shown in API form.)
 
 How the probabilities and confidence are computed:
+
 - A pointer head scores every option. A temperature-calibrated softmax over the options gives the probabilities.
 - `noul`: P(true) only, with no confidence field. The docstring says confidence would just be |2p−1|. The gateway should derive `confidence = |2p−1|` or use `max(p, 1−p)`.
 - `choice`: `confidence = (N·p_max − 1)/(N − 1)`, so uniform = 0 and one-hot = 1, independent of N.
@@ -111,6 +119,7 @@ How the probabilities and confidence are computed:
 - Routing convention: act at confidence ≥ 0.9, confirm in about the 0.6 to 0.9 band. At ≥ 0.9, answers are right about 95% on unseen short tasks. **[docs]**
 
 Errors:
+
 - A ValueError from the engine, or a prompt longer than the window, returns **HTTP 422** with a `detail` that names the context window.
 - Validation errors are FastAPI 422s.
 - An `images` field on a non-vision server returns 422.
@@ -221,11 +230,13 @@ All repos are `gated: false` and Apache-2.0. They are adapters only: a LoRA, the
 - Quality: DecideBench v2 gives typed-decisions 39.1%. Strands is not listed by that exact name; "Decider-2B" there scores 31.8% and may be the Mapika `decider-2b`, not Strands **[unverified]**. Laya is fine for easy routing and triage, and weak on rule-following.
 
 **Node/ONNX: `@receptron/laya`** (MIT, v0.2.0, Node ≥ 20). **[verified README/package.json]**
+
 - `npm install @receptron/laya`. Deps: `onnxruntime-node ^1.22`, `@huggingface/tokenizers`.
 - Weights: the HF repo `receptron/laya-onnx` holds a fp32 bundle of about 1.7 GB, with `laya.onnx` plus `laya.onnx.data`.
   - It downloads on first `Laya.load()` into `~/.cache/receptron-laya` (`LAYA_CACHE`).
   - Prefetch with `node -e 'import("@receptron/laya").then((m) => m.ensureBundle())'`.
 - API (in-process, systemone shape, parity with Python to 4 dp):
+
   ```ts
   import { Laya } from "@receptron/laya";
   const laya = await Laya.load({ executionProviders: ["cpu"], sessionOptions: { intraOpNumThreads: 4 },
@@ -234,6 +245,7 @@ All repos are `gated: false` and Apache-2.0. They are adapters only: a LoRA, the
   r.answers.department.probabilities; r.answers.department.answer_confidence; r.usage.input_tokens;
   await laya.close();
   ```
+
 - Limits:
   - ≤ 192 tokens for each question's options (`head_max_len`). Fewer than about 20 options is recommended.
   - The state is truncated to 512 tokens (English).
@@ -298,7 +310,8 @@ The idea: turn any instruct LLM into a choice/noul/score engine by reading the n
 | **Lemonade** (port 13305) | `logprobs: bool` documented, `top_logprobs` not documented | `logprobs: true or int` | `response_format` json_object | **[docs]** It proxies to llama-server (GGUF) or `flm serve`, so behaviour is per backend and extra fields may pass through **[unverified]**. Linux backends: llamacpp (CPU/Vulkan/ROCm builds) and `flm:npu` (`lemonade backends install flm:npu`). `ryzenai-llm` is Windows only. |
 
 **Recipe: option-token scoring (llama.cpp, the best-supported path):**
-1. Render a prompt with single-token option labels. Use `A`/`B`/`C`... or ` yes`/` no` for noul, and `0`..`9` for a score (≤ 10 levels, which matches the Strands cap). Put the option descriptions in the prompt and end with `Answer:` (or an assistant prefix with thinking disabled via `chat_template_kwargs: {"enable_thinking": false}`).
+
+1. Render a prompt with single-token option labels. Use `A`/`B`/`C`... or `yes`/` no` for noul, and `0`..`9` for a score (≤ 10 levels, which matches the Strands cap). Put the option descriptions in the prompt and end with `Answer:` (or an assistant prefix with thinking disabled via `chat_template_kwargs: {"enable_thinking": false}`).
 2. Request: `{"max_tokens": 1, "temperature": 0, "logprobs": true, "top_logprobs": 20, "messages": [...]}`. Optionally add `logit_bias` that bans or boosts tokens, or a grammar `root ::= "A" | "B" | "C"`.
    - Note: the `n_probs` values are computed by softmax over the **raw logits** before samplers (and probably before the grammar). So reading the top-k *without* a grammar, then renormalizing, is the cleanest way. **[docs + unverified for grammar interaction]**
 3. Read `choices[0].logprobs.content[0].top_logprobs[]`. Each entry is `{token, logprob, bytes}`; llama.cpp also returns `id`.

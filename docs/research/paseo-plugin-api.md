@@ -477,6 +477,7 @@ the message on first occurrence would pin it down.
 
 **Notify / follow-up.** 0.15.3 has **no server-side notify or attention API**. jev filed an issue
 (`docs/paseo-plugin-notifications-request.md`). Options:
+
 - Write a timeline row with `append` (visible in the agent chat).
 - Send a follow-up with `agent.send(text)`. This starts a new turn and loops unless rate-limited.
 - On the client only: `useToast().show(msg, {variant})` / `.error(msg)` inside components,
@@ -491,6 +492,7 @@ the message on first occurrence would pin it down.
   on this host. `<PASEO_HOME|~/.paseo>/plugin-data/<name>` is a community convention (jev-paseo, which
   credits `panrafal/paseo-plugins`) [unverified as official]. Whether the daemon passes `PASEO_HOME`
   to the plugin subprocess is unverified, so fall back to `~/.paseo`. jev's resolver:
+
   ```ts
   export function paseoHome(): string {
     const raw = process.env.PASEO_HOME;
@@ -500,6 +502,7 @@ the message on first occurrence would pin it down.
     return raw;
   }
   ```
+
   **`plugin remove` will not delete this dir** (only managed installs and settings are deleted).
   Use atomic writes (temp file plus `rename`, mode 0o600) and cap file growth.
 - **Logging:** `console.log` → stdout and `console.error` → stderr of the subprocess. Protocol traffic
@@ -517,6 +520,7 @@ the message on first occurrence would pin it down.
 There are **no plugin test utilities** in `@getpaseo/plugin` (`createLifecycleRegistration` is
 `@internal`). Official examples unit-test pure helpers with vitest (`lifecycle-actions/server/inspect.test.ts`).
 jev uses vitest and auto-mode uses `node:test`. Recommended approach:
+
 - Keep the gateway client, the request→decision mapping, and hook policies as pure functions.
 - Test hook wiring with a hand-rolled fake `PluginServerContext` whose `addHook` captures handlers, plus
   a fake `paseo` (`agents.ref()` → `{ respondToPermission: vi.fn(), timeline: { append: vi.fn(), refetch } }`),
@@ -529,6 +533,7 @@ jev uses vitest and auto-mode uses `node:test`. Recommended approach:
 ## 9. Prior art
 
 **auto-mode-for-paseo** (obetomuniz, v0.2.0, `requirements >=0.8.0`, SDK 0.8.0)
+
 - Architecture: registers itself as a **provider** (`server.registerProvider`). The user picks "Auto",
   each message is classified (TypeSafe/Jev, local Python "Laya", or OpenAI), and it runs a native agent
   on the preset's provider/model/effort/mode through the SDK. Routing is a preset table
@@ -545,6 +550,7 @@ jev uses vitest and auto-mode uses `node:test`. Recommended approach:
   model ids in its defaults.
 
 **jev-paseo** (hypnguyen1209, v0.7.0, plugin id `jev`, `>=0.9.0-0`, SDK 0.9.2)
+
 - Uses `defineSettings` (host, Zod with defaults and `.refine`) plus `server.registerSettings` with a
   `getConfig()` that falls back to defaults on any error. Env overrides (`JEV_HOOK_*`) for headless
   use. Data: `plugin-data/jev-tasks.json` (atomic, pruned to 200 resolved) and an append-only
