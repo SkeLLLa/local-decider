@@ -7,8 +7,10 @@ import { basename } from 'node:path';
 import {
   firstUserText,
   historyText,
+  lastUserText,
   lastAssistantText,
   parseTurns,
+  taskText,
   type TranscriptSlice,
   type Turn,
 } from './transcript.ts';
@@ -108,9 +110,12 @@ class Transcript {
 }
 
 function permissionInput(hook: HookInput, t: Transcript): Record<string, unknown> {
+  const head = t.head();
+  const tail = t.tail();
   return {
     project: projectOf(hook),
-    history: historyText(t.tail()),
+    history: historyText(tail),
+    task: taskText(firstUserText(head), lastUserText(tail)),
     tool: str(hook['tool_name']),
     request: hook['tool_input'],
   };

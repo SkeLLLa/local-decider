@@ -8,8 +8,10 @@ import {
   firstUserText,
   historyText,
   lastAssistantText,
+  lastUserText,
   parseTurns,
   readSlice,
+  taskText,
 } from '../src/transcript.ts';
 
 const dir = mkdtempSync(join(tmpdir(), 'ld-hooks-'));
@@ -82,11 +84,24 @@ describe('parseTurns', () => {
       { role: 'assistant', text: 'Done.' },
     ]);
     assert.equal(firstUserText(turns), 'Fix the failing test');
+    assert.equal(lastUserText(turns), 'Fix the failing test');
     assert.equal(lastAssistantText(turns), 'Done.');
     assert.equal(
       historyText(turns),
       'User: Fix the failing test\nAssistant: Looking at the test.\nAssistant: Done.',
     );
+  });
+
+  it('formats task requests and bounds each one', () => {
+    assert.equal(
+      taskText('First task', 'Narrow it'),
+      'First request: First task\nLatest request: Narrow it',
+    );
+    assert.equal(taskText('First task', 'First task'), 'First request: First task');
+    assert.equal(taskText(undefined, 'Latest request'), 'Latest request: Latest request');
+    assert.equal(taskText(undefined, undefined), undefined);
+    const bounded = taskText('x'.repeat(1600), 'y'.repeat(1600)) ?? '';
+    assert.equal(bounded.length, 'First request: '.length + 1500 + '\nLatest request: '.length + 1500);
   });
 
   it('extracts Codex response items', () => {

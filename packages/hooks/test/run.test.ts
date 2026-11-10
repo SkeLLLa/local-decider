@@ -113,11 +113,16 @@ describe('event → policy mapping', () => {
   });
 
   it('maps PermissionRequest to permission with history', () => {
-    assert.deepEqual(mapEvent('PermissionRequest', HOOKS.PermissionRequest, read), {
+    const permissionSlice = {
+      ...slice,
+      tail: `${JSON.stringify({ type: 'user', message: { role: 'user', content: 'Narrow the change' } })}\n${slice.tail}`,
+    };
+    assert.deepEqual(mapEvent('PermissionRequest', HOOKS.PermissionRequest, () => permissionSlice), {
       policy: 'permission',
       input: {
         project: 'my-app (/work/my-app)',
-        history: 'Assistant: Working',
+        history: 'User: Narrow the change\nAssistant: Working',
+        task: 'First request: First task\nLatest request: Narrow the change',
         tool: 'Bash',
         request: { command: 'npm test' },
       },

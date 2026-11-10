@@ -401,6 +401,9 @@ function parseTurns(jsonl) {
 function clip(text, max) {
   return text.length <= max ? text : `${text.slice(0, max)}…`;
 }
+function clipTask(text) {
+  return text.length <= TURN_CHARS ? text : `${text.slice(0, TURN_CHARS - 1)}…`;
+}
 function historyText(turns, maxChars = HISTORY_CHARS) {
   const lines = [];
   let used = 0;
@@ -416,6 +419,24 @@ function historyText(turns, maxChars = HISTORY_CHARS) {
 }
 function firstUserText(turns) {
   return turns.find((t) => t.role === "user")?.text;
+}
+function lastUserText(turns) {
+  return turns.findLast((t) => t.role === "user")?.text;
+}
+function taskText(first, latest) {
+  const initial = first?.trim() ?? "";
+  const current = latest?.trim() ?? "";
+  if (initial === "" && current === "") {
+    return void 0;
+  }
+  const lines = [];
+  if (initial !== "") {
+    lines.push(`First request: ${clipTask(initial)}`);
+  }
+  if (current !== "" && current !== initial) {
+    lines.push(`Latest request: ${clipTask(current)}`);
+  }
+  return lines.join("\n");
 }
 function lastAssistantText(turns) {
   return turns.findLast((t) => t.role === "assistant")?.text;
@@ -484,9 +505,12 @@ var Transcript = class {
   }
 };
 function permissionInput(hook, t) {
+  const head = t.head();
+  const tail = t.tail();
   return {
     project: projectOf(hook),
-    history: historyText(t.tail()),
+    history: historyText(tail),
+    task: taskText(firstUserText(head), lastUserText(tail)),
     tool: str(hook["tool_name"]),
     request: hook["tool_input"]
   };
