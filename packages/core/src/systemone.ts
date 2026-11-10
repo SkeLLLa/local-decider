@@ -74,6 +74,8 @@ export interface Answer {
   readonly confidence: number;
   /** score only: the expected level index. */
   readonly score?: number;
+  /** The engine's own confidence, kept for reference; thresholds use `confidence`. */
+  readonly engineConfidence?: number;
 }
 
 export type Answers = Readonly<Record<string, Answer>>;
@@ -135,7 +137,9 @@ function normaliseChoice(wire: WireChoiceAnswer): Answer {
     type: 'choice',
     answer: wire.choice === '' ? best : wire.choice,
     probabilities: wire.probabilities,
-    confidence: wire.confidence ?? choiceConfidence(wire.probabilities),
+    // Recomputed for every engine: d3/FastFlowLM report 1 − normalised entropy, a different scale.
+    confidence: choiceConfidence(wire.probabilities),
+    ...(wire.confidence === undefined ? {} : { engineConfidence: wire.confidence }),
   };
 }
 
@@ -147,9 +151,24 @@ function normaliseScore(wire: WireScoreAnswer, levels: readonly string[]): Answe
     type: 'score',
     answer: best,
     probabilities,
-    confidence: wire.confidence ?? scoreConfidence(byIndex),
+    confidence: scoreConfidence(byIndex),
+    ...(wire.confidence === undefined ? {} : { engineConfidence: wire.confidence }),
     score: wire.score,
   };
+}
+
+/**
+ * False for answers an engine could not give: FastFlowLM returns per-question errors such as
+ * `{"type":"choice","error":"max_length_exceeded"}` inside a 200, without probabilities.
+ */
+function usable(wire: WireAnswer): boolean {
+  if ('error' in wire) {
+    return false;
+  }
+  if (wire.type === 'noul') {
+    return Number.isFinite(wire.noul);
+  }
+  return typeof wire.probabilities === 'object' && wire.probabilities !== null;
 }
 
 /**
@@ -160,10 +179,7 @@ export function normaliseAnswers(questions: Questions, response: SystemOneRespon
   const out: Record<string, Answer> = {};
   for (const [id, question] of Object.entries(questions)) {
     const wire = response.answers[id];
-    if (wire === undefined || wire.type !== question.type) {
-      continue;
-    }
-    if (wire.type === 'noul' && !Number.isFinite(wire.noul)) {
+    if (wire === undefined || wire.type !== question.type || !usable(wire)) {
       continue;
     }
     if (wire.type === 'noul') {

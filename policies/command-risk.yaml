@@ -4,6 +4,7 @@ id: command-risk
 version: 1
 description: Flag risky shell commands and tool calls before they run.
 mode: shadow
+priority: high
 state:
   maxTokens: 1000
   sections:

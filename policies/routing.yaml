@@ -4,6 +4,7 @@ id: routing
 version: 1
 description: Pick a model tier for a new task from its prompt.
 mode: shadow
+priority: high
 cache:
   ttlSeconds: 600
 state:

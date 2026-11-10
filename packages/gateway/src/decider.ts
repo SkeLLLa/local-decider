@@ -11,6 +11,7 @@ import {
   type Answers,
   type DecideRequest,
   type DecideResponse,
+  type Mode,
   type ShadowRecord,
   type SystemOneRequest,
   type SystemOneResponse,
@@ -19,7 +20,7 @@ import { randomUUID } from 'node:crypto';
 
 import type { Engine } from './engines/types.ts';
 import type { LoadedPolicy } from './policies.ts';
-import { LatencyWindow, SerialQueue } from './queue.ts';
+import { LatencyWindow, SerialQueue, type Priority } from './queue.ts';
 import type { ShadowLog } from './shadow.ts';
 
 const CACHE_MAX = 500;
@@ -61,7 +62,7 @@ export function renderValue(value: unknown): string {
 /** The policy pipeline: redact → state → cache → engine (serial) → rules → shadow log. */
 export class Decider {
   #engine: Engine;
-  readonly #policies: ReadonlyMap<string, LoadedPolicy>;
+  readonly #policies: Map<string, LoadedPolicy>;
   readonly #log: ShadowLog;
   readonly #timeoutMs: number;
   readonly #now: () => Date;
@@ -71,7 +72,7 @@ export class Decider {
 
   constructor(options: DeciderOptions) {
     this.#engine = options.engine;
-    this.#policies = options.policies;
+    this.#policies = new Map(options.policies);
     this.#log = options.log;
     this.#timeoutMs = options.decisionTimeoutMs;
     this.#now = options.now ?? (() => new Date());
@@ -89,6 +90,16 @@ export class Decider {
    * Serve later decisions from `next` and drop cached answers, which belong to the old model.
    * Stopping the old engine is the caller's job; decisions already queued on it fail open.
    */
+  /** Change a policy's run mode in place; false when the policy is unknown. */
+  setMode(id: string, mode: Mode): boolean {
+    const loaded = this.#policies.get(id);
+    if (loaded === undefined) {
+      return false;
+    }
+    this.#policies.set(id, { ...loaded, mode });
+    return true;
+  }
+
   replaceEngine(next: Engine): Engine {
     const previous = this.#engine;
     this.#engine = next;
@@ -155,6 +166,7 @@ export class Decider {
       hash,
       loaded.policy.cache.ttlSeconds,
       callerSignal,
+      policy.priority,
     );
     const match = evaluateRules(policy, result.answers);
     const enforced = mode === 'act' && result.error === undefined;
@@ -177,12 +189,14 @@ export class Decider {
     hash: string,
     ttlSeconds: number,
     signal: AbortSignal,
+    priority: Priority = 'normal',
   ): Promise<EngineResult> {
     const hit = this.#cache.get(hash);
     if (hit !== undefined && hit.expires > Date.now()) {
       return { answers: hit.answers, latencyMs: 0, cached: true };
     }
-    if (this.#engine.health().state !== 'ready') {
+    // A managed engine loads on demand and waits inside decide(); others must already be up.
+    if (this.#engine.ensureReady === undefined && this.#engine.health().state !== 'ready') {
       return {
         answers: {},
         latencyMs: 0,
@@ -196,7 +210,11 @@ export class Decider {
     const started = performance.now();
     try {
       const bounded = this.#signal(signal);
-      const response = await this.#queue.run(bounded, () => this.#engine.decide(request, bounded));
+      const response = await this.#queue.run(
+        bounded,
+        () => this.#engine.decide(request, bounded),
+        priority,
+      );
       const answers = normaliseAnswers(request.questions, response);
       const latencyMs = performance.now() - started;
       this.#latency.add(latencyMs);

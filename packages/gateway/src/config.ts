@@ -36,7 +36,25 @@ const remoteSchema = z.strictObject({
     .optional(),
 });
 
-const engineSchema = z.discriminatedUnion('type', [strandsSchema, remoteSchema]);
+export const DEFAULT_FLM_MODEL = 'd3:nano';
+const FLM_PMODES = ['powersaver', 'balanced', 'performance', 'turbo'] as const;
+
+const flmSchema = z.strictObject({
+  type: z.literal('fastflowlm'),
+  /** A d3 decision-model tag served with `flm serve --decision <model>`. */
+  model: z
+    .string()
+    .regex(/^[a-z0-9][a-z0-9.-]*:[a-z0-9][a-z0-9.-]*$/)
+    .default(DEFAULT_FLM_MODEL),
+  /** The `flm` launcher; default: the managed install (`local-decider engine install --engine fastflowlm`). */
+  binary: z.string().min(1).optional(),
+  /** Attach to a running `flm serve --decision` instead of spawning one. */
+  url: z.url().optional(),
+  pmode: z.enum(FLM_PMODES).default('performance'),
+  startTimeoutSeconds: z.number().int().min(10).max(3600).default(300),
+});
+
+const engineSchema = z.discriminatedUnion('type', [strandsSchema, remoteSchema, flmSchema]);
 
 export const configSchema = z.strictObject({
   host: z.string().default('127.0.0.1'),
@@ -54,6 +72,28 @@ export const configSchema = z.strictObject({
   policies: z.record(z.string(), z.strictObject({ mode: z.enum(MODES).optional() })).default({}),
   /** Extra policy directories, searched after the defaults; later ids replace earlier ones. */
   policyDirs: z.array(z.string()).default([]),
+  /** `lazy`: load the model on the first decision, unload when idle. `eager`: keep it loaded. */
+  lifecycle: z
+    .strictObject({
+      mode: z.enum(['lazy', 'eager']).default('lazy'),
+      idleUnloadMinutes: z.number().int().min(1).max(1440).default(15),
+    })
+    .default({ mode: 'lazy', idleUnloadMinutes: 15 }),
+  /** Tool paths; unset = automatic discovery. The settings page can override these (state.json). */
+  tools: z
+    .strictObject({
+      flm: z.string().min(1).optional(),
+      strandsDecider: z.string().min(1).optional(),
+      uv: z.string().min(1).optional(),
+    })
+    .default({}),
+  /** Model stores; unset = each tool's default (FLM_MODEL_PATH, HF_HUB_CACHE). */
+  dirs: z
+    .strictObject({
+      flmModels: z.string().min(1).optional(),
+      hfCache: z.string().min(1).optional(),
+    })
+    .default({}),
   /** Deadline for one decision, queue wait included. */
   decisionTimeoutMs: z.number().int().min(100).max(120_000).default(30_000),
 });
@@ -62,6 +102,12 @@ export type GatewayConfig = z.infer<typeof configSchema>;
 export type EngineConfig = GatewayConfig['engine'];
 export type StrandsEngineConfig = z.infer<typeof strandsSchema>;
 export type RemoteEngineConfig = z.infer<typeof remoteSchema>;
+export type FlmEngineConfig = z.infer<typeof flmSchema>;
+
+/** Defaults for an engine type, for switching to an engine the config does not describe. */
+export function engineDefaults(type: 'strands-decider' | 'fastflowlm'): EngineConfig {
+  return engineSchema.parse({ type });
+}
 
 function configFile(paths: Paths): string {
   return join(paths.config, 'config.yaml');

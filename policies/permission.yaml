@@ -4,6 +4,7 @@ id: permission
 version: 1
 description: Decide whether a tool or permission request is routine enough to allow without asking.
 mode: shadow
+priority: high
 state:
   maxTokens: 2000
   sections:

@@ -7,6 +7,7 @@ import {
   noulConfidence,
   scoreConfidence,
   type Questions,
+  type WireAnswer,
 } from '../src/index.ts';
 
 const QUESTIONS: Questions = {
@@ -52,7 +53,9 @@ describe('normaliseAnswers', () => {
     });
     assert.equal(answers['urgent']?.answer, 'true');
     assert.ok(Math.abs((answers['urgent']?.probabilities['false'] ?? 0) - 0.1419) < 1e-9);
-    assert.equal(answers['dept']?.confidence, 0.6);
+    // Always recomputed: (2·0.8 − 1)/1 = 0.6; the engine's value is kept separately.
+    assert.ok(Math.abs((answers['dept']?.confidence ?? 0) - 0.6) < 1e-9);
+    assert.equal(answers['dept']?.engineConfidence, 0.6);
     assert.equal(answers['level']?.answer, 'Frustrated');
     assert.equal(answers['level']?.score, 1.03);
     assert.deepEqual(Object.keys(answers['level']?.probabilities ?? {}), [
@@ -76,6 +79,38 @@ describe('normaliseAnswers', () => {
   it('drops missing and mistyped answers', () => {
     const answers = normaliseAnswers(QUESTIONS, {
       answers: { urgent: { type: 'choice', choice: 'x', probabilities: { x: 1 } } },
+    });
+    assert.deepEqual(answers, {});
+  });
+
+  it('recomputes confidence on the Strands scale whatever the engine reports', () => {
+    // d3 reports 1 − normalised entropy: 0.32 for this distribution; Strands' formula gives 0.6.
+    const answers = normaliseAnswers(
+      { q: { type: 'choice', instructions: 'i', criteria: { a: 'a', b: 'b', c: 'c', d: 'd' } } },
+      {
+        answers: {
+          q: {
+            type: 'choice',
+            choice: 'a',
+            probabilities: { a: 0.7, b: 0.1, c: 0.1, d: 0.1 },
+            confidence: 0.32,
+          },
+        },
+      },
+    );
+    assert.ok(Math.abs((answers['q']?.confidence ?? 0) - 0.6) < 1e-9);
+    assert.equal(answers['q']?.engineConfidence, 0.32);
+  });
+
+  it('drops per-question engine errors (FastFlowLM max_length_exceeded)', () => {
+    const answers = normaliseAnswers(QUESTIONS, {
+      answers: {
+        dept: {
+          type: 'choice',
+          error: 'max_length_exceeded',
+          message: 'too long',
+        } as unknown as WireAnswer,
+      },
     });
     assert.deepEqual(answers, {});
   });

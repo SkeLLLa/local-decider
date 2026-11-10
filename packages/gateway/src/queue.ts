@@ -1,26 +1,63 @@
+export type Priority = 'high' | 'normal' | 'low';
+
+const RANK: Readonly<Record<Priority, number>> = { high: 0, normal: 1, low: 2 };
+
+interface Waiting {
+  readonly rank: number;
+  readonly seq: number;
+  readonly start: () => void;
+}
+
 /**
- * One request in flight per engine (strands-decider's concurrency is unverified upstream).
- * Waiting jobs keep their caller's abort signal and are skipped once it has fired.
+ * One request in flight per engine (engines answer one at a time). Waiting jobs run highest
+ * priority first, FIFO within a priority, and keep their caller's abort signal: a job whose
+ * signal fired while it waited is skipped.
  */
 export class SerialQueue {
-  #tail: Promise<unknown> = Promise.resolve();
-  #depth = 0;
+  readonly #waiting: Waiting[] = [];
+  #busy = false;
+  #seq = 0;
 
   get depth(): number {
-    return this.#depth;
+    return this.#waiting.length + (this.#busy ? 1 : 0);
   }
 
-  run<T>(signal: AbortSignal, job: () => Promise<T>): Promise<T> {
-    this.#depth += 1;
-    const result = this.#tail.then(async () => {
-      signal.throwIfAborted();
-      return job();
+  run<T>(signal: AbortSignal, job: () => Promise<T>, priority: Priority = 'normal'): Promise<T> {
+    return new Promise<T>((resolve, reject) => {
+      const start = (): void => {
+        this.#busy = true;
+        const work = signal.aborted ? Promise.reject(signal.reason as Error) : job();
+        work.then(resolve, reject).finally(() => {
+          this.#busy = false;
+          this.#next();
+        });
+      };
+      this.#seq += 1;
+      this.#waiting.push({ rank: RANK[priority], seq: this.#seq, start });
+      if (!this.#busy) {
+        this.#next();
+      }
     });
-    const settle = (): void => {
-      this.#depth -= 1;
-    };
-    this.#tail = result.then(settle, settle);
-    return result;
+  }
+
+  #next(): void {
+    if (this.#busy || this.#waiting.length === 0) {
+      return;
+    }
+    let best = 0;
+    for (let i = 1; i < this.#waiting.length; i++) {
+      const a = this.#waiting[i];
+      const b = this.#waiting[best];
+      if (
+        a !== undefined &&
+        b !== undefined &&
+        (a.rank < b.rank || (a.rank === b.rank && a.seq < b.seq))
+      ) {
+        best = i;
+      }
+    }
+    const [chosen] = this.#waiting.splice(best, 1);
+    chosen?.start();
   }
 }
 

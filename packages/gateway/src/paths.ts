@@ -7,6 +7,8 @@ export interface Paths {
   readonly config: string;
   readonly logs: string;
   readonly venvs: string;
+  /** Non-Python engines (FastFlowLM portable builds). */
+  readonly engines: string;
   readonly run: string;
 }
 
@@ -23,6 +25,7 @@ export function resolvePaths(env: NodeJS.ProcessEnv = process.env): Paths {
     config,
     logs: join(data, 'logs'),
     venvs: join(data, 'venvs'),
+    engines: join(data, 'engines'),
     run: join(data, 'run'),
   };
 }

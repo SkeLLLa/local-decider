@@ -68,6 +68,11 @@ export const policySchema = z
     version: z.literal(1),
     description: z.string().min(1),
     mode: z.enum(MODES).default('shadow'),
+    /**
+     * Engine queue priority. Engines answer one request at a time, so policies a hook waits on
+     * (`high`) go ahead of background ones (`low`, e.g. turn outcomes) instead of timing out.
+     */
+    priority: z.enum(['high', 'normal', 'low']).default('normal'),
     /** Harness ids this policy applies to; empty = all. */
     harnesses: z.array(z.string().regex(ID_PATTERN)).default([]),
     state: z.strictObject({

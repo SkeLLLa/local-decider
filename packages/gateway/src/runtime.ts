@@ -3,8 +3,7 @@ import type { AddressInfo } from 'node:net';
 
 import { isLoopback, type GatewayConfig } from './config.ts';
 import { Decider } from './decider.ts';
-import { createEngineControl } from './engine-control.ts';
-import { createEngine } from './engines/index.ts';
+import { EngineControl } from './engine-control.ts';
 import type { Engine } from './engines/types.ts';
 import type { Paths } from './paths.ts';
 import { loadPolicies, type LoadedPolicy } from './policies.ts';
@@ -22,8 +21,10 @@ export interface StartOptions {
   readonly config: GatewayConfig;
   readonly paths: Paths;
   readonly env?: NodeJS.ProcessEnv;
-  /** Injected in tests; otherwise built from `config.engine`. */
+  /** Injected in tests; otherwise built from `config.engine` (and the saved selection). */
   readonly engine?: Engine;
+  /** Injected in tests: a prepared engine control (with fakes). */
+  readonly engineControl?: EngineControl;
   readonly policies?: ReadonlyMap<string, LoadedPolicy>;
 }
 
@@ -40,7 +41,14 @@ export async function startGateway(options: StartOptions): Promise<Gateway> {
       `binding ${config.host} needs LOCAL_DECIDER_TOKEN (>= 16 chars) in the environment`,
     );
   }
-  const engine = options.engine ?? createEngine(config.engine, paths);
+  const hasToken = token !== undefined && token !== '';
+  // An injected engine (tests) is not rebuilt from config, so it cannot be switched.
+  const engineControl =
+    options.engineControl ??
+    (options.engine === undefined
+      ? new EngineControl({ config, paths, env, pathsEditable: !hasToken })
+      : undefined);
+  const engine = options.engine ?? (engineControl as EngineControl).engine;
   const log = new ShadowLog(paths.logs);
   const decider = new Decider({
     engine,
@@ -48,15 +56,11 @@ export async function startGateway(options: StartOptions): Promise<Gateway> {
     log,
     decisionTimeoutMs: config.decisionTimeoutMs,
   });
-  // An injected engine (tests) is not rebuilt from config, so it cannot be switched.
-  const engineControl =
-    options.engine === undefined
-      ? createEngineControl({ config: config.engine, paths, decider })
-      : undefined;
+  engineControl?.bind(decider);
   const server = createGatewayServer({
     decider,
     log,
-    token: token === undefined || token === '' ? undefined : token,
+    token: hasToken ? token : undefined,
     engineControl,
   });
   await new Promise<void>((resolve, reject) => {

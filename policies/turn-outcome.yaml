@@ -3,6 +3,7 @@ id: turn-outcome
 version: 1
 description: Classify how an agent turn ended so stuck or blocked agents can be surfaced.
 mode: shadow
+priority: low
 state:
   maxTokens: 3000
   sections:

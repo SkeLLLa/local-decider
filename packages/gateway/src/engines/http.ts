@@ -67,14 +67,15 @@ export async function postSystemOne(
   return body;
 }
 
-/** GET `<baseUrl>/health`; resolves to the parsed body or null. */
+/** GET `<baseUrl><path>` (default `/health`); resolves to the parsed body or null. */
 export async function getHealth(
   baseUrl: string,
   timeoutMs: number,
+  path = '/health',
   doFetch: typeof fetch = globalThis.fetch,
 ): Promise<Record<string, unknown> | null> {
   try {
-    const res = await doFetch(`${baseUrl.replace(/\/+$/, '')}/health`, {
+    const res = await doFetch(`${baseUrl.replace(/\/+$/, '')}${path}`, {
       signal: AbortSignal.timeout(timeoutMs),
     });
     if (!res.ok) {

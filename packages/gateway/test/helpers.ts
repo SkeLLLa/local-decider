@@ -14,6 +14,7 @@ export function tempPaths(): Paths {
     config: join(data, 'config'),
     logs: join(data, 'logs'),
     venvs: join(data, 'venvs'),
+    engines: join(data, 'engines'),
     run: join(data, 'run'),
   };
 }

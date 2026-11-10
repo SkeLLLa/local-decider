@@ -9,7 +9,15 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import { totalmem } from 'node:os';
 
 import { UnknownPolicyError, type Decider } from './decider.ts';
-import { EngineSwitchError, parseSelection, type EngineControl } from './engine-control.ts';
+import { DownloadError } from './downloads.ts';
+import {
+  EngineSwitchError,
+  parseLifecycle,
+  parseMode,
+  parsePathUpdate,
+  parseSelection,
+  type EngineControl,
+} from './engine-control.ts';
 import { handleMcpHttp } from './mcp.ts';
 import { KNOWN_MODELS, modelFits } from './models.ts';
 import type { ShadowLog } from './shadow.ts';
@@ -176,8 +184,13 @@ function requestSignal(res: ServerResponse): AbortSignal {
 
 function health(decider: Decider): Record<string, unknown> {
   const engine = decider.engine.health();
+  // A lazily unloaded engine is healthy: it loads on the next decision.
   const status =
-    engine.state === 'ready' ? 'ok' : engine.state === 'starting' ? 'degraded' : 'down';
+    engine.state === 'ready' || engine.onDemand === true
+      ? 'ok'
+      : engine.state === 'starting'
+        ? 'degraded'
+        : 'down';
   return {
     status,
     engine: decider.engine.id,
@@ -192,6 +205,70 @@ function health(decider: Decider): Record<string, unknown> {
 }
 
 type Handler = (req: IncomingMessage, res: ServerResponse, options: ServerOptions) => Promise<void>;
+type ControlHandler = (
+  req: IncomingMessage,
+  control: EngineControl,
+  decider: Decider,
+) => Promise<[number, unknown]>;
+
+const policyModeRoute = /^\/v1\/policies\/([a-z][a-z0-9_-]{0,63})\/mode$/;
+
+/** Engine, model, lifecycle, download, validation, path and policy-mode routes. */
+const CONTROL_ROUTES: Readonly<Record<string, ControlHandler>> = {
+  'GET /v1/engines': async (_req, c) => [200, await c.status()],
+  'POST /v1/engine': async (req, c, d) => {
+    const selection = await c.select(parseSelection(await readJson(req)));
+    return [200, { ...selection, state: d.engine.health().state }];
+  },
+  'POST /v1/engine/load': async (_req, c, d) => {
+    await c.load();
+    return [202, { state: d.engine.health().state }];
+  },
+  'POST /v1/engine/unload': async (_req, c, d) => {
+    await c.unload();
+    return [200, { state: d.engine.health().state }];
+  },
+  'POST /v1/engine/lifecycle': async (req, c) => [
+    200,
+    c.setLifecycle(parseLifecycle(await readJson(req))),
+  ],
+  'POST /v1/models/download': async (req, c) => {
+    const body = await readJson(req);
+    const record = isRecord(body) ? body : {};
+    return [202, { download: c.download(String(record['engine']), String(record['model'])) }];
+  },
+  'POST /v1/engines/validate': async (req, c) => {
+    const body = await readJson(req);
+    return [200, { validation: await c.validate(String(isRecord(body) ? body['engine'] : '')) }];
+  },
+  'POST /v1/paths': async (req, c) => {
+    const { key, value } = parsePathUpdate(await readJson(req));
+    return [200, await c.setPath(key, value)];
+  },
+};
+
+function controlRoute(key: string, path: string): Handler | undefined {
+  const modeMatch = key.startsWith('POST ') ? policyModeRoute.exec(path) : null;
+  const policyId = modeMatch?.[1];
+  const handler: ControlHandler | undefined =
+    policyId === undefined
+      ? CONTROL_ROUTES[key]
+      : async (req, c) => {
+          const mode = parseMode(await readJson(req));
+          c.setPolicyMode(policyId, mode);
+          return [200, { id: policyId, mode }];
+        };
+  if (handler === undefined) {
+    return undefined;
+  }
+  return async (req, res, { decider, engineControl }) => {
+    if (engineControl === undefined) {
+      throw new EngineSwitchError(409, 'this engine cannot switch models at runtime');
+    }
+    const [status, body] = await handler(req, engineControl, decider);
+    send(res, status, body);
+  };
+}
 
 const decideRoute = /^\/v1\/decide\/([a-z][a-z0-9_-]{0,63})$/;
 
@@ -211,14 +288,9 @@ function route(method: string, path: string): Handler | undefined {
         models: KNOWN_MODELS.map((m) => ({ ...m, fits: modelFits(m.id, totalmem()) })),
       });
   }
-  if (key === 'POST /v1/engine') {
-    return async (req, res, { decider, engineControl }) => {
-      if (engineControl === undefined) {
-        throw new EngineSwitchError(409, 'this engine cannot switch models at runtime');
-      }
-      const selection = await engineControl.select(parseSelection(await readJson(req)));
-      send(res, 200, { ...selection, state: decider.engine.health().state });
-    };
+  const control = controlRoute(key, path);
+  if (control !== undefined) {
+    return control;
   }
   if (key === 'GET /v1/policies') {
     return async (_req, res, { decider }) =>
@@ -272,7 +344,11 @@ function sendError(res: ServerResponse, error: unknown): void {
     res.destroy();
     return;
   }
-  if (error instanceof HttpError || error instanceof EngineSwitchError) {
+  if (
+    error instanceof HttpError ||
+    error instanceof EngineSwitchError ||
+    error instanceof DownloadError
+  ) {
     send(res, error.status, { error: error.message });
   } else if (error instanceof UnknownPolicyError) {
     send(res, 404, { error: error.message });

@@ -6,6 +6,8 @@ export interface EngineHealth {
   readonly state: EngineState;
   readonly model: string;
   readonly detail?: string;
+  /** Unloaded on purpose (lazy lifecycle): healthy, loads on the next decision. */
+  readonly onDemand?: boolean;
   /** Context window reported by the engine, in tokens. */
   readonly maxLength?: number;
 }
@@ -17,6 +19,8 @@ export interface Engine {
   start(): Promise<void>;
   health(): EngineHealth;
   decide(request: SystemOneRequest, signal: AbortSignal): Promise<SystemOneResponse>;
+  /** Engines that load on demand: wait (bounded by `signal`) until they can answer. */
+  ensureReady?(signal: AbortSignal): Promise<void>;
   stop(): Promise<void>;
 }
 

@@ -1,11 +1,13 @@
 #!/usr/bin/env node
 import { GatewayClient, parsePolicy, type DecideRequest } from '@local-decider/core';
+import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { parseArgs } from 'node:util';
 
 import { bench } from './bench.ts';
-import { DEFAULT_PORT, loadConfig, type GatewayConfig } from './config.ts';
+import { DEFAULT_FLM_MODEL, DEFAULT_PORT, loadConfig, type GatewayConfig } from './config.ts';
 import { defaultFlavor, installStrandsEngine, type InstallFlavor } from './engine-install.ts';
+import { FLM_VERSION, installFlm } from './flm-install.ts';
 import { serveMcpStdio, type McpBackend } from './mcp.ts';
 import { resolvePaths, type Paths } from './paths.ts';
 import { startGateway } from './runtime.ts';
@@ -25,6 +27,7 @@ Usage:
   local-decider gateway run [--host H] [--port N]   run in the foreground
   local-decider gateway start|restart|stop|status|uninstall  user service (start is a no-op if running)
   local-decider engine install [--flavor cpu|mlx|cuda] [--model ID] [--no-download]
+  local-decider engine install --engine fastflowlm [--model d3:nano]  AMD NPU (Linux)
   local-decider decide <policy> [--input JSON] [key=value ...]
   local-decider stats [--json]                      agreement and calibration from the shadow log
   local-decider policies [check <file>]
@@ -95,6 +98,18 @@ async function gatewayService(ctx: Context, action: string): Promise<void> {
   }
 }
 
+async function installFastFlowLM(model: string | undefined, noDownload: boolean): Promise<void> {
+  const flm = await installFlm(resolvePaths());
+  console.log(`FastFlowLM ${FLM_VERSION} installed: ${flm}`);
+  execFileSync(flm, ['validate'], { stdio: 'inherit' });
+  if (!noDownload) {
+    execFileSync(flm, ['pull', model ?? DEFAULT_FLM_MODEL], { stdio: 'inherit' });
+  }
+  console.log(
+    'Switch to it: Settings → Local decider, or POST /v1/engine {"engine":"fastflowlm","model":"d3:nano"}',
+  );
+}
+
 async function engine(ctx: Context): Promise<void> {
   const [sub, ...rest] = ctx.args;
   if (sub !== 'install') {
@@ -103,11 +118,18 @@ async function engine(ctx: Context): Promise<void> {
   const { values } = parseArgs({
     args: rest,
     options: {
+      'engine': { type: 'string' },
       'flavor': { type: 'string' },
       'model': { type: 'string' },
       'no-download': { type: 'boolean' },
     },
   });
+  if (values.engine === 'fastflowlm') {
+    return installFastFlowLM(values.model, values['no-download'] === true);
+  }
+  if (values.engine !== undefined && values.engine !== 'strands-decider') {
+    throw new UsageError();
+  }
   const flavor = (values.flavor ?? defaultFlavor()) as InstallFlavor;
   if (!['cpu', 'mlx', 'cuda'].includes(flavor)) {
     throw new UsageError();
