@@ -28,6 +28,7 @@ import {
 } from '@local-decider/core';
 import { randomUUID } from 'node:crypto';
 
+import { CallStore, type CallDecision } from './call-store.ts';
 import type { Engine } from './engines/types.ts';
 import type { LoadedPolicy } from './policies.ts';
 import { PrecedentStore } from './precedent.ts';
@@ -91,6 +92,8 @@ export class Decider {
   readonly #latency = new LatencyWindow();
   readonly #cache = new Map<string, CacheEntry>();
   readonly #precedent: PrecedentStore;
+  /** Recent harness tool calls and what each policy decided for them. */
+  readonly calls = new CallStore();
 
   constructor(options: DeciderOptions) {
     this.#engine = options.engine;
@@ -298,6 +301,12 @@ export class Decider {
       model: this.#engine.model,
     };
     if (mode === 'off') {
+      this.#noteCall(request, policyId, {
+        decisionId,
+        action: 'abstain',
+        enforced: false,
+        answered: false,
+      });
       return {
         ...base,
         action: 'abstain',
@@ -350,7 +359,20 @@ export class Decider {
       hash,
       stateTokens: Math.ceil(state.length / CHARS_PER_TOKEN),
     });
+    this.#noteCall(request, policyId, {
+      decisionId,
+      action: response.action,
+      enforced: response.enforced,
+      answered: response.error === undefined,
+    });
     return response;
+  }
+
+  /** Index the decision under the request's call id, even if its HTTP caller is gone. */
+  #noteCall(request: DecideRequest, policyId: string, decision: CallDecision): void {
+    if (request.call !== undefined) {
+      this.calls.note(request.call.id, policyId, decision, request.call.permissionMode);
+    }
   }
 
   #precedentFor(

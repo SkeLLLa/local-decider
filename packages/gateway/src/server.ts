@@ -117,7 +117,7 @@ function parseDecideRequest(body: unknown): DecideRequest {
 }
 
 /** Tool-use and call ids: also the `GET /v1/calls/:id` path segment. */
-export const CALL_ID = /^[\w-]{1,128}$/;
+const CALL_ID = /^[\w-]{1,128}$/;
 
 /** Tolerant like `models`: an invalid `call` is dropped, never a 400. */
 function parseCall(value: unknown): DecideCall | undefined {
@@ -424,6 +424,10 @@ function controlRoute(key: string, path: string): Handler | undefined {
   };
 }
 
+const callRoute = /^\/v1\/calls\/([\w-]{1,128})$/;
+/** The policy whose scope mode the mod reads from `GET /v1/calls/:id`. */
+const CALL_POLICY = 'permission';
+
 const decideRoute = /^\/v1\/decide\/([a-z][a-z0-9_-]{0,63})$/;
 
 function route(method: string, path: string): Handler | undefined {
@@ -488,6 +492,20 @@ function route(method: string, path: string): Handler | undefined {
       log.append(outcome);
       decider.noteOutcome(outcome);
       send(res, 200, { ok: true });
+    };
+  }
+  const call = method === 'GET' ? callRoute.exec(path)?.[1] : undefined;
+  if (call !== undefined) {
+    return async (_req, res, { decider }) => {
+      const record = decider.calls.get(call);
+      if (record === undefined) {
+        send(res, 404, { error: 'unknown call' });
+        return;
+      }
+      const scopes = Object.fromEntries(
+        SCOPES.map((scope) => [scope, decider.effectiveMode(CALL_POLICY, scope)]),
+      );
+      send(res, 200, { ...record, scopes });
     };
   }
   if (path === '/mcp') {

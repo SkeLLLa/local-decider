@@ -174,6 +174,7 @@ flowchart LR
 | `POST /v1/decide/:policy` | Run a policy on harness input |
 | `POST /v1/systemone`, `POST /invocations` | Pass-through to the active engine (keys sorted, secrets redacted) |
 | `POST /v1/outcomes`, `POST /v1/usage` | Report what happened, and token usage, for a decision |
+| `GET /v1/calls/:id` | What each policy decided for a harness tool call (`call.id` of a decide request), its permission mode and the effective mode per scope; kept in memory for 10 minutes, 404 when unknown |
 | `GET /health`, `GET /ping`, `GET /v1/stats` | Engine state and latency; stats as JSON |
 | `GET /models`, `GET /v1/engines`, `POST /v1/engine`, `/v1/engine/load`, `/unload`, `/lifecycle` | Model catalogue, engine status, switching and lifecycle |
 | `POST /v1/models/download`, `/v1/engines/validate`, `/v1/paths` | Downloads, `flm validate`, tool paths (loopback gateway only) |

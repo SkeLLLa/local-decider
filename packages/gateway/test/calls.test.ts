@@ -173,3 +173,101 @@ describe('scope modes', () => {
     assert.equal(response['scope'], undefined);
   });
 });
+
+describe('GET /v1/calls/:id', () => {
+  async function start(
+    engine: FakeEngine,
+    policies: Record<string, unknown>,
+  ): Promise<{ gw: Gateway; paths: ReturnType<typeof tempPaths> }> {
+    const paths = tempPaths();
+    const gw = await startGateway({ config: testConfig({ policies }), paths, engine, env: {} });
+    return { gw, paths };
+  }
+
+  const getCall = (gw: Gateway, id: string): Promise<Response> => fetch(`${gw.url}/v1/calls/${id}`);
+
+  it('returns the decisions and scope modes recorded for a call', async () => {
+    const { gw } = await start(new FakeEngine({ allow: 0.97, ask: 0.02, deny: 0.01 }), {
+      permission: { mode: 'act', scopes: { 'claude-auto': { mode: 'act' } } },
+    });
+    try {
+      const decided = await post(gw, '/v1/decide/permission', {
+        harness: 'claude-code',
+        input,
+        call: { id: 'toolu_1', permissionMode: 'auto' },
+      });
+      const res = await getCall(gw, 'toolu_1');
+      assert.equal(res.status, 200);
+      assert.deepEqual(await res.json(), {
+        permissionMode: 'auto',
+        decisions: {
+          permission: {
+            decisionId: decided['decisionId'],
+            action: 'allow',
+            enforced: true,
+            answered: true,
+          },
+        },
+        scopes: { 'claude-auto': 'act' },
+      });
+    } finally {
+      await gw.close();
+    }
+  });
+
+  it('reports shadow for an unconfigured scope and 404 for unknown or malformed ids', async () => {
+    const { gw } = await start(new FakeEngine({ allow: 1 }), { permission: { mode: 'act' } });
+    try {
+      await post(gw, '/v1/decide/permission', {
+        harness: 'claude-code',
+        input,
+        call: { id: 'toolu_2' },
+      });
+      const body = (await (await getCall(gw, 'toolu_2')).json()) as Body;
+      assert.deepEqual(body['scopes'], { 'claude-auto': 'shadow' });
+      assert.equal((await getCall(gw, 'nope')).status, 404);
+      assert.equal((await getCall(gw, 'a%20b')).status, 404);
+      assert.equal((await getCall(gw, 'x'.repeat(129))).status, 404);
+    } finally {
+      await gw.close();
+    }
+  });
+
+  it('records a shadow decision that finishes after its caller timed out', async () => {
+    const engine = new FakeEngine({ allow: 0.97, ask: 0.02, deny: 0.01 });
+    const inner = engine.respond;
+    engine.respond = async (request, signal) => {
+      await new Promise((resolve) => setTimeout(resolve, 250));
+      return inner(request, signal);
+    };
+    const { gw } = await start(engine, { permission: { mode: 'shadow' } });
+    try {
+      await assert.rejects(
+        fetch(`${gw.url}/v1/decide/permission`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({
+            harness: 'claude-code',
+            input,
+            call: { id: 'toolu_slow', permissionMode: 'auto' },
+          }),
+          signal: AbortSignal.timeout(50),
+        }),
+      );
+      assert.equal((await getCall(gw, 'toolu_slow')).status, 404, 'not decided yet');
+      let status = 404;
+      for (let attempt = 0; attempt < 40 && status === 404; attempt += 1) {
+        await new Promise((resolve) => setTimeout(resolve, 50));
+        status = (await getCall(gw, 'toolu_slow')).status;
+      }
+      assert.equal(status, 200);
+      const body = (await (await getCall(gw, 'toolu_slow')).json()) as {
+        decisions: Record<string, { answered: boolean; action: string }>;
+      };
+      assert.equal(body.decisions['permission']?.answered, true);
+      assert.equal(body.decisions['permission']?.action, 'allow');
+    } finally {
+      await gw.close();
+    }
+  });
+});
