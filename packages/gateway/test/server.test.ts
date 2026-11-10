@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { request } from 'node:http';
+import { connect } from 'node:net';
 import { after, before, describe, it } from 'node:test';
 
 import { startGateway, type Gateway } from '../src/runtime.ts';
@@ -322,6 +323,20 @@ describe('gateway browser guard', () => {
       req.end(method === 'POST' ? body : undefined);
     });
   }
+
+  it('answers 400 to a request target URL cannot parse, and keeps serving', async () => {
+    const status = await new Promise<string>((resolve, reject) => {
+      const socket = connect(Number(port()), '127.0.0.1', () => {
+        socket.end('GET //[ HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n');
+      });
+      let data = '';
+      socket.on('data', (chunk) => (data += String(chunk)));
+      socket.on('end', () => resolve(data.split('\r\n')[0] ?? ''));
+      socket.on('error', reject);
+    });
+    assert.match(status, / 400 /);
+    assert.equal((await fetch(`${gw.url}/health`)).status, 200);
+  });
 
   it('refuses text/plain POSTs (no CORS preflight)', async () => {
     assert.equal(await raw({ 'content-type': 'text/plain' }), 403);

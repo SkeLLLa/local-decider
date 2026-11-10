@@ -487,9 +487,22 @@ function sendError(res: ServerResponse, error: unknown): void {
   }
 }
 
+/** The request path, or null for a target `URL` cannot parse (it would throw in the listener). */
+function pathOf(target: string | undefined): string | null {
+  try {
+    return new URL(target ?? '/', 'http://localhost').pathname;
+  } catch {
+    return null;
+  }
+}
+
 export function createGatewayServer(options: ServerOptions): Server {
   return createServer((req, res) => {
-    const path = new URL(req.url ?? '/', 'http://localhost').pathname;
+    const path = pathOf(req.url);
+    if (path === null) {
+      send(res, 400, { error: 'bad request target' });
+      return;
+    }
     if (!authorised(req, options.token)) {
       send(res, 401, { error: 'unauthorised' });
       return;
