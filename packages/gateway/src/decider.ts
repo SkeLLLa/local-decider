@@ -60,7 +60,7 @@ export function renderValue(value: unknown): string {
 
 /** The policy pipeline: redact → state → cache → engine (serial) → rules → shadow log. */
 export class Decider {
-  readonly #engine: Engine;
+  #engine: Engine;
   readonly #policies: ReadonlyMap<string, LoadedPolicy>;
   readonly #log: ShadowLog;
   readonly #timeoutMs: number;
@@ -83,6 +83,17 @@ export class Decider {
 
   get engine(): Engine {
     return this.#engine;
+  }
+
+  /**
+   * Serve later decisions from `next` and drop cached answers, which belong to the old model.
+   * Stopping the old engine is the caller's job; decisions already queued on it fail open.
+   */
+  replaceEngine(next: Engine): Engine {
+    const previous = this.#engine;
+    this.#engine = next;
+    this.#cache.clear();
+    return previous;
   }
 
   get queueDepth(): number {

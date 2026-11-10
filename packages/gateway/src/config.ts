@@ -8,11 +8,13 @@ import type { Paths } from './paths.ts';
 
 export const DEFAULT_PORT = 8765;
 export const DEFAULT_MODEL = 'StrandsAgents/strands-decider-2B-qwen3.5-v1-2610';
+export const DEVICES = ['auto', 'cpu', 'mlx', 'mps', 'cuda'] as const;
+export type Device = (typeof DEVICES)[number];
 
 const strandsSchema = z.strictObject({
   type: z.literal('strands-decider'),
   model: z.string().min(1).default(DEFAULT_MODEL),
-  device: z.enum(['auto', 'cpu', 'mlx', 'mps', 'cuda']).default('auto'),
+  device: z.enum(DEVICES).default('auto'),
   /** Attach to a running `strands-decider serve` instead of spawning one. */
   url: z.url().optional(),
   maxBatch: z.number().int().min(1).max(64).default(8),

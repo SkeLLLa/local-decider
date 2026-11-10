@@ -18,6 +18,9 @@ export interface GatewayHealth {
   readonly status: 'ok' | 'degraded' | 'down';
   readonly engine?: string;
   readonly model?: string;
+  /** `stopped|starting|ready|failed`; `detail` says why it is not ready. */
+  readonly engineState?: string;
+  readonly detail?: string;
   readonly p50Ms?: number;
 }
 

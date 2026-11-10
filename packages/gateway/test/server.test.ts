@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { request } from 'node:http';
 import { after, before, describe, it } from 'node:test';
 
 import { startGateway, type Gateway } from '../src/runtime.ts';
@@ -129,6 +130,81 @@ describe('gateway HTTP', () => {
     );
     const text = (call['result'] as { content: { text: string }[] }).content[0]?.text ?? '';
     assert.equal((JSON.parse(text) as { action: string }).action, 'log');
+  });
+});
+
+describe('gateway browser guard', () => {
+  let gw: Gateway;
+  before(async () => {
+    gw = await startGateway({
+      config: testConfig(),
+      paths: tempPaths(),
+      engine: new FakeEngine(),
+      env: {},
+    });
+  });
+  after(async () => gw.close());
+
+  const port = (): string => new URL(gw.url).port;
+  /** Raw request so Host and Origin can be set (fetch forbids both). */
+  function raw(
+    headers: Record<string, string>,
+    method = 'POST',
+    body = '{"harness":"cli","input":{}}',
+  ): Promise<number> {
+    return new Promise((resolve, reject) => {
+      const req = request(
+        { host: '127.0.0.1', port: port(), path: '/v1/decide/turn-outcome', method, headers },
+        (res) => {
+          res.resume();
+          resolve(res.statusCode ?? 0);
+        },
+      );
+      req.on('error', reject);
+      req.end(method === 'POST' ? body : undefined);
+    });
+  }
+
+  it('refuses text/plain POSTs (no CORS preflight)', async () => {
+    assert.equal(await raw({ 'content-type': 'text/plain' }), 403);
+    assert.equal(await raw({}), 403);
+  });
+
+  it('refuses non-loopback Host headers (DNS rebinding)', async () => {
+    assert.equal(
+      await raw({ 'content-type': 'application/json', 'host': `evil.example:${port()}` }),
+      403,
+    );
+  });
+
+  it('refuses foreign browser origins, including null', async () => {
+    assert.equal(
+      await raw({ 'content-type': 'application/json', 'origin': 'https://evil.example' }),
+      403,
+    );
+    assert.equal(await raw({ 'content-type': 'application/json', 'origin': 'null' }), 403);
+  });
+
+  it('accepts loopback JSON requests', async () => {
+    assert.equal(await raw({ 'content-type': 'application/json; charset=utf-8' }), 200);
+    assert.equal(
+      await raw({
+        'content-type': 'application/json',
+        'host': `localhost:${port()}`,
+        'origin': 'http://localhost:3000',
+      }),
+      200,
+    );
+    assert.equal(await raw({}, 'GET'), 404);
+  });
+
+  it('reports which models fit in memory', async () => {
+    const body = (await (await fetch(`${gw.url}/models`)).json()) as {
+      totalMemoryGb: number;
+      models: { fits: boolean }[];
+    };
+    assert.ok(body.totalMemoryGb > 0);
+    assert.ok(body.models.every((m) => typeof m.fits === 'boolean'));
   });
 });
 

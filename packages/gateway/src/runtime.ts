@@ -3,6 +3,7 @@ import type { AddressInfo } from 'node:net';
 
 import { isLoopback, type GatewayConfig } from './config.ts';
 import { Decider } from './decider.ts';
+import { createEngineControl } from './engine-control.ts';
 import { createEngine } from './engines/index.ts';
 import type { Engine } from './engines/types.ts';
 import type { Paths } from './paths.ts';
@@ -47,10 +48,16 @@ export async function startGateway(options: StartOptions): Promise<Gateway> {
     log,
     decisionTimeoutMs: config.decisionTimeoutMs,
   });
+  // An injected engine (tests) is not rebuilt from config, so it cannot be switched.
+  const engineControl =
+    options.engine === undefined
+      ? createEngineControl({ config: config.engine, paths, decider })
+      : undefined;
   const server = createGatewayServer({
     decider,
     log,
     token: token === undefined || token === '' ? undefined : token,
+    engineControl,
   });
   await new Promise<void>((resolve, reject) => {
     server.once('error', reject);
@@ -64,7 +71,8 @@ export async function startGateway(options: StartOptions): Promise<Gateway> {
     decider,
     url: `http://${host}:${String(port)}`,
     async close() {
-      await engine.stop();
+      await engineControl?.idle();
+      await decider.engine.stop();
       server.closeAllConnections();
       await new Promise<void>((resolve) => server.close(() => resolve()));
     },

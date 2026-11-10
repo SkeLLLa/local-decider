@@ -6,10 +6,12 @@ import {
 } from '@local-decider/core';
 import { timingSafeEqual } from 'node:crypto';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
+import { totalmem } from 'node:os';
 
 import { UnknownPolicyError, type Decider } from './decider.ts';
+import { EngineSwitchError, parseSelection, type EngineControl } from './engine-control.ts';
 import { handleMcpHttp } from './mcp.ts';
-import { KNOWN_MODELS } from './models.ts';
+import { KNOWN_MODELS, modelFits } from './models.ts';
 import type { ShadowLog } from './shadow.ts';
 import { computeStats } from './stats.ts';
 
@@ -20,6 +22,8 @@ export interface ServerOptions {
   readonly log: ShadowLog;
   /** Required bearer token, or undefined for loopback-only no-auth mode. */
   readonly token?: string | undefined;
+  /** Runtime model switching; absent in tests that inject an engine. */
+  readonly engineControl?: EngineControl | undefined;
 }
 
 class HttpError extends Error {
@@ -117,6 +121,48 @@ function authorised(req: IncomingMessage, token: string | undefined): boolean {
   return actual.length === expected.length && timingSafeEqual(actual, expected);
 }
 
+const LOOPBACK_HOSTS = new Set(['127.0.0.1', 'localhost', '[::1]', '::1']);
+
+function hostname(value: string): string {
+  if (value.startsWith('[')) {
+    return value.slice(0, value.indexOf(']') + 1);
+  }
+  return value.split(':')[0] ?? '';
+}
+
+function originIsLoopback(origin: string): boolean {
+  try {
+    return LOOPBACK_HOSTS.has(new URL(origin).hostname);
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Browser defences for the unauthenticated loopback mode. A web page can reach 127.0.0.1 with
+ * "simple" cross-origin requests (text/plain POSTs skip the CORS preflight) and through DNS
+ * rebinding (a hostile domain resolving to 127.0.0.1). So without a token: the Host header must
+ * be loopback, a browser Origin must be loopback, and every POST must be application/json,
+ * which forces a preflight this server never answers. Returns an error message, or undefined.
+ */
+function browserGuard(req: IncomingMessage, token: string | undefined): string | undefined {
+  if (token !== undefined) {
+    return undefined;
+  }
+  if (!LOOPBACK_HOSTS.has(hostname(req.headers.host ?? ''))) {
+    return 'host not allowed';
+  }
+  const origin = req.headers.origin;
+  if (origin !== undefined && !originIsLoopback(origin)) {
+    return 'cross-origin requests are not allowed';
+  }
+  const type = (req.headers['content-type'] ?? '').split(';')[0]?.trim().toLowerCase();
+  if (req.method === 'POST' && type !== 'application/json') {
+    return 'POST bodies must be application/json';
+  }
+  return undefined;
+}
+
 /** Abort when the client goes away, so queued decisions for dead callers are skipped. */
 function requestSignal(res: ServerResponse): AbortSignal {
   const controller = new AbortController();
@@ -155,12 +201,24 @@ function route(method: string, path: string): Handler | undefined {
     return async (_req, res, { decider }) => send(res, 200, health(decider));
   }
   if (key === 'GET /models') {
-    return async (_req, res, { decider }) =>
+    return async (_req, res, { decider, engineControl }) =>
       send(res, 200, {
         active: decider.engine.model,
         engine: decider.engine.id,
-        models: KNOWN_MODELS,
+        device: engineControl?.current()?.device ?? null,
+        switchable: engineControl?.switchable ?? false,
+        totalMemoryGb: Math.round(totalmem() / 1e9),
+        models: KNOWN_MODELS.map((m) => ({ ...m, fits: modelFits(m.id, totalmem()) })),
       });
+  }
+  if (key === 'POST /v1/engine') {
+    return async (req, res, { decider, engineControl }) => {
+      if (engineControl === undefined) {
+        throw new EngineSwitchError(409, 'this engine cannot switch models at runtime');
+      }
+      const selection = await engineControl.select(parseSelection(await readJson(req)));
+      send(res, 200, { ...selection, state: decider.engine.health().state });
+    };
   }
   if (key === 'GET /v1/policies') {
     return async (_req, res, { decider }) =>
@@ -214,7 +272,7 @@ function sendError(res: ServerResponse, error: unknown): void {
     res.destroy();
     return;
   }
-  if (error instanceof HttpError) {
+  if (error instanceof HttpError || error instanceof EngineSwitchError) {
     send(res, error.status, { error: error.message });
   } else if (error instanceof UnknownPolicyError) {
     send(res, 404, { error: error.message });
@@ -228,6 +286,11 @@ export function createGatewayServer(options: ServerOptions): Server {
     const path = new URL(req.url ?? '/', 'http://localhost').pathname;
     if (!authorised(req, options.token)) {
       send(res, 401, { error: 'unauthorised' });
+      return;
+    }
+    const refused = browserGuard(req, options.token);
+    if (refused !== undefined) {
+      send(res, 403, { error: refused });
       return;
     }
     const handler = route(req.method ?? 'GET', path);

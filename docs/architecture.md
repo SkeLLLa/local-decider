@@ -42,7 +42,8 @@ user unit on Linux, a launchd agent on macOS) or `local-decider gateway run` in 
 | `POST /v1/decide/:policy` | run a policy on structured harness input → `DecideResponse` (`packages/core/src/decision.ts`) |
 | `POST /v1/outcomes` | adapters report what actually happened, for agreement and calibration |
 | `GET /health`, `GET /ping` | engine state, model, p50/p95 latency |
-| `GET /models` | known decision models (`StrandsAgents/*`) and what each engine can serve |
+| `GET /models` | known decision models (`StrandsAgents/*`), the active model and device, and whether the engine can switch |
+| `POST /v1/engine` | `{model, device?}`: restart a spawned strands-decider engine on another known model until the gateway restarts (`config.yaml` stays the default); 409 for a remote or `engine.url` engine |
 | `GET /v1/policies` | loaded policies with effective modes |
 | `POST /mcp` | MCP (streamable HTTP) with a `decide` tool; `local-decider mcp` is the stdio form |
 

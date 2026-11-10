@@ -52,3 +52,12 @@ export const KNOWN_MODELS: readonly KnownModel[] = [
     jevBench: 207,
   },
 ];
+
+/** Share of physical memory a decision model may take; the rest stays for the user's work. */
+export const MEMORY_BUDGET = 0.8;
+
+/** False when a known model's estimated memory exceeds the budget; unknown models pass. */
+export function modelFits(id: string, totalBytes: number): boolean {
+  const known = KNOWN_MODELS.find((m) => m.id === id);
+  return known === undefined || known.memoryGb * 1e9 <= totalBytes * MEMORY_BUDGET;
+}
