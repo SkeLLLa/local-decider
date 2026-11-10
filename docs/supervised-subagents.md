@@ -75,11 +75,14 @@ every time. Details: [policies.md](policies.md#precedent).
 | Harness and child type | Auto-allow | Escalate to parent | Feedback as precedent |
 | --- | --- | --- | --- |
 | Paseo child from `create_agent` (any provider; parent answers with `respond_to_permission`) | ✅ | ✅ | ✅ `supervised` |
-| Claude Code Task-tool subagent | ✅ (hooks fire with `agent_id`) | ❌ Parent is blocked in the Task call; prompts go to the human | ❌ Hooks do not see the human's answer |
+| Claude Code Task-tool subagent | ✅ (hooks fire with `agent_id`); in auto mode the mod is shadow-only for subagents | ❌ Parent is blocked in the Task call; prompts go to the human | ❌ Hooks do not see the human's answer |
 | Claude Code headless `claude -p` child | ✅ (PermissionRequest hook; without a decision, headless Claude denies) | 🔧 Requires an MCP approval tool configured with `--permission-prompt-tool` | 🔧 Requires that tool to report the answer |
 | Codex interactive child | ✅ (PermissionRequest allow pre-empts the guardian) | ❌ Defers to the guardian or human | ❌ Hooks do not see the human's answer |
 | Codex `exec` child | ✅ where PermissionRequest fires | ❌ | ❌ |
 | Codex MCP-server child | Unverified | Unverified | Unverified |
+
+In Claude Code auto mode the `tool.check` mod never allows a Task subagent's call: it logs the
+decision (with the tool and request, but not the parent's conversation) and the classifier decides.
 
 Use Paseo when you need both escalation and feedback. Standalone Claude Code and Codex give
 auto-allow only; uncertain requests stay with their normal approval flow.

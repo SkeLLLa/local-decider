@@ -307,21 +307,21 @@ Output:
    - It can call the gateway with `$.http.fetch`. The hook's own time limit is 10 s, and time inside `$.http.fetch` doesn't count. A `.catch` handler gets 1 s.
    - A throw or timeout means the call gets the decision it would have had without the mod, which is fail-open.
    - Since v2.1.287, the "built-in guard" may restrict installed mods in org setups.
+   - `next(e)` of `tool.check` returns `ToolCheckResult { decision, reason?, rule?, hook?, setting?, decider?, ceiling? }`: `rule` is the ask rule that decided, `hook: 'PreToolUse'` a hook-forced ask, `setting` a setting such as `blockReadsOutsideWorkingDirectories`, `decider` a host asker, `ceiling` a ceiling. A plain ask has none of them. The event has `tool`, `input`, `tool_use_id` (the same id as the `PreToolUse` hook and `tool.call`), `agentId` for subagents (2.1.290+) and `isReadOnly` (2.1.304+). `next.origin` is `{ plugin: 'engine', tier: 'core' }` for the built-in flow.
+   - `$.session.version()` returns `{ version, base, builtAt }`, an object. `$.env.get` takes literal names only, and `$.http.fetch` has no timeout or abort: race it against `$.clock.sleep`.
+   - Implemented in `packages/hooks/src/mod/` ([ADR-0007](../adr/0007-claude-auto-mode-mod.md)); the experiments below are from Claude Code 2.1.319 on a Team login.
 
-   ```js
-   // plugins/local-decider/hooks/register.js   (hooks/hooks.json: { "modules": ["./register.js"], "hooks": {…} })
-   export function register(on) {
-     on('tool.check', { tool: 'Bash' }, async ($, e, next) => {
-       const decided = await next(e)                 // rules + mode + PreToolUse result
-       if (decided.decision !== 'ask') return decided // only try to resolve what would prompt / hit classifier
-       const r = await $.http.fetch('http://127.0.0.1:8765/v1/systemone', { method: 'POST', body: JSON.stringify({ /* … */ }) })
-       // map answer → { decision: 'allow' } | { decision: 'deny', reason } | decided
-       return decided
-     })
-   }
-   ```
+   Experiment facts (2.1.319):
 
-   **UNVERIFIED:** the exact `$.http.fetch` signature. Check the generated `.claude-plugin/types/claude-code/index.d.ts`.
+   - A plain-ask `allow` skips the classifier (≈20 ms against ≈630 ms) and the command runs, even with a classifier `hard_deny` rule, and also in `dontAsk` mode, where `next(e)` still returns `ask`.
+   - Each honoured allow prints "its tool.check hook was skipped" to the transcript, which the model sees. Rule asks, hook asks and host sessions (SDK `can_use_tool`, `--permission-prompt-tool`) are not overridden: the built-in guard discards the allow.
+   - Outside-cwd path blocks and "multiple operations" asks are plain asks, with no `rule`, `hook` or `setting`.
+   - `decider: 'host'` was never set, under any host setup.
+   - A call the classifier refused comes back from `tool.call`'s `next(e)` as `{ ref, result, text, isError: true }` with text starting `Permission for this action was denied by the Claude Code auto mode classifier`, not as `{ deny }`. After three denials in a row the text is `This command requires approval`.
+   - `$.session.messages()` returns the main conversation even inside a subagent's call.
+   - A hook that does not answer within the budget is skipped silently and the classifier decides. A `fetch` started and not awaited still reaches the server.
+   - `claude plugin test` can fire `tool.check` with a `tool_use_id` and answer `next`, `http.fetch`, `env.get` and `clock.sleep` with stubs.
+
 2. **PostToolUse `classifierContext`** feeds the classifier an "unverified, application-provided" note. It is advisory only.
 3. **Narrow `permissions.allow` rules.** Auto mode drops broad interpreter and `Bash(*)` rules.
 

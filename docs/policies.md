@@ -46,6 +46,22 @@ Set a mode with `local-decider policies mode <policy> off|shadow|act`, in Paseo'
 `policies.<id>.mode` in `config.yaml`. The Paseo plugin also has its own mode per policy and
 enforces only when both are `act`.
 
+### Scopes
+
+A request may carry a scope, which caps the mode further: the effective mode is the lower of
+`policies.<id>.mode` and `policies.<id>.scopes.<scope>.mode` (default `shadow`). The only scope
+today is `claude-auto`, used by the Claude Code mod for the `permission` policy in auto mode:
+
+```sh
+local-decider policies mode permission act                      # the policy itself
+local-decider policies mode permission act --scope claude-auto
+local-decider stats --scope claude-auto                         # agreement with the classifier
+```
+
+Both must be `act` for the mod to allow anything. Until then it only logs what it would have
+allowed, so setting the policy to `act` does not change Claude Code's auto mode. See
+[ADR-0007](adr/0007-claude-auto-mode-mod.md).
+
 ## Schema
 
 Policies live in `policies/*.yaml` (defaults), any `policyDirs`, and

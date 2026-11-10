@@ -7,6 +7,7 @@ directory serves both harnesses ([ADR-0004](../../docs/adr/0004-marketplace-layo
 ## Requirements
 
 - Node.js 20 or newer on `PATH` for the hook processes.
+- For the auto-mode mod: Claude Code 2.1.304 or newer.
 - A running `local-decider` gateway, by default at `http://127.0.0.1:8765`
   ([install](../../docs/install.md)). Without it the hooks run only the deterministic guard.
 
@@ -49,6 +50,32 @@ The guard runs on shell commands before any gateway call, including Codex argv a
 devices, fork bombs, `chmod -R 777` on system paths, piping `curl` or `wget` into a shell,
 force-pushing to `main` or `master`, and `shutdown` or `reboot`.
 
+## Claude Code auto mode
+
+In auto mode there is no prompt: a server-side classifier decides, and a hook `allow` does not
+skip it. The plugin therefore also ships a mod (`hooks/register.mjs`, listed under `modules` in
+`hooks/hooks.json`; Codex does not read it) that asks the `permission` policy first. When Claude
+Code would hand a plain, unremarkable `ask` to the classifier, the mod can allow it instead. It
+never allows asks from rules, hooks or settings, outside auto mode, for subagents, or for
+anything with a path outside the project, a protected path, `git push`, publishing, network tools,
+`rm -r` or `sudo`.
+
+**The mod never allows anything until you turn it on.** It ships with `scopes.claude-auto` in
+`shadow`: it logs what it would have allowed and nothing else. Check
+`local-decider stats --scope claude-auto`, then:
+
+```sh
+local-decider policies mode permission act --scope claude-auto
+```
+
+Needs Claude Code 2.1.304 or newer (older versions are skipped) and a running gateway. Set
+`LOCAL_DECIDER_MOD=off` to switch it off. In act mode Claude Code shows the model a notice that
+the plugin's hook "was skipped" on each allow, and in Paseo-launched sessions the allow is ignored
+and the classifier decides. See [ADR-0007](../../docs/adr/0007-claude-auto-mode-mod.md).
+
+`hooks/register.mjs` is generated from `packages/hooks/src/mod` by the same build as
+`dist/hook.mjs`. `mise run test:mod` validates it and runs `claude plugin test`.
+
 ## Fail-open
 
 If the gateway is down, slow or returns an error, or the hook itself fails, the hook prints
@@ -73,13 +100,14 @@ Claude Code can pass the model to subagents it starts, and you can switch with `
 The plugin ships two skills: `local-decider-settings` (view and change settings) and
 `local-decider-routing-policy` (interview you and write a routing policy for your models).
 
-Environment variables read by the hook process:
+Environment variables read by the hook process and the mod:
 
 | Variable | Default | Meaning |
 |---|---|---|
 | `LOCAL_DECIDER_URL` | `http://127.0.0.1:8765` | Gateway base URL |
 | `LOCAL_DECIDER_TOKEN` | unset | Bearer token for a remote gateway; sent only over https or to loopback, never logged |
 | `LOCAL_DECIDER_TIMEOUT_MS` | `1500` | Gateway call budget |
+| `LOCAL_DECIDER_MOD` | on | Set to `off` to disable the Claude Code auto-mode mod |
 | `LOCAL_DECIDER_GUARD` | on | Set to `off` to disable the deterministic guard |
 | `LOCAL_DECIDER_DEBUG` | unset | Set to `1` for diagnostics on stderr |
 | `LOCAL_DECIDER_HOST_POLICIES` | unset | Comma list of policies a host runs itself; the hooks skip them |

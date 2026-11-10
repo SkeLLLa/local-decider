@@ -47,7 +47,7 @@ flowchart LR
 |---|---|---|
 | Core | `packages/core` | `/v1/systemone` types and answer normalisation, policy schema and rules, redaction, truncation, gateway client |
 | Gateway | `packages/gateway` | HTTP service, engine supervisor, decider, shadow log, stats, MCP server, `local-decider` CLI, service units |
-| Hooks | `packages/hooks` → `plugins/local-decider/dist/hook.mjs` | One zero-dependency hook runner for Claude Code and Codex, with the deterministic guard |
+| Hooks | `packages/hooks` → `plugins/local-decider/dist/hook.mjs`, `hooks/register.mjs` | One zero-dependency hook runner for Claude Code and Codex, with the deterministic guard, and the Claude Code auto-mode mod |
 | Paseo plugin | `packages/paseo-plugin` | Hooks, decision rows, settings and status screens; never runs a model in-process |
 | Policies | `policies/` | Default policies and eval fixtures |
 
@@ -104,11 +104,38 @@ Adapters change behaviour only when `enforced` is true, and only in ways their e
 | Paseo | `agent.turn.after` → `turn-outcome` | Highlight `notify` in the chat row; never sends a prompt |
 | Paseo | `agent.permission.before` → `permission` | Auto-allow a tool request; never denies |
 | Paseo | `agent.create.before` → `routing` | Switch provider, model, mode and thinking, or start from a profile (~2 s budget) |
-| Claude Code | `PreToolUse` → guard, then `command-risk` | `deny` or `ask` |
+| Claude Code | `PreToolUse` → guard, then `command-risk` | `deny` or `ask`; in auto mode `ask` prints nothing |
+| Claude Code, auto mode | mod `tool.check` → `permission` (scope `claude-auto`) | `allow` of a plain ask, in `act` only |
 | Codex | `PreToolUse` → guard, then `command-risk` | `deny` only |
 | Claude Code, Codex | `PermissionRequest` → `permission` | `allow` only |
 | Claude Code, Codex | `UserPromptSubmit` → `routing` | Add a hint that names the mapped model |
 | Claude Code, Codex | `Stop` → `turn-outcome` | Nothing: logged only, since Stop output would continue the turn |
+
+In Claude Code auto mode the plugin's mod (`plugins/local-decider/hooks/register.mjs`, built from
+`packages/hooks/src/mod/`) asks `permission` before the server-side classifier does:
+
+```mermaid
+sequenceDiagram
+  participant C as Claude Code
+  participant K as PreToolUse hook
+  participant M as Mod tool.check
+  participant G as Gateway
+  participant X as Classifier
+  C->>K: Bash call, tool_use_id, auto mode
+  K->>G: command-risk with the call id and mode
+  C->>M: tool.check
+  M->>C: next(e), a plain ask comes back
+  M->>G: GET /v1/calls/:id, then POST /v1/decide/permission (scope claude-auto)
+  alt scope in act, allow enforced, path and command checks pass
+    M-->>C: allow, no classifier
+  else shadow, ask, timeout or error
+    M-->>C: the ask, so the classifier decides
+    C->>X: classify
+  end
+```
+
+It records the classifier's verdict as an outcome (`source: classifier`) for
+`local-decider stats --scope claude-auto`. Details and limits: [ADR-0007](adr/0007-claude-auto-mode-mod.md).
 
 The Paseo plugin needs both the gateway mode and its own setting at `act`. Inside Paseo, Claude
 Code and Codex agents also load the hooks. The Paseo plugin sets
