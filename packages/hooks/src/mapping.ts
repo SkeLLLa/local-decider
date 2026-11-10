@@ -21,6 +21,14 @@ export type HookEvent = (typeof HOOK_EVENTS)[number];
 
 export type HookInput = Readonly<Record<string, unknown>>;
 
+/** The gateway policy each hook event runs. */
+export const EVENT_POLICY: Readonly<Record<HookEvent, string>> = {
+  PreToolUse: 'command-risk',
+  PermissionRequest: 'permission',
+  Stop: 'turn-outcome',
+  UserPromptSubmit: 'routing',
+};
+
 export interface PolicyCall {
   readonly policy: string;
   readonly input: Readonly<Record<string, unknown>>;
@@ -129,15 +137,17 @@ function routingInput(hook: HookInput): Record<string, unknown> {
   return { project: projectOf(hook), prompt: str(hook['prompt']) };
 }
 
-const BUILDERS: Record<HookEvent, (hook: HookInput, t: Transcript) => PolicyCall> = {
-  PreToolUse: (hook) => ({ policy: 'command-risk', input: commandRiskInput(hook) }),
-  PermissionRequest: (hook, t) => ({ policy: 'permission', input: permissionInput(hook, t) }),
-  Stop: (hook, t) => ({ policy: 'turn-outcome', input: turnOutcomeInput(hook, t) }),
-  UserPromptSubmit: (hook) => ({ policy: 'routing', input: routingInput(hook) }),
+type InputBuilder = (hook: HookInput, t: Transcript) => Record<string, unknown>;
+
+const BUILDERS: Record<HookEvent, InputBuilder> = {
+  PreToolUse: (hook) => commandRiskInput(hook),
+  PermissionRequest: permissionInput,
+  Stop: turnOutcomeInput,
+  UserPromptSubmit: (hook) => routingInput(hook),
 };
 
 /** Build the gateway call for an event. Transcript reads happen only for policies that use them. */
 export function mapEvent(event: HookEvent, hook: HookInput, read: ReadTranscript): PolicyCall {
-  const call = BUILDERS[event](hook, new Transcript(str(hook['transcript_path']), read));
-  return { policy: call.policy, input: compact(call.input) };
+  const input = BUILDERS[event](hook, new Transcript(str(hook['transcript_path']), read));
+  return { policy: EVENT_POLICY[event], input: compact(input) };
 }

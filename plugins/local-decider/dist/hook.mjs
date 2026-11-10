@@ -424,6 +424,12 @@ function lastAssistantText(turns) {
 // src/mapping.ts
 var HOOK_HARNESSES = ["claude", "codex"];
 var HOOK_EVENTS = ["PreToolUse", "PermissionRequest", "Stop", "UserPromptSubmit"];
+var EVENT_POLICY = {
+  PreToolUse: "command-risk",
+  PermissionRequest: "permission",
+  Stop: "turn-outcome",
+  UserPromptSubmit: "routing"
+};
 function str(value) {
   return typeof value === "string" && value !== "" ? value : void 0;
 }
@@ -504,14 +510,14 @@ function routingInput(hook) {
   return { project: projectOf(hook), prompt: str(hook["prompt"]) };
 }
 var BUILDERS = {
-  PreToolUse: (hook) => ({ policy: "command-risk", input: commandRiskInput(hook) }),
-  PermissionRequest: (hook, t) => ({ policy: "permission", input: permissionInput(hook, t) }),
-  Stop: (hook, t) => ({ policy: "turn-outcome", input: turnOutcomeInput(hook, t) }),
-  UserPromptSubmit: (hook) => ({ policy: "routing", input: routingInput(hook) })
+  PreToolUse: (hook) => commandRiskInput(hook),
+  PermissionRequest: permissionInput,
+  Stop: turnOutcomeInput,
+  UserPromptSubmit: (hook) => routingInput(hook)
 };
 function mapEvent(event, hook, read) {
-  const call = BUILDERS[event](hook, new Transcript(str(hook["transcript_path"]), read));
-  return { policy: call.policy, input: compact(call.input) };
+  const input = BUILDERS[event](hook, new Transcript(str(hook["transcript_path"]), read));
+  return { policy: EVENT_POLICY[event], input: compact(input) };
 }
 
 // src/output.ts
@@ -602,6 +608,7 @@ function translate(harness, event, res) {
 
 // src/run.ts
 var DEFAULT_TIMEOUT_MS = 1500;
+var HOST_POLICIES_ENV = "LOCAL_DECIDER_HOST_POLICIES";
 var NOTHING = { stdout: "", exitCode: 0 };
 function timeoutOf(env) {
   const n = Number(env["LOCAL_DECIDER_TIMEOUT_MS"]);
@@ -623,6 +630,9 @@ function parseHook(stdinText) {
   } catch {
     return null;
   }
+}
+function hostRuns(env, policy) {
+  return (env[HOST_POLICIES_ENV] ?? "").split(",").some((p) => p.trim() === policy);
 }
 function guardOutput(hook, env) {
   if (env["LOCAL_DECIDER_GUARD"] === "off" || !isShellTool(hook)) {
@@ -657,6 +667,11 @@ async function handle(ctx) {
   }
   if (ctx.event === "Stop" && ctx.hook["stop_hook_active"] === true) {
     ctx.log("stop_hook_active: skipping");
+    return "";
+  }
+  const policy = EVENT_POLICY[ctx.event];
+  if (hostRuns(ctx.env, policy)) {
+    ctx.log(`${policy}: run by the host (${HOST_POLICIES_ENV}); skipping`);
     return "";
   }
   return decideAndTranslate(ctx);

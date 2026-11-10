@@ -299,6 +299,14 @@ describe('guard', () => {
     }
   });
 
+  it('still guards when a host runs the policies', async () => {
+    const { decide, calls } = fake('abstain', false);
+    const env = { LOCAL_DECIDER_HOST_POLICIES: 'command-risk' };
+    const res = await run('claude', 'PreToolUse', JSON.stringify(rmRoot), env, { decide });
+    assert.match(res.stdout, /guard \(rm-root\)/);
+    assert.equal(calls.length, 0);
+  });
+
   it('can be disabled with LOCAL_DECIDER_GUARD=off', async () => {
     const { decide, calls } = fake('abstain', false);
     const env = { LOCAL_DECIDER_GUARD: 'off' };
@@ -416,5 +424,35 @@ describe('fail-open', () => {
       assert.deepEqual(await run(h, e, s, {}, { decide }), { stdout: '', exitCode: 0 });
     }
     assert.equal(calls.length, 0);
+  });
+});
+
+describe('policies run by the host', () => {
+  const env = { LOCAL_DECIDER_HOST_POLICIES: 'turn-outcome,permission,routing' };
+
+  it('skips the listed policies, even when the gateway would enforce', async () => {
+    for (const harness of ['claude', 'codex']) {
+      for (const event of ['PermissionRequest', 'Stop', 'UserPromptSubmit'] as const) {
+        const { decide, calls } = fake(event === 'UserPromptSubmit' ? 'route:deep' : 'allow', true);
+        const res = await run(harness, event, JSON.stringify(HOOKS[event]), env, {
+          decide,
+          readTranscript: noTranscript,
+        });
+        assert.equal(res.stdout, '', `${harness} ${event}`);
+        assert.equal(calls.length, 0, `${harness} ${event}`);
+      }
+    }
+  });
+
+  it('still runs a policy the host does not list', async () => {
+    const { decide, calls } = fake('deny', true);
+    const res = await run('claude', 'PreToolUse', JSON.stringify(HOOKS.PreToolUse), env, {
+      decide,
+    });
+    assert.match(res.stdout, /"permissionDecision":"deny"/);
+    assert.deepEqual(
+      calls.map((c) => c.policy),
+      ['command-risk'],
+    );
   });
 });

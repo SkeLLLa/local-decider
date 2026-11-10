@@ -12,6 +12,7 @@ import {
 import { guardCommand } from './guard.ts';
 import {
   commandOf,
+  EVENT_POLICY,
   isShellTool,
   mapEvent,
   parseEvent,
@@ -42,6 +43,13 @@ export interface RunResult {
 }
 
 const DEFAULT_TIMEOUT_MS = 1500;
+
+/**
+ * Comma list of policies a host already runs for this session, set by the Paseo plugin on the
+ * agents it launches. The hooks skip those so one event gets one decision; the guard and any
+ * policy not listed still run.
+ */
+const HOST_POLICIES_ENV = 'LOCAL_DECIDER_HOST_POLICIES';
 const NOTHING: RunResult = { stdout: '', exitCode: 0 };
 
 export function timeoutOf(env: Env): number {
@@ -68,6 +76,10 @@ function parseHook(stdinText: string): HookInput | null {
   } catch {
     return null;
   }
+}
+
+function hostRuns(env: Env, policy: string): boolean {
+  return (env[HOST_POLICIES_ENV] ?? '').split(',').some((p) => p.trim() === policy);
 }
 
 function guardOutput(hook: HookInput, env: Env): string {
@@ -116,6 +128,11 @@ async function handle(ctx: Context): Promise<string> {
   }
   if (ctx.event === 'Stop' && ctx.hook['stop_hook_active'] === true) {
     ctx.log('stop_hook_active: skipping');
+    return '';
+  }
+  const policy = EVENT_POLICY[ctx.event];
+  if (hostRuns(ctx.env, policy)) {
+    ctx.log(`${policy}: run by the host (${HOST_POLICIES_ENV}); skipping`);
     return '';
   }
   return decideAndTranslate(ctx);

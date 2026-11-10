@@ -81,6 +81,13 @@ Environment variables read by the hook process:
 | `LOCAL_DECIDER_TIMEOUT_MS` | `1500` | Gateway call budget |
 | `LOCAL_DECIDER_GUARD` | on | Set to `off` to disable the deterministic guard |
 | `LOCAL_DECIDER_DEBUG` | unset | Set to `1` for diagnostics on stderr |
+| `LOCAL_DECIDER_HOST_POLICIES` | unset | Comma list of policies a host runs itself; the hooks skip them (set by the Paseo plugin) |
+
+Inside Paseo, the Claude Code or Codex CLI loads this plugin too. To avoid deciding each event
+twice, the Paseo plugin sets `LOCAL_DECIDER_HOST_POLICIES=turn-outcome,permission,routing` on the
+agents it launches, so there the hooks run only the guard and `command-risk`, which Paseo has no
+hook for. The skip applies to processes that inherit the agent's environment, including a
+`claude -p` or `codex exec` the agent starts itself.
 
 `dist/hook.mjs` is generated from `packages/hooks` by `pnpm --filter @local-decider/hooks build`.
 Do not edit it by hand.
