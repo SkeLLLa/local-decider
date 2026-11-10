@@ -8,7 +8,10 @@ leaves everything uncertain to you or to the large model.**
 
 It works with [Paseo](https://paseo.sh), Claude Code and Codex.
 
-> **Status:** early development. Every policy ships in shadow mode (log only).
+> **Status:** early development, in daily use. Policies enforce in `act` mode: auto-allowing
+> permission prompts, routing new agents to presets, flagging turns that need you. New installs
+> start every policy in `shadow` mode (log what it would do) so you can measure before switching
+> it to `act`.
 >
 > **Unofficial.** This project is not affiliated with, endorsed by, or sponsored by Strands
 > Agents, Amazon Web Services, Anthropic, OpenAI or Paseo.
