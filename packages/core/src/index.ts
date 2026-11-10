@@ -19,6 +19,7 @@ export {
 } from './decision.ts';
 export { inputHash } from './hash.ts';
 export {
+  ALLOW_THRESHOLD_FLOOR,
   evaluateRules,
   MODES,
   parsePolicy,
@@ -27,10 +28,13 @@ export {
   policyRoutes,
   policySchema,
   policySections,
+  policyThresholds,
+  withThresholds,
   type Action,
   type Mode,
   type Policy,
   type PolicyRule,
+  type PolicyThreshold,
   type RuleMatch,
 } from './policy.ts';
 export { redactDeep, redactSecrets, type RedactionResult } from './redact.ts';

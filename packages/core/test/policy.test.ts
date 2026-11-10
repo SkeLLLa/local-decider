@@ -4,11 +4,14 @@ import { join } from 'node:path';
 import { describe, it } from 'node:test';
 
 import {
+  ALLOW_THRESHOLD_FLOOR,
   evaluateRules,
   parsePolicy,
   PolicyError,
   policyRoutes,
   policySections,
+  policyThresholds,
+  withThresholds,
   type Answer,
   type Policy,
 } from '../src/index.ts';
@@ -150,6 +153,62 @@ describe('evaluateRules', () => {
       }).action;
     assert.equal(at(0.96), 'allow');
     assert.equal(at(0.94), 'ask');
+  });
+});
+
+describe('thresholds', () => {
+  const policy: Policy = parsePolicy(MINIMAL);
+
+  it('lists each rule threshold with its default and effective value', () => {
+    assert.deepEqual(policyThresholds(policy, { 'pick.b': 0.8 }), [
+      {
+        key: 'pick.a',
+        question: 'pick',
+        answer: 'a',
+        action: 'allow',
+        kind: 'minConfidence',
+        default: 0.9,
+        value: 0.9,
+        floor: 0.5,
+      },
+      {
+        key: 'pick.b',
+        question: 'pick',
+        answer: 'b',
+        action: 'route:big',
+        kind: 'minProbability',
+        default: 0.6,
+        value: 0.8,
+        floor: 0,
+      },
+    ]);
+  });
+
+  it('replaces the bound the rule has, minConfidence when it has none', () => {
+    const tuned = withThresholds(policy, { 'pick.a': 0.5, 'pick.b': 0.9, 'nope.x': 1 });
+    assert.deepEqual(tuned.rules[0]?.when, { question: 'pick', answer: 'a', minConfidence: 0.5 });
+    assert.deepEqual(tuned.rules[1]?.when, { question: 'pick', answer: 'b', minProbability: 0.9 });
+    assert.equal(policy.rules[0]?.when.minConfidence, 0.9, 'the loaded policy is untouched');
+    assert.equal(withThresholds(policy, {}), policy);
+    const bare = { ...policy, rules: [{ when: { question: 'pick', answer: 'a' }, action: 'log' }] };
+    assert.equal(policyThresholds(bare)[0]?.default, null);
+    assert.equal(withThresholds(bare, { 'pick.a': 0.3 }).rules[0]?.when.minConfidence, 0.3);
+  });
+
+  it('never takes an allow rule below the floor', () => {
+    const tuned = withThresholds(policy, { 'pick.a': 0.1, 'pick.b': 0.1 });
+    assert.equal(tuned.rules[0]?.when.minConfidence, ALLOW_THRESHOLD_FLOOR);
+    assert.equal(tuned.rules[1]?.when.minProbability, 0.1, 'route rules have no floor');
+    assert.equal(policyThresholds(policy, { 'pick.a': 0.1 })[0]?.value, ALLOW_THRESHOLD_FLOOR);
+  });
+
+  it('changes what the rules decide', () => {
+    const answers = { pick: choice('a', { a: 0.9, b: 0.1 }, 0.8) };
+    assert.equal(evaluateRules(policy, answers).action, 'ask');
+    assert.equal(
+      evaluateRules(withThresholds(policy, { 'pick.a': 0.75 }), answers).action,
+      'allow',
+    );
   });
 });
 

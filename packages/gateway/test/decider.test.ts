@@ -277,6 +277,34 @@ describe('Decider variants', () => {
     assert.equal(decider.activeVariant('routing'), 'routing');
   });
 
+  it('applies threshold overrides of the policy whose rules answer', async () => {
+    const { decider } = setup('act', new FakeEngine({ allow: 0.9, ask: 0.05, deny: 0.05 }));
+    assert.equal((await decider.decide('permission', req, signal())).action, 'ask');
+    assert.equal(decider.setThresholds('permission', { 'verdict.allow': 0.85, 'x.y': 1 }), true);
+    assert.equal((await decider.decide('permission', req, signal())).action, 'allow');
+    assert.deepEqual(
+      decider.thresholdsOf('permission').map((t) => [t.key, t.kind, t.default, t.value]),
+      [
+        ['verdict.allow', 'minProbability', 0.95, 0.85],
+        ['verdict.deny', 'minConfidence', 0.8, 0.8],
+      ],
+    );
+    assert.equal(decider.setThresholds('nope', {}), false);
+    decider.setThresholds('permission', {});
+    assert.equal(decider.thresholdsOf('permission')[0]?.value, 0.95);
+  });
+
+  it('keeps threshold overrides that still name a rule across reloads', () => {
+    const { decider } = routingSetup();
+    decider.setThresholds('routing-budget', { 'tier.cheap': 0.2 });
+    decider.replacePolicies(new Map(decider.policies));
+    assert.equal(decider.thresholdsOf('routing-budget')[1]?.value, 0.2);
+    decider.replacePolicies(
+      new Map([...decider.policies].filter(([id]) => id !== 'routing-budget')),
+    );
+    assert.deepEqual(decider.thresholdsOf('routing-budget'), []);
+  });
+
   it('drops a variant choice whose policy disappears on reload', () => {
     const { decider } = routingSetup();
     decider.setVariant('routing', 'routing-budget');

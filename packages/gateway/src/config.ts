@@ -129,6 +129,18 @@ const policySettingsSchema = z
       .describe(
         'Id of a policy with `variantOf: <this policy>` that answers instead of it. Unset: the policy itself.',
       ),
+    thresholds: z
+      .record(
+        z
+          .string()
+          .max(200)
+          .regex(/^[a-z][a-z0-9_-]*\..+$/),
+        z.number().min(0).max(1),
+      )
+      .optional()
+      .describe(
+        "Rule thresholds by `<question>.<answer>` (e.g. `verdict.allow: 0.9`), 0..1. Each replaces the `minProbability` of the policy rules with that question and answer, else their `minConfidence`. Applies to this policy file's own rules, so set a variant's thresholds under the variant's id. Unset: the policy file decides.",
+      ),
   })
   .describe('Settings for one policy, by policy id.');
 
@@ -174,7 +186,7 @@ export const configSchema = z
     policies: z
       .record(z.string().regex(/^[a-z][a-z0-9_-]*$/), policySettingsSchema)
       .default({})
-      .describe('Per-policy mode and variant, by policy id (e.g. `routing`).'),
+      .describe('Per-policy mode, variant and rule thresholds, by policy id (e.g. `routing`).'),
     policyDirs: z
       .array(z.string())
       .default([])

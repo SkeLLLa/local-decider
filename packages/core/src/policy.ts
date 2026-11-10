@@ -256,3 +256,108 @@ export function policyRoutes(policy: Policy): string[] {
     .map((action) => action.slice(ROUTE_PREFIX.length));
   return [...new Set(routes)];
 }
+
+/**
+ * Lowest threshold an override may give an `allow` rule: below it the model would auto-allow
+ * answers it leans against. The gateway refuses lower values and clamps config.yaml ones.
+ */
+export const ALLOW_THRESHOLD_FLOOR = 0.5;
+
+/** Which bound a rule's threshold is: config.yaml overrides replace it in place. */
+type ThresholdKind = 'minProbability' | 'minConfidence';
+
+/** One configurable rule threshold, named `<question>.<answer>`. */
+export interface PolicyThreshold {
+  readonly key: string;
+  readonly question: string;
+  readonly answer: string;
+  /** Action of the first rule with this key. */
+  readonly action: Action;
+  readonly kind: ThresholdKind;
+  /** The policy file's value; null when the rule has no threshold. */
+  readonly default: number | null;
+  /** The value in effect: the override (never below `floor`), else the default. */
+  readonly value: number | null;
+  /** Lowest override accepted: {@link ALLOW_THRESHOLD_FLOOR} when a rule with this key allows. */
+  readonly floor: number;
+}
+
+/** `<question>.<answer>`: how config.yaml `policies.<id>.thresholds` names a rule. */
+function thresholdKey(rule: PolicyRule): string {
+  return `${rule.when.question}.${rule.when.answer}`;
+}
+
+function ruleThreshold(rule: PolicyRule): { kind: ThresholdKind; value: number | null } {
+  if (rule.when.minProbability !== undefined) {
+    return { kind: 'minProbability', value: rule.when.minProbability };
+  }
+  return { kind: 'minConfidence', value: rule.when.minConfidence ?? null };
+}
+
+function floorOf(rules: readonly PolicyRule[], key: string): number {
+  return rules.some((rule) => rule.action === 'allow' && thresholdKey(rule) === key)
+    ? ALLOW_THRESHOLD_FLOOR
+    : 0;
+}
+
+/** The override for `key`, raised to the floor of the rules it applies to. */
+function override(
+  overrides: Readonly<Record<string, number>>,
+  key: string,
+  floor: number,
+): number | undefined {
+  const value = Object.hasOwn(overrides, key) ? overrides[key] : undefined;
+  return value === undefined ? undefined : Math.max(value, floor);
+}
+
+/**
+ * The policy with overridden thresholds: a rule whose `<question>.<answer>` is in `overrides` gets
+ * that value as its `minProbability` if it has one, else as its `minConfidence`. Unknown keys are
+ * ignored; an `allow` rule never goes below {@link ALLOW_THRESHOLD_FLOOR}.
+ */
+export function withThresholds(
+  policy: Policy,
+  overrides: Readonly<Record<string, number>>,
+): Policy {
+  if (Object.keys(overrides).length === 0) {
+    return policy;
+  }
+  const rules = policy.rules.map((rule): PolicyRule => {
+    const key = thresholdKey(rule);
+    const value = override(overrides, key, floorOf(policy.rules, key));
+    if (value === undefined) {
+      return rule;
+    }
+    return ruleThreshold(rule).kind === 'minProbability'
+      ? { ...rule, when: { ...rule.when, minProbability: value } }
+      : { ...rule, when: { ...rule.when, minConfidence: value } };
+  });
+  return { ...policy, rules };
+}
+
+/** Every rule threshold of `policy`, one per `<question>.<answer>` in rule order. */
+export function policyThresholds(
+  policy: Policy,
+  overrides: Readonly<Record<string, number>> = {},
+): PolicyThreshold[] {
+  const out = new Map<string, PolicyThreshold>();
+  for (const rule of policy.rules) {
+    const key = thresholdKey(rule);
+    if (out.has(key)) {
+      continue;
+    }
+    const { kind, value } = ruleThreshold(rule);
+    const floor = floorOf(policy.rules, key);
+    out.set(key, {
+      key,
+      question: rule.when.question,
+      answer: rule.when.answer,
+      action: rule.action,
+      kind,
+      default: value,
+      value: override(overrides, key, floor) ?? value,
+      floor,
+    });
+  }
+  return [...out.values()];
+}

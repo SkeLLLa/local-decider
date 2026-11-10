@@ -1,4 +1,4 @@
-import { MODES, PolicyError, type Mode } from '@local-decider/core';
+import { MODES, PolicyError, type Mode, type PolicyThreshold } from '@local-decider/core';
 import { mkdirSync } from 'node:fs';
 import { totalmem } from 'node:os';
 import { join } from 'node:path';
@@ -118,6 +118,53 @@ export function parseVariant(body: unknown): string {
   return variant;
 }
 
+const MAX_THRESHOLDS = 64;
+
+/** `{ thresholds: { "<question>.<answer>": 0..1 | null } }`; null removes an override. */
+export function parseThresholds(body: unknown): Record<string, number | null> {
+  const thresholds = isRecord(body) ? body['thresholds'] : undefined;
+  if (!isRecord(thresholds)) {
+    throw new EngineSwitchError(400, 'thresholds must be an object of "<question>.<answer>": 0..1');
+  }
+  const entries = Object.entries(thresholds);
+  if (entries.length === 0 || entries.length > MAX_THRESHOLDS) {
+    throw new EngineSwitchError(400, `thresholds needs 1..${MAX_THRESHOLDS} entries`);
+  }
+  for (const [key, value] of entries) {
+    const valid =
+      value === null ||
+      (typeof value === 'number' && Number.isFinite(value) && value >= 0 && value <= 1);
+    if (!valid) {
+      throw new EngineSwitchError(400, `threshold "${key}" must be a number 0..1 or null`);
+    }
+  }
+  return Object.fromEntries(entries) as Record<string, number | null>;
+}
+
+/** Every key must name a rule of the policy, and an `allow` rule's value must reach its floor. */
+function checkThresholds(
+  id: string,
+  rules: readonly PolicyThreshold[],
+  thresholds: Readonly<Record<string, number | null>>,
+): void {
+  const floors = new Map(rules.map((t) => [t.key, t.floor]));
+  const unknown = Object.keys(thresholds).filter((key) => !floors.has(key));
+  if (unknown.length > 0) {
+    const names = unknown.map((k) => `"${k}"`).join(', ');
+    const known = [...floors.keys()].join(', ') || 'no rules';
+    throw new EngineSwitchError(400, `policy "${id}" has no rule for ${names}; it has ${known}`);
+  }
+  for (const [key, value] of Object.entries(thresholds)) {
+    const floor = floors.get(key) ?? 0;
+    if (value !== null && value < floor) {
+      throw new EngineSwitchError(
+        400,
+        `"${key}" auto-allows, so its threshold must be at least ${String(floor)}`,
+      );
+    }
+  }
+}
+
 export function parsePathUpdate(body: unknown): { key: PathKey; value: string | null } {
   const record = isRecord(body) ? body : {};
   const { key, value } = record;
@@ -163,7 +210,7 @@ function startupKey(config: GatewayConfig): string {
 /**
  * Owns the engine: which one runs (switchable at runtime between strands-decider and
  * FastFlowLM), its lifecycle (lazy or eager), tool paths, model downloads and FLM validation,
- * and policy modes and variants. Every change is written to config.yaml, and a changed
+ * and policy modes, variants and rule thresholds. Every change is written to config.yaml, and a changed
  * config.yaml is applied with `applyConfig`.
  */
 export class EngineControl {
@@ -290,6 +337,35 @@ export class EngineControl {
     this.#applied = { ...this.#applied, policies: this.#config.policies };
   }
 
+  /**
+   * Override rule thresholds of policy `id` by `<question>.<answer>` (null restores the file's
+   * value); every key must name one of its rules. Persisted; returns the thresholds in effect.
+   */
+  setPolicyThresholds(
+    id: string,
+    thresholds: Readonly<Record<string, number | null>>,
+  ): PolicyThreshold[] {
+    const decider = this.#decider;
+    if (decider?.policies.get(id) === undefined) {
+      throw new EngineSwitchError(400, `unknown policy "${id}"`);
+    }
+    checkThresholds(id, decider.thresholdsOf(id), thresholds);
+    this.#save(
+      Object.entries(thresholds).map(([key, value]) => ({
+        path: ['policies', id, 'thresholds', key],
+        value: value ?? undefined,
+      })),
+    );
+    decider.setThresholds(id, this.#savedThresholds(id));
+    this.#applied = { ...this.#applied, policies: this.#config.policies };
+    return decider.thresholdsOf(id);
+  }
+
+  #savedThresholds(id: string): Readonly<Record<string, number>> {
+    const { policies } = this.#config;
+    return (Object.hasOwn(policies, id) ? policies[id]?.thresholds : undefined) ?? {};
+  }
+
   /** Where the settings live and what they are, for `GET /v1/config`. */
   // fallow-ignore-next-line unused-class-member -- called through the settings-routes table
   describeSettings(): Record<string, unknown> {
@@ -362,7 +438,8 @@ export class EngineControl {
 
   /**
    * Modes come with the loaded policies (config.yaml beats the file). Variants are set for every
-   * base policy, so one removed from config.yaml goes back to the default.
+   * base policy, so one removed from config.yaml goes back to the default; thresholds likewise
+   * for every policy.
    */
   #applyPolicyState(decider: Decider): void {
     const { policies } = this.#config;
@@ -374,6 +451,7 @@ export class EngineControl {
       if (policy.variantOf === undefined) {
         decider.setVariant(policy.id, settings?.variant ?? policy.id);
       }
+      decider.setThresholds(policy.id, settings?.thresholds ?? {});
     }
   }
 

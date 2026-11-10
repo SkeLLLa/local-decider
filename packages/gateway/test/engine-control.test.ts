@@ -22,6 +22,7 @@ import {
   parseMode,
   parsePathUpdate,
   parseSelection,
+  parseThresholds,
 } from '../src/engine-control.ts';
 import type { Engine, EngineHealth } from '../src/engines/types.ts';
 import type { Paths } from '../src/paths.ts';
@@ -232,6 +233,67 @@ describe('EngineControl state', () => {
     assert.equal(second.decider.activeVariant('routing'), 'routing-mine');
     second.control.setPolicyVariant('routing', 'routing');
     assert.deepEqual(ConfigFile.open(paths).current.policies, {}, 'empty sections are dropped');
+  });
+
+  it('persists rule thresholds, validates them and restores them', () => {
+    const paths = tempPaths();
+    const first = setup({ paths, persist: true });
+    const effective = first.control.setPolicyThresholds('permission', { 'verdict.allow': 0.9 });
+    assert.equal(effective[0]?.value, 0.9);
+    assert.equal(effective[0]?.default, 0.95);
+    assert.deepEqual(ConfigFile.open(paths).current.policies, {
+      permission: { thresholds: { 'verdict.allow': 0.9 } },
+    });
+    assert.throws(
+      () => first.control.setPolicyThresholds('permission', { 'verdict.maybe': 0.5 }),
+      /no rule for "verdict.maybe"/,
+    );
+    assert.throws(() => first.control.setPolicyThresholds('nope', { 'a.b': 0.5 }), /unknown/);
+    assert.throws(
+      () => first.control.setPolicyThresholds('permission', { 'verdict.allow': 0.49 }),
+      (error: unknown) =>
+        error instanceof EngineSwitchError &&
+        error.status === 400 &&
+        /at least 0.5/.test(error.message),
+    );
+    assert.equal(
+      first.control.setPolicyThresholds('permission', {
+        'verdict.allow': 0.5,
+        'verdict.deny': 0.1,
+      })[1]?.value,
+      0.1,
+      'the floor is for allow rules only',
+    );
+    first.control.setPolicyThresholds('permission', { 'verdict.allow': 0.9, 'verdict.deny': null });
+
+    const second = setup({ paths, persist: true });
+    assert.equal(second.decider.thresholdsOf('permission')[0]?.value, 0.9);
+    second.control.setPolicyThresholds('permission', { 'verdict.allow': null });
+    assert.equal(second.decider.thresholdsOf('permission')[0]?.value, 0.95);
+    assert.deepEqual(ConfigFile.open(paths).current.policies, {}, 'empty sections are dropped');
+  });
+
+  it('applies thresholds from an outside edit of config.yaml', async () => {
+    const paths = tempPaths();
+    const { control, decider } = setup({ paths, persist: true });
+    mkdirSync(paths.config, { recursive: true });
+    const file = join(paths.config, 'config.yaml');
+    writeFileSync(
+      file,
+      'policies:\n  permission:\n    thresholds: { verdict.deny: 0.6, verdict.allow: 0.2 }\n',
+    );
+    assert.deepEqual(await control.reloadConfig(), { changed: true, notes: [] });
+    assert.equal(decider.thresholdsOf('permission')[1]?.value, 0.6);
+    assert.equal(
+      decider.thresholdsOf('permission')[0]?.value,
+      0.5,
+      'allow is clamped to its floor',
+    );
+    writeFileSync(file, '# none\n');
+    await control.reloadConfig();
+    assert.equal(decider.thresholdsOf('permission')[1]?.value, 0.8);
+    writeFileSync(file, 'policies:\n  permission:\n    thresholds: { verdict.deny: 2 }\n');
+    await assert.rejects(control.reloadConfig(), /thresholds/);
   });
 
   it('applies an outside edit of config.yaml: variant, mode, lifecycle and presets', async () => {
@@ -457,6 +519,20 @@ describe('request parsing', () => {
     assert.throws(() => parseLifecycle({ lifecycle: 'sometimes' }), EngineSwitchError);
     assert.equal(parseMode({ mode: 'act' }), 'act');
     assert.throws(() => parseMode({ mode: 'yolo' }), EngineSwitchError);
+    assert.deepEqual(parseThresholds({ thresholds: { 'verdict.allow': 0.9, 'a.b': null } }), {
+      'verdict.allow': 0.9,
+      'a.b': null,
+    });
+    for (const thresholds of [
+      undefined,
+      [],
+      {},
+      { 'a.b': 1.5 },
+      { 'a.b': '0.5' },
+      { 'a.b': -0 - 1 },
+    ]) {
+      assert.throws(() => parseThresholds({ thresholds }), EngineSwitchError);
+    }
     assert.deepEqual(parsePathUpdate({ key: 'tools.flm', value: null }), {
       key: 'tools.flm',
       value: null,
@@ -586,6 +662,36 @@ describe('control routes', () => {
       );
       assert.equal((await post('/v1/policies/permission/mode', { mode: 'act' })).status, 200);
       assert.equal((await post('/v1/policies/nope/mode', { mode: 'act' })).status, 400);
+      const thresholds = await post('/v1/policies/permission/thresholds', {
+        thresholds: { 'verdict.allow': 0.9 },
+      });
+      assert.equal(thresholds.status, 200);
+      const body = (await thresholds.json()) as { thresholds: { key: string; value: number }[] };
+      assert.equal(body.thresholds[0]?.value, 0.9);
+      for (const bad of [
+        { 'verdict.nope': 0.5 },
+        { 'verdict.allow': 2 },
+        { 'verdict.allow': 0.3 },
+        {},
+      ]) {
+        const res = await post('/v1/policies/permission/thresholds', { thresholds: bad });
+        assert.equal(res.status, 400, JSON.stringify(bad));
+      }
+      const listed = (await (await fetch(`${gw.url}/v1/policies`)).json()) as {
+        id: string;
+        thresholds: { key: string; default: number; value: number }[];
+      }[];
+      const permission = listed.find((p) => p.id === 'permission');
+      assert.deepEqual(permission?.thresholds[0], {
+        key: 'verdict.allow',
+        question: 'verdict',
+        answer: 'allow',
+        action: 'allow',
+        kind: 'minProbability',
+        default: 0.95,
+        value: 0.9,
+        floor: 0.5,
+      });
       assert.equal(
         (await post('/v1/models/download', { engine: 'fastflowlm', model: 'nope' })).status,
         400,

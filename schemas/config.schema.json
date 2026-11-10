@@ -159,7 +159,7 @@
     },
     "policies": {
       "default": {},
-      "description": "Per-policy mode and variant, by policy id (e.g. `routing`).",
+      "description": "Per-policy mode, variant and rule thresholds, by policy id (e.g. `routing`).",
       "type": "object",
       "propertyNames": {
         "type": "string",
@@ -177,6 +177,20 @@
             "description": "Id of a policy with `variantOf: <this policy>` that answers instead of it. Unset: the policy itself.",
             "type": "string",
             "pattern": "^[a-z][a-z0-9_-]*$"
+          },
+          "thresholds": {
+            "description": "Rule thresholds by `<question>.<answer>` (e.g. `verdict.allow: 0.9`), 0..1. Each replaces the `minProbability` of the policy rules with that question and answer, else their `minConfidence`. Applies to this policy file's own rules, so set a variant's thresholds under the variant's id. Unset: the policy file decides.",
+            "type": "object",
+            "propertyNames": {
+              "type": "string",
+              "maxLength": 200,
+              "pattern": "^[a-z][a-z0-9_-]*\\..+$"
+            },
+            "additionalProperties": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1
+            }
           }
         },
         "additionalProperties": false,

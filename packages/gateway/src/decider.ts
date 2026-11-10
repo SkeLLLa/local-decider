@@ -7,13 +7,16 @@ import {
   normaliseAnswers,
   policyQuestions,
   policySections,
+  policyThresholds,
   redactDeep,
+  withThresholds,
   sortKeysDeep,
   type Answers,
   type DecideRequest,
   type DecideResponse,
   type Mode,
   type Policy,
+  type PolicyThreshold,
   type ShadowRecord,
   type SystemOneRequest,
   type SystemOneResponse,
@@ -67,6 +70,8 @@ export class Decider {
   #policies: Map<string, LoadedPolicy>;
   /** Policy id → the variant answering for it, when not the policy itself. */
   readonly #variants = new Map<string, string>();
+  /** Policy id → rule threshold overrides by `<question>.<answer>`, for that policy's own rules. */
+  readonly #thresholds = new Map<string, Readonly<Record<string, number>>>();
   readonly #log: ShadowLog;
   readonly #timeoutMs: number;
   readonly #now: () => Date;
@@ -100,6 +105,33 @@ export class Decider {
     return true;
   }
 
+  /**
+   * Override rule thresholds of policy `id` (its own rules, also when it answers as a variant);
+   * `{}` restores the file's. Keys naming no rule are dropped. False when the policy is unknown.
+   */
+  setThresholds(id: string, thresholds: Readonly<Record<string, number>>): boolean {
+    const loaded = this.#policies.get(id);
+    if (loaded === undefined) {
+      return false;
+    }
+    const known = new Set(policyThresholds(loaded.policy).map((t) => t.key));
+    const kept = Object.entries(thresholds).filter(([key]) => known.has(key));
+    if (kept.length === 0) {
+      this.#thresholds.delete(id);
+    } else {
+      this.#thresholds.set(id, Object.fromEntries(kept));
+    }
+    return true;
+  }
+
+  /** The rule thresholds of policy `id` with their defaults and values in effect. */
+  thresholdsOf(id: string): PolicyThreshold[] {
+    const loaded = this.#policies.get(id);
+    return loaded === undefined
+      ? []
+      : policyThresholds(loaded.policy, this.#thresholds.get(id) ?? {});
+  }
+
   /** Answer `id` with policy `variant` (`id` itself restores the default); false when it can't. */
   setVariant(id: string, variant: string): boolean {
     if (!this.#canAnswer(id, variant)) {
@@ -130,11 +162,17 @@ export class Decider {
 
   /**
    * Serve reloaded policies. Cached answers belong to the old questions and are dropped, and a
-   * variant choice whose policy is gone falls back to the default. Modes come with `next`.
+   * variant choice whose policy is gone falls back to the default, and threshold overrides keep
+   * only keys that still name a rule. Modes come with `next`.
    */
   replacePolicies(next: ReadonlyMap<string, LoadedPolicy>): void {
     this.#policies = new Map(next);
     this.#cache.clear();
+    for (const [id, thresholds] of this.#thresholds) {
+      if (!this.setThresholds(id, thresholds)) {
+        this.#thresholds.delete(id);
+      }
+    }
     for (const [id, variant] of this.#variants) {
       if (!this.#canAnswer(id, variant)) {
         this.#variants.delete(id);
@@ -150,16 +188,24 @@ export class Decider {
     return variant === id || this.#policies.get(variant)?.policy.variantOf === id;
   }
 
-  /** The requested policy's mode with the selected variant's questions and rules. */
+  /**
+   * The requested policy's mode with the selected variant's questions and rules, the rules with
+   * that variant's threshold overrides.
+   */
   #resolve(policyId: string): { mode: Mode; policy: Policy; variant?: string } {
     const loaded = this.#policies.get(policyId);
     if (loaded === undefined) {
       throw new UnknownPolicyError(`unknown policy "${policyId}"`);
     }
-    const variant = this.#policies.get(this.activeVariant(policyId));
-    return variant === undefined || variant === loaded
-      ? { mode: loaded.mode, policy: loaded.policy }
-      : { mode: loaded.mode, policy: variant.policy, variant: variant.policy.id };
+    const selected = this.#policies.get(this.activeVariant(policyId));
+    const answering = selected ?? loaded;
+    const policy = withThresholds(
+      answering.policy,
+      this.#thresholds.get(answering.policy.id) ?? {},
+    );
+    return answering === loaded
+      ? { mode: loaded.mode, policy }
+      : { mode: loaded.mode, policy, variant: answering.policy.id };
   }
 
   /**

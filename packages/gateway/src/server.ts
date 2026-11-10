@@ -20,6 +20,7 @@ import {
   parseMode,
   parsePathUpdate,
   parseSelection,
+  parseThresholds,
   parseVariant,
   type EngineControl,
 } from './engine-control.ts';
@@ -293,7 +294,7 @@ type ControlHandler = (
   decider: Decider,
 ) => Promise<[number, unknown]>;
 
-const policyRoute = /^\/v1\/policies\/([a-z][a-z0-9_-]{0,63})\/(mode|variant)$/;
+const policyRoute = /^\/v1\/policies\/([a-z][a-z0-9_-]{0,63})\/(mode|variant|thresholds)$/;
 
 /** Engine, model, lifecycle, download, validation, path and policy routes. */
 const CONTROL_ROUTES: Readonly<Record<string, ControlHandler>> = {
@@ -330,8 +331,14 @@ const CONTROL_ROUTES: Readonly<Record<string, ControlHandler>> = {
   'POST /v1/policies/reload': async (_req, c) => [200, { policies: c.reloadPolicies() }],
 };
 
-/** `POST /v1/policies/:id/mode` and `/variant`. */
+/** `POST /v1/policies/:id/mode`, `/variant` and `/thresholds`. */
 function policyHandler(id: string, field: string): ControlHandler {
+  if (field === 'thresholds') {
+    return async (req, c) => {
+      const thresholds = c.setPolicyThresholds(id, parseThresholds(await readJson(req)));
+      return [200, { id, thresholds }];
+    };
+  }
   if (field === 'mode') {
     return async (req, c) => {
       const mode = parseMode(await readJson(req));
@@ -406,6 +413,7 @@ function route(method: string, path: string): Handler | undefined {
           description: policy.description,
           inputKeys: policy.state.sections.map((s) => s.from),
           routes: policyRoutes(policy),
+          thresholds: decider.thresholdsOf(policy.id),
           ...(policy.variantOf === undefined
             ? { variant: decider.activeVariant(policy.id), variants: decider.variantsOf(policy.id) }
             : { variantOf: policy.variantOf }),
