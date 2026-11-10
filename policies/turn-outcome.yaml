@@ -1,7 +1,7 @@
 # yaml-language-server: $schema=../schemas/policy.schema.json
 # Turn outcome: when an agent turn ends, did it finish, get stuck, need the user, or fail?
 id: turn-outcome
-version: 1
+version: 2
 description: Classify how an agent turn ended so stuck or blocked agents can be surfaced.
 mode: shadow
 priority: low
@@ -18,8 +18,8 @@ questions:
       An autonomous coding agent just ended its turn. Classify the end state from the transcript and
       its final message.
     criteria:
-      done: The requested work is complete and the agent says so with no open questions.
-      needs_input: The agent asks the user a question or waits for a decision before it can continue.
+      done: work complete and nothing left for the user to decide or approve
+      needs_input: the agent asks a question, waits for approval, or leaves a decision or choice for the user before the work counts as finished
       stuck: The agent is looping, gave up, or stopped partway without a clear reason or next step.
       failed: The agent reports an error, a failing build or test, or that it could not do the task.
 rules:

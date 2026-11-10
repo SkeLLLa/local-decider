@@ -89,7 +89,7 @@ const ruleSchema = z.strictObject({
 export const policySchema = z
   .strictObject({
     id: z.string().regex(ID_PATTERN).describe('Policy id; also the file name (`<id>.yaml`).'),
-    version: z.literal(1),
+    version: z.union([z.literal(1), z.literal(2)]),
     description: z.string().min(1).describe('One line: what this decides.'),
     /**
      * Id of the policy this one can stand in for. Adapters keep asking for that id; the gateway
