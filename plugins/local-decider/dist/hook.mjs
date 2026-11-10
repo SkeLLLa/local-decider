@@ -18,11 +18,12 @@ function canonicalJson(value) {
 
 // ../core/src/client.ts
 var DEFAULT_GATEWAY_URL = "http://127.0.0.1:8765";
-var LOOPBACK = /* @__PURE__ */ new Set(["127.0.0.1", "localhost", "[::1]", "::1"]);
+var LOOPBACK = /* @__PURE__ */ new Set(["localhost", "[::1]", "::1"]);
+var LOOPBACK_V4 = /^127\.\d{1,3}\.\d{1,3}\.\d{1,3}$/;
 function tokenAllowed(baseUrl) {
   try {
     const url = new URL(baseUrl);
-    return url.protocol === "https:" || LOOPBACK.has(url.hostname) || url.hostname.startsWith("127.");
+    return url.protocol === "https:" || LOOPBACK.has(url.hostname) || LOOPBACK_V4.test(url.hostname);
   } catch {
     return false;
   }
@@ -142,13 +143,29 @@ function splitShell(text) {
 }
 var PREFIXES = /* @__PURE__ */ new Set(["sudo", "doas", "env", "command", "nohup", "time", "exec", "nice"]);
 var ASSIGNMENT = /^[A-Za-z_][A-Za-z0-9_]*=/;
+var VALUE_FLAGS = {
+  sudo: /* @__PURE__ */ new Set(["-u", "-g", "-h", "-p", "-C", "-D", "-r", "-t", "-U"]),
+  doas: /* @__PURE__ */ new Set(["-u", "-C"]),
+  env: /* @__PURE__ */ new Set(["-u", "-C"]),
+  nice: /* @__PURE__ */ new Set(["-n"])
+};
+function prefixFlagSpan(prefix, words, i) {
+  const w = words[i] ?? "";
+  if (prefix === "" || !w.startsWith("-")) {
+    return 0;
+  }
+  return VALUE_FLAGS[prefix]?.has(w) === true && i + 1 < words.length ? 2 : 1;
+}
 function commandWords(words) {
   let i = 0;
+  let prefix = "";
   while (i < words.length) {
     const w = words[i] ?? "";
-    if (PREFIXES.has(w) || ASSIGNMENT.test(w)) {
-      i++;
-    } else if (i > 0 && w.startsWith("-") && PREFIXES.has(words[i - 1] ?? "")) {
+    const span = prefixFlagSpan(prefix, words, i);
+    if (span > 0) {
+      i += span;
+    } else if (PREFIXES.has(w) || ASSIGNMENT.test(w)) {
+      prefix = PREFIXES.has(w) ? w : prefix;
       i++;
     } else {
       break;
@@ -270,8 +287,9 @@ function checkRedirects(words) {
   }
   return null;
 }
+var INLINE_FLAG = /^-[A-Za-z]*c[A-Za-z]*$/;
 function checkInlineShell(cmd, args) {
-  const c = args.indexOf("-c");
+  const c = args.findIndex((a) => INLINE_FLAG.test(a));
   const script = c === -1 ? void 0 : args[c + 1];
   return SHELLS.has(cmd) && script !== void 0 ? guardCommand(script) : null;
 }
@@ -487,9 +505,13 @@ function commandOf(hook) {
   }
   const command = toolInput["command"];
   if (Array.isArray(command)) {
-    return command.filter((c) => typeof c === "string").join(" ");
+    return command.filter((c) => typeof c === "string").map(shellQuote).join(" ");
   }
   return str(command);
+}
+var SHELL_SAFE = /^[\w@%+=:,./-]+$/;
+function shellQuote(word) {
+  return SHELL_SAFE.test(word) ? word : `'${word.replaceAll("'", String.raw`'\''`)}'`;
 }
 function isShellTool(hook) {
   const tool = str(hook["tool_name"]) ?? "";

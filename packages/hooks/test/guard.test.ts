@@ -38,6 +38,10 @@ const DENY: ReadonlyArray<readonly [string, string]> = [
   ['sudo reboot', 'shutdown'],
   ['systemctl poweroff', 'shutdown'],
   ['bash -c "rm -rf /"', 'rm-root'],
+  ["bash -lc 'rm -rf /'", 'rm-root'],
+  ['sudo -u root rm -rf /', 'rm-root'],
+  ['sudo -E -u root nice -n 10 rm -rf /etc', 'rm-root'],
+  ["/bin/sh -ec 'git push --force origin main'", 'git-force-push-main'],
 ];
 
 const ALLOW = [

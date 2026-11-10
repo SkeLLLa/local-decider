@@ -131,9 +131,12 @@ function checkRedirects(words: readonly string[]): GuardHit | null {
   return null;
 }
 
-/** `bash -c "…"`: check the inline script too. */
+/** `-c`, alone or bundled with other short flags (`-lc`, `-ec`). */
+const INLINE_FLAG = /^-[A-Za-z]*c[A-Za-z]*$/;
+
+/** `bash -c "…"` or `bash -lc "…"` (how Codex runs commands): check the inline script too. */
 function checkInlineShell(cmd: string, args: readonly string[]): GuardHit | null {
-  const c = args.indexOf('-c');
+  const c = args.findIndex((a) => INLINE_FLAG.test(a));
   const script = c === -1 ? undefined : args[c + 1];
   return SHELLS.has(cmd) && script !== undefined ? guardCommand(script) : null;
 }

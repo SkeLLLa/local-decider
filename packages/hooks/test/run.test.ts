@@ -327,6 +327,18 @@ describe('guard', () => {
     }
   });
 
+  it('guards a Codex argv command with a bundled -lc script', async () => {
+    const argv = {
+      ...BASE,
+      tool_name: 'Bash',
+      tool_input: { command: ['bash', '-lc', 'rm -rf /'] },
+    };
+    const { decide, calls } = fake('abstain', false);
+    const res = await run('codex', 'PreToolUse', JSON.stringify(argv), {}, { decide });
+    assert.match(res.stdout, /guard \(rm-root\)/);
+    assert.equal(calls.length, 0);
+  });
+
   it('still guards when a host runs the policies', async () => {
     const { decide, calls } = fake('abstain', false);
     const env = { LOCAL_DECIDER_HOST_POLICIES: 'command-risk' };

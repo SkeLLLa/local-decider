@@ -91,14 +91,34 @@ export function splitShell(text: string): Segment[] {
 const PREFIXES = new Set(['sudo', 'doas', 'env', 'command', 'nohup', 'time', 'exec', 'nice']);
 const ASSIGNMENT = /^[A-Za-z_][A-Za-z0-9_]*=/;
 
+/** Prefix flags whose value is the next word: `sudo -u root rm …`, `nice -n 10 rm …`. */
+const VALUE_FLAGS: Readonly<Record<string, ReadonlySet<string>>> = {
+  sudo: new Set(['-u', '-g', '-h', '-p', '-C', '-D', '-r', '-t', '-U']),
+  doas: new Set(['-u', '-C']),
+  env: new Set(['-u', '-C']),
+  nice: new Set(['-n']),
+};
+
+/** Words a prefix's flag at `i` spans (1, or 2 when its value is the next word); 0 if none. */
+function prefixFlagSpan(prefix: string, words: readonly string[], i: number): number {
+  const w = words[i] ?? '';
+  if (prefix === '' || !w.startsWith('-')) {
+    return 0;
+  }
+  return VALUE_FLAGS[prefix]?.has(w) === true && i + 1 < words.length ? 2 : 1;
+}
+
 /** Drop `sudo`, `env`, `VAR=value` and similar prefixes so `words[0]` is the real command. */
 export function commandWords(words: readonly string[]): readonly string[] {
   let i = 0;
+  let prefix = '';
   while (i < words.length) {
     const w = words[i] ?? '';
-    if (PREFIXES.has(w) || ASSIGNMENT.test(w)) {
-      i++;
-    } else if (i > 0 && w.startsWith('-') && PREFIXES.has(words[i - 1] ?? '')) {
+    const span = prefixFlagSpan(prefix, words, i);
+    if (span > 0) {
+      i += span;
+    } else if (PREFIXES.has(w) || ASSIGNMENT.test(w)) {
+      prefix = PREFIXES.has(w) ? w : prefix;
       i++;
     } else {
       break;

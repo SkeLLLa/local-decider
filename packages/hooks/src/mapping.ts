@@ -69,9 +69,19 @@ export function commandOf(hook: HookInput): string | undefined {
   }
   const command = (toolInput as Record<string, unknown>)['command'];
   if (Array.isArray(command)) {
-    return command.filter((c) => typeof c === 'string').join(' ');
+    // Quoted, so an argv like ["bash", "-lc", "rm -rf /"] keeps its inline script as one word.
+    return command
+      .filter((c) => typeof c === 'string')
+      .map(shellQuote)
+      .join(' ');
   }
   return str(command);
+}
+
+const SHELL_SAFE = /^[\w@%+=:,./-]+$/;
+
+function shellQuote(word: string): string {
+  return SHELL_SAFE.test(word) ? word : `'${word.replaceAll("'", String.raw`'\''`)}'`;
 }
 
 /** Tools whose `command` is file content, not a shell command. */
