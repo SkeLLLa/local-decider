@@ -15,7 +15,10 @@
     "dist",
     "policies",
     "engines/*/pyproject.toml",
-    "engines/*/uv.lock"
+    "engines/*/uv.lock",
+    "LICENSE",
+    "NOTICE",
+    "README.md"
   ],
   "type": "module",
   "exports": {

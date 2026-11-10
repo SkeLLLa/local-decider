@@ -9,7 +9,10 @@
     "directory": "packages/core"
   },
   "files": [
-    "dist"
+    "dist",
+    "LICENSE",
+    "NOTICE",
+    "README.md"
   ],
   "type": "module",
   "sideEffects": false,

@@ -24,6 +24,20 @@ export interface GatewayHealth {
   readonly p50Ms?: number;
 }
 
+const LOOPBACK = new Set(['127.0.0.1', 'localhost', '[::1]', '::1']);
+
+/** True for https URLs and loopback hosts; a bearer token is only sent to those. */
+export function tokenAllowed(baseUrl: string): boolean {
+  try {
+    const url = new URL(baseUrl);
+    return (
+      url.protocol === 'https:' || LOOPBACK.has(url.hostname) || url.hostname.startsWith('127.')
+    );
+  } catch {
+    return false;
+  }
+}
+
 export class GatewayClient {
   readonly #baseUrl: string;
   readonly #timeoutMs: number;
@@ -33,7 +47,8 @@ export class GatewayClient {
   constructor(options: ClientOptions = {}) {
     this.#baseUrl = (options.baseUrl ?? DEFAULT_GATEWAY_URL).replace(/\/+$/, '');
     this.#timeoutMs = options.timeoutMs ?? 2000;
-    this.#token = options.token;
+    // Never send the token in clear text to another machine: https, or loopback only.
+    this.#token = tokenAllowed(this.#baseUrl) ? options.token : undefined;
     this.#fetch = options.fetch ?? globalThis.fetch;
   }
 

@@ -16,3 +16,18 @@ export function normaliseBaseUrl(raw: string | undefined): string | null {
   }
   return `${scheme.toLowerCase()}://${host.toLowerCase()}${port}${path}`.replace(/\/+$/, '');
 }
+
+const LOOPBACK_HOST = /^(?:127\.\d{1,3}\.\d{1,3}\.\d{1,3}|localhost|\[::1\])$/;
+
+/**
+ * The bearer token may only travel over https or to this machine: a plain-http remote URL
+ * would expose it to anyone on the network path.
+ */
+export function tokenAllowed(baseUrl: string): boolean {
+  const match = BASE_URL.exec(baseUrl);
+  if (match === null) {
+    return false;
+  }
+  const [, scheme = '', host = ''] = match;
+  return scheme.toLowerCase() === 'https' || LOOPBACK_HOST.test(host.toLowerCase());
+}

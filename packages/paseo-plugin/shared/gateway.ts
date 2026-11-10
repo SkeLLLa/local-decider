@@ -5,7 +5,7 @@ import type { DecideRequest, DecideResponse, GatewayHealth, OutcomeSource } from
  * down, slow, non-2xx, bad JSON, aborted), so hooks fall back to Paseo's default behaviour.
  * Uses only the global `fetch` and `AbortSignal`, so it has no runtime dependencies.
  */
-import { normaliseBaseUrl } from './url.ts';
+import { normaliseBaseUrl, tokenAllowed } from './url.ts';
 
 export interface GatewayOptions {
   readonly baseUrl?: string;
@@ -131,7 +131,8 @@ export function createGateway(options: GatewayOptions = {}): Gateway | null {
   }
   const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   const doFetch = options.fetch ?? globalThis.fetch;
-  const token = options.token;
+  // Never send the token in clear text to another machine.
+  const token = tokenAllowed(baseUrl) ? options.token : undefined;
 
   function headersFor(body: unknown): Record<string, string> {
     const headers: Record<string, string> = { accept: 'application/json' };

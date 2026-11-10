@@ -3,6 +3,15 @@
 
 // ../core/src/client.ts
 var DEFAULT_GATEWAY_URL = "http://127.0.0.1:8765";
+var LOOPBACK = /* @__PURE__ */ new Set(["127.0.0.1", "localhost", "[::1]", "::1"]);
+function tokenAllowed(baseUrl) {
+  try {
+    const url = new URL(baseUrl);
+    return url.protocol === "https:" || LOOPBACK.has(url.hostname) || url.hostname.startsWith("127.");
+  } catch {
+    return false;
+  }
+}
 var GatewayClient = class {
   #baseUrl;
   #timeoutMs;
@@ -11,7 +20,7 @@ var GatewayClient = class {
   constructor(options = {}) {
     this.#baseUrl = (options.baseUrl ?? DEFAULT_GATEWAY_URL).replace(/\/+$/, "");
     this.#timeoutMs = options.timeoutMs ?? 2e3;
-    this.#token = options.token;
+    this.#token = tokenAllowed(this.#baseUrl) ? options.token : void 0;
     this.#fetch = options.fetch ?? globalThis.fetch;
   }
   /** Run a policy. `null` when the gateway is unreachable, slow, or answers with an error. */

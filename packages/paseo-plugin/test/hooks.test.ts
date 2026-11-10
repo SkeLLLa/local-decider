@@ -354,12 +354,22 @@ describe('agent.open.before', () => {
     );
   });
 
-  it('adds a bearer header only when a token is set', () => {
-    assert.deepEqual(mcpServerConfig('http://h', 't'), {
+  it('adds a bearer header only when a token is set and the URL is https or loopback', () => {
+    assert.deepEqual(mcpServerConfig('https://h', 't'), {
       type: 'http',
-      url: 'http://h/mcp',
+      url: 'https://h/mcp',
       headers: { authorization: 'Bearer t' },
     });
+    assert.deepEqual(mcpServerConfig('http://127.0.0.1:8765', 't'), {
+      type: 'http',
+      url: 'http://127.0.0.1:8765/mcp',
+      headers: { authorization: 'Bearer t' },
+    });
+    assert.equal(
+      'headers' in mcpServerConfig('http://h', 't'),
+      false,
+      'never in clear text to another host',
+    );
   });
 });
 

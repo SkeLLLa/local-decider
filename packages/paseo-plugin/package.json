@@ -15,7 +15,10 @@
     "index.server.ts",
     "client/",
     "server/",
-    "shared/"
+    "shared/",
+    "LICENSE",
+    "NOTICE",
+    "README.md"
   ],
   "type": "module",
   "exports": {

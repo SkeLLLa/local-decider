@@ -225,3 +225,13 @@ describe('createGateway engine calls', () => {
     });
   });
 });
+
+describe('tokenAllowed (plugin)', () => {
+  it('allows https and loopback, refuses plain http to other hosts', async () => {
+    const { tokenAllowed } = await import('../shared/url.ts');
+    assert.equal(tokenAllowed('https://gw.example:8765'), true);
+    assert.equal(tokenAllowed('http://127.0.0.1:8765'), true);
+    assert.equal(tokenAllowed('http://localhost:8765'), true);
+    assert.equal(tokenAllowed('http://10.0.0.5:8765'), false);
+  });
+});
