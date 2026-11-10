@@ -165,6 +165,7 @@ describe('rule thresholds', () => {
     assert.equal(clampThreshold(allow, 0.333), 0.5);
     assert.equal(clampThreshold(allow, 0.876), 0.88);
     assert.equal(clampThreshold(allow, 1.2), 1);
+    assert.equal(clampThreshold({ ...allow, action: 'deny', floor: 0.554 }, 0.5), 0.554);
   });
 
   it('parses typed thresholds as fractions or percentages, refusing out-of-range text', () => {
@@ -173,6 +174,10 @@ describe('rule thresholds', () => {
     assert.deepEqual(parseThresholdInput(allow, '90'), { value: 0.9, error: null });
     assert.deepEqual(parseThresholdInput(allow, '92%'), { value: 0.92, error: null });
     assert.deepEqual(parseThresholdInput(allow, '0,8'), { value: 0.8, error: null });
+    assert.deepEqual(parseThresholdInput({ ...allow, action: 'deny', floor: 0.554 }, '0.554'), {
+      value: 0.554,
+      error: null,
+    });
     assert.match(parseThresholdInput(allow, '0.4').error ?? '', /0\.50 to 1\.00/);
     assert.notEqual(parseThresholdInput(allow, 'abc').error, null);
     assert.notEqual(parseThresholdInput(allow, '150').error, null);
@@ -187,6 +192,10 @@ describe('rule thresholds', () => {
       { from: 0.5, to: ALLOW_THRESHOLD.strong, strong: true },
       { from: ALLOW_THRESHOLD.strong, to: ALLOW_THRESHOLD.soft, strong: false },
     ]);
+    assert.deepEqual(warningZones({ ...allow, floor: 0.85 }), [
+      { from: 0.85, to: ALLOW_THRESHOLD.soft, strong: false },
+    ]);
+    assert.deepEqual(warningZones({ ...allow, floor: 0.95 }), []);
     assert.deepEqual(warningZones({ ...allow, action: 'deny' }), []);
     assert.equal(allowWarning(allow, 0.85)?.strong, false);
   });

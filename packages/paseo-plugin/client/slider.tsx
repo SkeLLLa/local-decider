@@ -36,7 +36,8 @@ function snap(x: number, width: number, p: SliderProps): number {
   const ratio = width <= 0 ? 0 : Math.min(1, Math.max(0, x / width));
   const raw = p.min + ratio * (p.max - p.min);
   const stepped = Math.round(raw / p.step) * p.step;
-  return Math.round(Math.min(p.max, Math.max(p.min, stepped)) * 100) / 100;
+  const rounded = Math.round(stepped * 100) / 100;
+  return Math.min(p.max, Math.max(p.min, rounded));
 }
 
 function percent(value: number, p: SliderProps): `${number}%` {
@@ -80,6 +81,7 @@ function useDrag(props: SliderProps): {
 }
 
 function Zones({ theme, props }: { theme: Theme; props: SliderProps }): ReactNode {
+  const span = props.max - props.min;
   return (props.zones ?? []).map((zone) => (
     <View
       key={`${String(zone.from)}-${String(zone.to)}`}
@@ -87,7 +89,7 @@ function Zones({ theme, props }: { theme: Theme; props: SliderProps }): ReactNod
       style={{
         position: 'absolute',
         left: percent(zone.from, props),
-        width: `${((zone.to - zone.from) / (props.max - props.min)) * 100}%`,
+        width: `${span <= 0 ? 0 : ((zone.to - zone.from) / span) * 100}%`,
         height: TRACK_HEIGHT,
         borderRadius: TRACK_HEIGHT / 2,
         backgroundColor: zone.strong ? theme.colors.statusDanger : theme.colors.statusWarning,
@@ -102,9 +104,9 @@ export function Slider(props: SliderProps): ReactNode {
   const { handlers, setWidth } = useDrag(props);
   const [focused, setFocused] = useState(false);
   const nudge = (direction: 1 | -1): void => {
-    const next =
-      Math.round(Math.min(props.max, Math.max(props.min, value + direction * props.step)) * 100) /
-      100;
+    const stepped = Math.round((value + direction * props.step) / props.step) * props.step;
+    const rounded = Math.round(stepped * 100) / 100;
+    const next = Math.min(props.max, Math.max(props.min, rounded));
     props.onChange(next);
     props.onCommit(next);
   };

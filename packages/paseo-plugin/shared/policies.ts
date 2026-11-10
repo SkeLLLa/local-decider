@@ -131,7 +131,9 @@ export function thresholdFloor(t: ThresholdSetting): number {
 
 /** `value` snapped to hundredths within the rule's floor..1. */
 export function clampThreshold(t: ThresholdSetting, value: number): number {
-  return Math.round(Math.min(1, Math.max(thresholdFloor(t), value)) * 100) / 100;
+  const floor = thresholdFloor(t);
+  const rounded = Math.round(Math.min(1, Math.max(floor, value)) * 100) / 100;
+  return Math.min(1, Math.max(floor, rounded));
 }
 
 /**
@@ -149,7 +151,7 @@ export function parseThresholdInput(
   if (!Number.isFinite(value) || value < floor || value > 1) {
     return { value: null, error: `Enter a number from ${floor.toFixed(2)} to 1.00.` };
   }
-  return { value: Math.round(value * 100) / 100, error: null };
+  return { value: clampThreshold(t, value), error: null };
 }
 
 /** How risky an auto-allow threshold of `value` is; null for other rules and safe values. */
@@ -171,9 +173,10 @@ export function warningZones(t: ThresholdSetting): { from: number; to: number; s
     return [];
   }
   const floor = thresholdFloor(t);
+  const softFrom = Math.max(floor, ALLOW_THRESHOLD.strong);
   return [
     { from: floor, to: ALLOW_THRESHOLD.strong, strong: true },
-    { from: ALLOW_THRESHOLD.strong, to: ALLOW_THRESHOLD.soft, strong: false },
+    { from: softFrom, to: ALLOW_THRESHOLD.soft, strong: false },
   ].filter((zone) => zone.to > zone.from);
 }
 
