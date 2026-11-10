@@ -3,7 +3,11 @@
  * policies expect. Pure: no I/O. The gateway redacts and truncates again; these bounds only keep
  * requests small.
  */
-import type { AgentPermissionRequest, AgentTimelineItem } from '@getpaseo/protocol/agent-types';
+import type {
+  AgentPermissionRequest,
+  AgentTimelineItem,
+  ToolCallDetail,
+} from '@getpaseo/protocol/agent-types';
 
 export const LIMITS = {
   line: 600,
@@ -39,8 +43,41 @@ function oneLine(text: string): string {
   return text.replace(/\s+/g, ' ').trim();
 }
 
+function detailSummary(detail: ToolCallDetail | undefined): string {
+  if (detail === undefined) {
+    return '';
+  }
+  let value: string | undefined;
+  switch (detail.type) {
+    case 'shell':
+      value = detail.command;
+      break;
+    case 'read':
+    case 'edit':
+    case 'write':
+      value = detail.filePath;
+      break;
+    case 'search':
+      value = detail.query;
+      break;
+    case 'fetch':
+      value = detail.url;
+      break;
+    case 'sub_agent':
+      value = detail.description;
+      break;
+    case 'plain_text':
+      value = detail.label;
+      break;
+    default:
+      return '';
+  }
+  return head(oneLine(value ?? ''), 200);
+}
+
 function toolLine(item: Extract<AgentTimelineItem, { type: 'tool_call' }>): string {
-  return `tool ${item.name} (${item.status})`;
+  const summary = detailSummary(item.detail);
+  return `tool ${item.name} (${item.status})${summary === '' ? '' : `: ${summary}`}`;
 }
 
 /** One transcript line per item, or null for items that carry no conversational signal. */

@@ -1,4 +1,8 @@
-import type { AgentPermissionRequest, AgentTimelineItem } from '@getpaseo/protocol/agent-types';
+import type {
+  AgentPermissionRequest,
+  AgentTimelineItem,
+  ToolCallDetail,
+} from '@getpaseo/protocol/agent-types';
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
@@ -10,6 +14,7 @@ import {
   LIMITS,
   mergeAssistantChunks,
   tail,
+  transcript,
   turnItems,
 } from '../server/history.ts';
 
@@ -18,13 +23,16 @@ const assistant = (text: string, messageId?: string): AgentTimelineItem =>
   messageId === undefined
     ? { type: 'assistant_message', text }
     : { type: 'assistant_message', text, messageId };
-const tool = (name: string): AgentTimelineItem => ({
+const tool = (
+  name: string,
+  detail: ToolCallDetail = { type: 'unknown', input: null, output: null },
+): AgentTimelineItem => ({
   type: 'tool_call',
   callId: name,
   name,
   status: 'completed',
   error: null,
-  detail: { type: 'unknown', input: null, output: null },
+  detail,
 });
 
 describe('head/tail', () => {
@@ -52,6 +60,42 @@ describe('mergeAssistantChunks', () => {
 
   it('keeps different message ids apart', () => {
     assert.equal(mergeAssistantChunks([assistant('a', 'm1'), assistant('b', 'm2')]).length, 2);
+  });
+});
+
+describe('tool summaries', () => {
+  it('uses only the bounded summary field for each detail type', () => {
+    const details: { detail: ToolCallDetail; summary: string }[] = [
+      { detail: { type: 'shell', command: '  git\n status ', output: 'secret output' }, summary: 'git status' },
+      { detail: { type: 'read', filePath: ' src/a.ts ', content: 'secret content' }, summary: 'src/a.ts' },
+      { detail: { type: 'edit', filePath: 'src/b.ts', oldString: 'secret' }, summary: 'src/b.ts' },
+      { detail: { type: 'write', filePath: 'src/c.ts', content: 'secret' }, summary: 'src/c.ts' },
+      { detail: { type: 'search', query: '  TODO\n fix ', content: 'secret' }, summary: 'TODO fix' },
+      { detail: { type: 'fetch', url: 'https://example.test', result: 'secret' }, summary: 'https://example.test' },
+      { detail: { type: 'sub_agent', description: '  Inspect\n tests ', log: 'secret' }, summary: 'Inspect tests' },
+      { detail: { type: 'plain_text', label: '  approved?  ', text: 'secret' }, summary: 'approved?' },
+      { detail: { type: 'plan', text: 'secret plan' }, summary: '' },
+      { detail: { type: 'unknown', input: 'secret input', output: 'secret output' }, summary: '' },
+    ];
+    const lines = transcript(
+      details.map(({ detail }, index) => tool(`Tool${index}`, detail)),
+      10_000,
+    ).split('\n');
+
+    assert.deepEqual(
+      lines,
+      details.map(
+        ({ summary }, index) =>
+          `tool Tool${index} (completed)${summary === '' ? '' : `: ${summary}`}`,
+      ),
+    );
+    assert.equal(lines.join('\n').includes('secret'), false);
+  });
+
+  it('normalizes and limits summaries to 200 characters', () => {
+    const line = transcript([tool('Bash', { type: 'shell', command: `  ${'x '.repeat(150)} ` })], 1000);
+    assert.equal(line.slice('tool Bash (completed): '.length).length, 200);
+    assert.equal(line.includes('\n'), false);
   });
 });
 
