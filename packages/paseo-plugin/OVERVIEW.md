@@ -98,3 +98,15 @@ Brier score, and calibration. Human answers to permission prompts are reported t
 - Command Center items open the settings, the status screen, and the shadow statistics, and
   start, stop or restart the gateway service (the status screen opens and shows the result; stop
   asks for confirmation there).
+
+## Quick status, Details and preloading
+
+- The sidebar popover has **Refresh**, **Details** and **Settings** buttons. Settings opens the
+  full settings as a plugin screen.
+- Paseo 0.15.3 gives plugin screens no way to open other screens, so the **Details** page shows
+  the settings inline behind its **Settings** button instead of linking to them.
+- **Load the model when Paseo starts** (off by default): when the plugin starts, it waits up
+  to 2 minutes for the gateway and asks it to load its model once (`POST /v1/engine/load`), so
+  the first decision skips the load (~5 s on FastFlowLM). With the lazy lifecycle the model
+  still unloads after the idle time.
+- Choosing a policy mode in settings sets it in the gateway too (`POST /v1/policies/<id>/mode`).

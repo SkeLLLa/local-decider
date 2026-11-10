@@ -3,7 +3,12 @@ import type { PluginPopoverProps } from '@getpaseo/plugin/client';
 import { useMemo, type ReactNode } from 'react';
 import { Text, type TextStyle, View, type ViewStyle } from 'react-native';
 
-import { HOOK_POLICIES, INSTALL_SERVICE_COMMAND, STATUS_SCREEN_ID } from '../shared/constants.ts';
+import {
+  HOOK_POLICIES,
+  INSTALL_SERVICE_COMMAND,
+  SETTINGS_PAGE_ID,
+  STATUS_SCREEN_ID,
+} from '../shared/constants.ts';
 import { engineTag } from '../shared/engines.ts';
 import { engineStateNote } from '../shared/lifecycle.ts';
 import { type Status, useDeciderValues, useGatewayStatus, useServiceInfo } from './hooks.ts';
@@ -144,6 +149,7 @@ function StartRow({ theme, styles }: { theme: Theme; styles: Styles }): ReactNod
       <Button
         theme={theme}
         grow
+        icon="Play"
         label={svc.busy === null ? 'Start gateway' : 'Starting…'}
         disabled={svc.busy !== null}
         onPress={() => void svc.start('start')}
@@ -213,6 +219,7 @@ export function QuickStatus(props: PluginPopoverProps): ReactNode {
             theme={theme}
             variant="secondary"
             grow
+            icon="RefreshCw"
             label={isFetching ? 'Checking…' : 'Refresh'}
             disabled={isFetching}
             onPress={() => void refetch()}
@@ -221,10 +228,22 @@ export function QuickStatus(props: PluginPopoverProps): ReactNode {
             theme={theme}
             variant="secondary"
             grow
+            icon="Activity"
             label="Details"
             onPress={() => {
               props.close();
               props.openScreen({ screenId: STATUS_SCREEN_ID });
+            }}
+          />
+          <Button
+            theme={theme}
+            variant="secondary"
+            grow
+            icon="Settings"
+            label="Settings"
+            onPress={() => {
+              props.close();
+              props.openScreen({ screenId: SETTINGS_PAGE_ID });
             }}
           />
         </View>

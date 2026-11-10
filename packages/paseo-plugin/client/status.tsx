@@ -17,6 +17,7 @@ import { EngineControls } from './engine-state.tsx';
 import { type Status, useDeciderValues, useGatewayStatus } from './hooks.ts';
 import { headline, healthColor, QuickStatus } from './quick-status.tsx';
 import { ServiceSection } from './service.tsx';
+import { SettingsScreen } from './settings-screen.tsx';
 import { StatsSection } from './stats.tsx';
 import { Button, Page, type Theme, Value } from './ui.tsx';
 
@@ -136,7 +137,28 @@ function serviceRequest(
   return action === undefined ? null : { action, nonce: params['nonce'] ?? '' };
 }
 
-export function StatusScreen({ theme, layout, params }: PluginScreenProps): ReactNode {
+/**
+ * Paseo 0.15.3 gives screens no way to open another screen, so the Details page shows the
+ * settings inline behind this toggle (the same component as Settings → Local decider).
+ */
+function InlineSettings(props: PluginScreenProps): ReactNode {
+  const [open, setOpen] = useState(false);
+  return (
+    <View style={{ gap: 12 }}>
+      <Button
+        theme={props.theme}
+        variant="secondary"
+        icon={open ? 'ChevronUp' : 'Settings'}
+        label={open ? 'Hide settings' : 'Settings'}
+        onPress={() => setOpen(!open)}
+      />
+      {open ? <SettingsScreen {...props} /> : null}
+    </View>
+  );
+}
+
+export function StatusScreen(props: PluginScreenProps): ReactNode {
+  const { theme, layout, params } = props;
   const { data, isFetching, refetch } = useGatewayStatus();
   const values = useDeciderValues();
   // `refresh` changes on every "Refresh status" command, forcing a check now.
@@ -147,6 +169,7 @@ export function StatusScreen({ theme, layout, params }: PluginScreenProps): Reac
   }, [params, refetch]);
   return (
     <Page theme={theme} compact={layout.compact}>
+      <InlineSettings {...props} />
       <GatewaySection
         theme={theme}
         data={data}

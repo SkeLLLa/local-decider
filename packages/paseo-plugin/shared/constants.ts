@@ -35,5 +35,7 @@ export const SERVICE_ACTIONS = ['start', 'stop', 'restart'] as const;
 export type ServiceAction = (typeof SERVICE_ACTIONS)[number];
 
 export const SETTINGS_SCREEN_ID = 'settings';
+/** The same settings UI as a plugin screen, so surfaces without `openSettings` can open it. */
+export const SETTINGS_PAGE_ID = 'settings-page';
 export const STATUS_SCREEN_ID = 'status';
 export const STATS_SCREEN_ID = 'stats';

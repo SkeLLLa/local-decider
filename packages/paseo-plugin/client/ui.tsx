@@ -1,4 +1,5 @@
 import type { PluginHostProps } from '@getpaseo/plugin/client';
+import { Icon } from '@getpaseo/plugin/client/ui';
 import type { ReactNode } from 'react';
 import { ActivityIndicator, Platform, Pressable, ScrollView, Text, View } from 'react-native';
 
@@ -11,8 +12,11 @@ export function Button({
   disabled = false,
   variant = 'primary',
   grow = false,
+  icon,
 }: {
   label: string;
+  /** Lucide icon name shown before the label, e.g. `RefreshCw`. */
+  icon?: string;
   onPress: () => void;
   theme: Theme;
   disabled?: boolean;
@@ -22,6 +26,7 @@ export function Button({
   grow?: boolean;
 }): ReactNode {
   const primary = variant === 'primary';
+  const textColor = primary ? theme.colors.accentForeground : theme.colors.foreground;
   return (
     <Pressable
       accessibilityRole="button"
@@ -45,15 +50,12 @@ export function Button({
         opacity: disabled ? 0.6 : 1,
       })}
     >
-      <Text
-        numberOfLines={1}
-        style={{
-          color: primary ? theme.colors.accentForeground : theme.colors.foreground,
-          fontSize: 13,
-        }}
-      >
-        {label}
-      </Text>
+      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+        {icon === undefined ? null : <Icon name={icon} size={14} color={textColor} />}
+        <Text numberOfLines={1} style={{ color: textColor, fontSize: 13 }}>
+          {label}
+        </Text>
+      </View>
     </Pressable>
   );
 }

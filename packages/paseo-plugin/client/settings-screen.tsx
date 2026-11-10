@@ -1,5 +1,5 @@
-import type { PluginSurfaceProps } from '@getpaseo/plugin/client';
-import { usePaseo, useSettings } from '@getpaseo/plugin/client';
+import type { PluginScreenProps, PluginSurfaceProps } from '@getpaseo/plugin/client';
+import { usePaseo, useRpc, useSettings } from '@getpaseo/plugin/client';
 import {
   Loading,
   SettingsAction,
@@ -20,6 +20,7 @@ import {
   type RoutingPreset,
 } from '../shared/constants.ts';
 import { parsePresetModel, presetModelOptions, withCurrent } from '../shared/presets.ts';
+import { policyModeRpc } from '../shared/rpc.ts';
 import { deciderSettings, type DeciderSettings } from '../shared/settings.ts';
 import { normaliseBaseUrl } from '../shared/url.ts';
 import { StatusSection } from './engine-state.tsx';
@@ -27,7 +28,7 @@ import { choices, type Save, type SectionProps } from './settings-common.ts';
 import { RowsSection, SidebarSection } from './settings-display.tsx';
 import { EngineSection } from './settings-engines.tsx';
 import { PathsSection } from './settings-paths.tsx';
-import type { Theme } from './ui.tsx';
+import { Page, type Theme } from './ui.tsx';
 
 const PROVIDER_MODELS_KEY = ['local-decider', 'provider-models'] as const;
 
@@ -84,10 +85,11 @@ function GatewaySection({ values, save }: SectionProps): ReactNode {
 }
 
 function PolicySection({ values, save }: SectionProps): ReactNode {
+  const setGatewayMode = useRpc(policyModeRpc);
   return (
     <SettingsSection
       title="Policies"
-      info="Shadow records what would have happened. Act changes Paseo's behaviour, and only when the gateway's own policy mode is act too."
+      info="Shadow records what would have happened. Act lets the decider change Paseo's behaviour. Choosing a mode here sets it in the gateway too."
     >
       <SettingsCard>
         {HOOK_POLICIES.map((policy) => (
@@ -100,9 +102,11 @@ function PolicySection({ values, save }: SectionProps): ReactNode {
               shadow: 'Shadow (record only)',
               act: 'Act (when the gateway does)',
             })}
-            onValueChange={(mode) =>
-              save({ ...values, modes: { ...values.modes, [policy]: mode } })
-            }
+            onValueChange={(mode) => {
+              save({ ...values, modes: { ...values.modes, [policy]: mode } });
+              // The gateway's own mode decides whether a decision is enforced: keep both in step.
+              void setGatewayMode({ policy, mode });
+            }}
           />
         ))}
         <SettingsSwitch
@@ -110,6 +114,12 @@ function PolicySection({ values, save }: SectionProps): ReactNode {
           hint="Injects <gateway>/mcp into every agent session. Providers without MCP support then fail to open; leave off unless you need it."
           value={values.injectMcp}
           onValueChange={(injectMcp: boolean) => save({ ...values, injectMcp })}
+        />
+        <SettingsSwitch
+          label="Load the model when Paseo starts"
+          hint="Off: the gateway loads the model on the first decision (~5 s on FastFlowLM, longer on CPU). On: it is loaded at Paseo start and still unloads after the idle time."
+          value={values.preloadOnStart}
+          onValueChange={(preloadOnStart: boolean) => save({ ...values, preloadOnStart })}
         />
       </SettingsCard>
     </SettingsSection>
@@ -265,5 +275,14 @@ export function SettingsScreen({ theme }: PluginSurfaceProps): ReactNode {
         </SettingsCard>
       </SettingsSection>
     </View>
+  );
+}
+
+/** The settings as a regular plugin screen (opened from the sidebar popover), with scrolling. */
+export function SettingsPage(props: PluginScreenProps): ReactNode {
+  return (
+    <Page theme={props.theme} compact={props.layout.compact}>
+      <SettingsScreen {...props} />
+    </Page>
   );
 }

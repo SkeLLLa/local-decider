@@ -19,6 +19,13 @@ import { serviceRpc } from '../shared/rpc.ts';
 import { type Outcome, useAction, useServiceInfo } from './hooks.ts';
 import { Button, InlineMessage, Mono, type Theme } from './ui.tsx';
 
+/** Lucide icons matching the Command Center items. */
+const SERVICE_ICONS: Readonly<Record<ServiceAction, string>> = {
+  start: 'Play',
+  stop: 'Square',
+  restart: 'RotateCw',
+};
+
 const LABELS: Record<ServiceAction, string> = {
   start: 'Start gateway',
   stop: 'Stop gateway',
@@ -76,6 +83,7 @@ function ServiceRow({
         <Button
           theme={theme}
           variant={action === 'start' ? 'primary' : 'secondary'}
+          icon={SERVICE_ICONS[action]}
           label={busy === action ? 'Running…' : (LABELS[action].split(' ')[0] ?? action)}
           disabled={busy !== null}
           onPress={onPress}
@@ -108,7 +116,7 @@ function ConfirmStop({
       <Mono theme={theme} lines={2}>{`Runs: ${command}`}</Mono>
       <View style={{ flexDirection: 'row', gap: 8 }}>
         <Button theme={theme} variant="secondary" grow label="Cancel" onPress={onCancel} />
-        <Button theme={theme} grow label="Stop gateway" onPress={onConfirm} />
+        <Button theme={theme} grow icon="Square" label="Stop gateway" onPress={onConfirm} />
       </View>
     </View>
   );

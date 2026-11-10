@@ -57,6 +57,8 @@ export interface Gateway {
   engineLoad(action: 'load' | 'unload', options?: CallOptions): Promise<PostResult>;
   /** `POST /v1/engine/lifecycle`: lazy (load on demand, unload when idle) or eager; persisted. */
   setLifecycle(lifecycle: Lifecycle, options?: CallOptions): Promise<PostResult>;
+  /** `POST /v1/policies/:id/mode`: the gateway's run mode for a policy; persisted. */
+  setPolicyMode(policy: string, mode: string, options?: CallOptions): Promise<PostResult>;
 }
 
 export interface Lifecycle {
@@ -214,5 +216,7 @@ export function createGateway(options: GatewayOptions = {}): Gateway | null {
     setPath: async (key, value, call) => post('/v1/paths', { key, value }, call),
     engineLoad: async (action, call) => post(`/v1/engine/${action}`, {}, call),
     setLifecycle: async (lifecycle, call) => post('/v1/engine/lifecycle', { ...lifecycle }, call),
+    setPolicyMode: async (policy, mode, call) =>
+      post(`/v1/policies/${encodeURIComponent(policy)}/mode`, { mode }, call),
   };
 }

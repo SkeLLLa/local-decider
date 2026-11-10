@@ -43,6 +43,8 @@ export const settingsSchema = z.object({
   modes: z.object({ 'turn-outcome': mode, 'permission': mode, 'routing': mode }).prefault({}),
   presets: z.object({ fast: preset, standard: preset, deep: preset }).prefault({}),
   injectMcp: z.boolean().default(false),
+  /** Ask the gateway to load its model when Paseo (and so this plugin) starts. */
+  preloadOnStart: z.boolean().default(false),
   sidebar,
   rows,
 });

@@ -2,7 +2,7 @@
 import { defineRpc } from '@getpaseo/plugin';
 import { z } from 'zod';
 
-import { SERVICE_ACTIONS } from './constants.ts';
+import { HOOK_POLICIES, SERVICE_ACTIONS } from './constants.ts';
 import { downloadSchema, engineCatalogSchema, validationSchema } from './engines.ts';
 import { IDLE_MINUTES } from './lifecycle.ts';
 import { PATH_KEY, pathEntrySchema } from './paths.ts';
@@ -88,6 +88,12 @@ export const engineLoadRpc = defineRpc({
 });
 
 /** Lazy (load on demand, unload when idle) or eager (`POST /v1/engine/lifecycle`). */
+export const policyModeRpc = defineRpc({
+  name: 'policy-mode',
+  input: z.object({ policy: z.enum(HOOK_POLICIES), mode: z.enum(['off', 'shadow', 'act']) }),
+  output: z.object({ ok: z.boolean(), error: failure }),
+});
+
 export const lifecycleRpc = defineRpc({
   name: 'engine-lifecycle',
   input: z.object({

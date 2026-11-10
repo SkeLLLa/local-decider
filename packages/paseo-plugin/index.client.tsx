@@ -1,13 +1,14 @@
 import type { PluginClientContext } from '@getpaseo/plugin/client';
 
 import { DecisionRowView } from './client/decision-row.tsx';
-import { SettingsScreen } from './client/settings-screen.tsx';
+import { SettingsPage, SettingsScreen } from './client/settings-screen.tsx';
 import { StatsScreen } from './client/stats.tsx';
 import { StatusFooterItem, StatusHeaderItem, StatusScreen } from './client/status.tsx';
 import {
   ROW_KIND,
   type ServiceAction,
   ROW_VERSION,
+  SETTINGS_PAGE_ID,
   SETTINGS_SCREEN_ID,
   STATS_SCREEN_ID,
   STATUS_SCREEN_ID,
@@ -25,6 +26,11 @@ export default function contribute(client: PluginClientContext): () => void {
       Component: SettingsScreen,
     }),
     client.addScreen({ id: STATUS_SCREEN_ID, title: 'Local decider', Component: StatusScreen }),
+    client.addScreen({
+      id: SETTINGS_PAGE_ID,
+      title: 'Local decider settings',
+      Component: SettingsPage,
+    }),
     client.addScreen({ id: STATS_SCREEN_ID, title: 'Shadow stats', Component: StatsScreen }),
     // Both slots are registered; each renders only when Settings → Sidebar → Position picks it.
     client.addSidebarHeaderItem({

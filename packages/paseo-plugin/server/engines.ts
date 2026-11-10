@@ -126,3 +126,17 @@ export async function setLifecycle(
   );
   return { ok, error };
 }
+
+/** Set the gateway's run mode for a policy, so "Act" here really lets the gateway enforce. */
+export async function setPolicyMode(
+  deps: Deps,
+  input: { policy: string; mode: 'off' | 'shadow' | 'act' },
+): Promise<{ ok: boolean; error: string | null }> {
+  const { ok, error } = await call(
+    deps,
+    `policy ${input.policy} ${input.mode}`,
+    async (gw) => gw.setPolicyMode(input.policy, input.mode, { timeoutMs: 10_000 }),
+    () => null,
+  );
+  return { ok, error };
+}

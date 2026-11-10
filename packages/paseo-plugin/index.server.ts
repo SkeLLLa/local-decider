@@ -8,11 +8,13 @@ import {
   listEngines,
   selectEngine,
   setLifecycle,
+  setPolicyMode,
   setPath,
   validateEngine,
 } from './server/engines.ts';
 import { createMcpHandler } from './server/mcp.ts';
 import { createPermissionHandlers } from './server/permission.ts';
+import { preloadOnStart } from './server/preload.ts';
 import { createRoutingHandler } from './server/routing.ts';
 import { createStatusHandler, manualDecide, recordFeedback, statsText } from './server/rpc.ts';
 import { defaultServiceEnv, runService, serviceInfo } from './server/service.ts';
@@ -25,6 +27,7 @@ import {
   enginesRpc,
   feedbackRpc,
   lifecycleRpc,
+  policyModeRpc,
   selectEngineRpc,
   serviceInfoRpc,
   serviceRpc,
@@ -108,6 +111,10 @@ export default function contribute(server: PluginServerContext): () => void {
   const { deps, markHealth, cleanup } = createDeps(server);
 
   const background = new Background();
+  const preload = new AbortController();
+  void preloadOnStart(deps, preload.signal).catch((error: unknown) => {
+    log(`preload skipped: ${String(error)}`);
+  });
   const onTurn = createTurnHandler(deps, { background });
   const permission = createPermissionHandlers(deps, background);
   const onCreate = createRoutingHandler(deps);
@@ -131,6 +138,7 @@ export default function contribute(server: PluginServerContext): () => void {
   server.handle(setPathRpc, async (input) => setPath(deps, input));
   server.handle(engineLoadRpc, async ({ action }) => engineLoad(deps, action));
   server.handle(lifecycleRpc, async (input) => setLifecycle(deps, input));
+  server.handle(policyModeRpc, async (input) => setPolicyMode(deps, input));
   server.handle(serviceInfoRpc, async () => serviceInfo(defaultServiceEnv()));
   server.handle(serviceRpc, async ({ action }) => {
     const res = await runService(defaultServiceEnv(), action);
@@ -139,6 +147,7 @@ export default function contribute(server: PluginServerContext): () => void {
   });
 
   return () => {
+    preload.abort();
     background.stop();
     cleanup();
   };

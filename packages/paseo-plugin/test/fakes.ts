@@ -15,6 +15,7 @@ export function settings(overrides: Partial<DeciderSettings> = {}): DeciderSetti
       deep: { model: '', modeId: '' },
     },
     injectMcp: false,
+    preloadOnStart: false,
     sidebar: { position: 'footer', label: 'full', press: 'popover' },
     rows: { show: 'all', details: true, feedback: true },
     ...overrides,
@@ -94,6 +95,7 @@ export function fakeGateway(
     setPath: async (key, value) => record('setPath')({ key, value }),
     engineLoad: record('engineLoad'),
     setLifecycle: record('setLifecycle'),
+    setPolicyMode: record('setPolicyMode'),
   };
 }
 
