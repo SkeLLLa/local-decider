@@ -5,7 +5,8 @@
  */
 import type { AgentSessionConfig } from '@getpaseo/protocol/agent-types';
 
-import type { DecideResponse, DecisionModels } from '../shared/decision.ts';
+import type { DecideRequest, DecideResponse, DecisionModels } from '../shared/decision.ts';
+import type { Gateway } from '../shared/gateway.ts';
 import {
   applyPreset,
   presetTarget,
@@ -42,6 +43,13 @@ async function loadProfiles(paseo: ProfileSource | undefined): Promise<readonly 
 export interface CreateRequest {
   config: AgentSessionConfig;
   env?: Record<string, string>;
+}
+
+interface RoutePlan {
+  readonly mode: DeciderSettings['modes'][typeof ROUTING_POLICY];
+  readonly settings: DeciderSettings;
+  readonly gateway: Gateway;
+  readonly body: DecideRequest;
 }
 
 export function createRoutingHandler(
@@ -120,6 +128,16 @@ async function route(
   usage: UsageLinks | undefined,
   paseo: ProfileSource | undefined,
 ): Promise<CreateRequest | undefined> {
+  const plan = await routePlan(deps, request);
+  if (plan === undefined) {
+    return undefined;
+  }
+  return plan.mode === 'act'
+    ? routeAct(plan, deps, request, signal, usage, paseo)
+    : routeShadow(plan, request, usage);
+}
+
+async function routePlan(deps: HookDeps, request: CreateRequest): Promise<RoutePlan | undefined> {
   // Internal helper agents (commit messages, titles) are not user tasks.
   if (request.config.internal === true || deps.gatewayKnownDown?.() === true) {
     return undefined;
@@ -127,28 +145,54 @@ async function route(
   const settings = await deps.settings();
   const mode = settings.modes[ROUTING_POLICY];
   const input = buildRoutingInput(request.config.cwd, request.config.title);
-  const gateway = mode === 'off' || input === null ? null : await deps.gateway();
-  if (gateway === null || input === null) {
+  if (mode === 'off' || input === null) {
     return undefined;
   }
-  const body = {
-    harness: 'paseo' as const,
-    input: { ...input },
-    models: routingModels(request.config, settings.presets),
+  const gateway = await deps.gateway();
+  if (gateway === null) {
+    return undefined;
+  }
+  return {
+    mode,
+    settings,
+    gateway,
+    body: {
+      harness: 'paseo',
+      input: { ...input },
+      models: routingModels(request.config, settings.presets),
+    },
   };
-  if (mode !== 'act') {
-    // Shadow: nothing will be applied, so never make agent creation wait. The gateway logs it.
-    const pending = gateway
-      .decide(ROUTING_POLICY, body, { timeoutMs: SHADOW_TIMEOUT_MS })
-      .catch(() => null);
-    usage?.creating(
-      request.config.cwd,
-      request.config.title,
-      pending.then((r) => r?.decisionId ?? null),
-    );
-    return undefined;
-  }
-  const pending = gateway.decide(ROUTING_POLICY, body, { timeoutMs: ROUTING_BUDGET_MS, signal });
+}
+
+function routeShadow(
+  plan: RoutePlan,
+  request: CreateRequest,
+  usage: UsageLinks | undefined,
+): undefined {
+  // Shadow: nothing will be applied, so never make agent creation wait. The gateway logs it.
+  const pending = plan.gateway
+    .decide(ROUTING_POLICY, plan.body, { timeoutMs: SHADOW_TIMEOUT_MS })
+    .catch(() => null);
+  usage?.creating(
+    request.config.cwd,
+    request.config.title,
+    pending.then((r) => r?.decisionId ?? null),
+  );
+  return undefined;
+}
+
+async function routeAct(
+  plan: RoutePlan,
+  deps: HookDeps,
+  request: CreateRequest,
+  signal: AbortSignal,
+  usage: UsageLinks | undefined,
+  paseo: ProfileSource | undefined,
+): Promise<CreateRequest | undefined> {
+  const pending = plan.gateway.decide(ROUTING_POLICY, plan.body, {
+    timeoutMs: ROUTING_BUDGET_MS,
+    signal,
+  });
   usage?.creating(
     request.config.cwd,
     request.config.title,
@@ -158,13 +202,22 @@ async function route(
     ),
   );
   const res = await pending;
-  if (res === null || !pluginEnforces(res, mode)) {
+  if (res === null || !pluginEnforces(res, plan.mode)) {
     return undefined;
   }
-  const target = await targetOf(res, settings.presets, paseo);
+  const target = await targetOf(res, plan.settings.presets, paseo);
   if (target === null) {
     return undefined;
   }
+  return applyRouteTarget(deps, request, res, target);
+}
+
+function applyRouteTarget(
+  deps: HookDeps,
+  request: CreateRequest,
+  res: DecideResponse,
+  target: PresetTarget,
+): CreateRequest | undefined {
   // A preset's or profile's mode applies only when the creator left modeId unset.
   const pinned = (request.config.modeId ?? '').trim() !== '';
   if (pinned && target.provider !== request.config.provider) {
