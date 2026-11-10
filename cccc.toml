@@ -1,0 +1,5 @@
+# cccc: cognitive and cyclomatic complexity of the TypeScript sources (`mise run lint:complexity`).
+# Split functions into cohesive helpers rather than raising these.
+max-cognitive = 15
+max-cyclomatic = 15
+table = true

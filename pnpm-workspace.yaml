@@ -1,0 +1,7 @@
+packages:
+  - packages/*
+# Supply-chain guards: refuse provenance downgrades and versions younger than 3 days.
+trustPolicy: no-downgrade
+minimumReleaseAge: 4320
+allowBuilds:
+  esbuild: true

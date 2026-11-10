@@ -1,0 +1,3 @@
+# local-decider
+
+@AGENTS.md

@@ -1,0 +1,32 @@
+{
+  "name": "local-decider-monorepo",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Local decision models (System One) for Paseo, Claude Code and Codex.",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/SkeLLLa/local-decider.git"
+  },
+  "type": "module",
+  "scripts": {
+    "build": "pnpm -r build",
+    "fmt": "oxfmt",
+    "lint": "oxlint --deny-warnings && oxfmt --check",
+    "test": "pnpm -r test",
+    "typecheck": "pnpm -r typecheck"
+  },
+  "devDependencies": {
+    "@tsconfig/node24": "^24.0.5",
+    "@tsconfig/strictest": "^2.0.8",
+    "@types/node": "^26.6.6",
+    "oxfmt": "^0.75.0",
+    "oxlint": "^1.90.0",
+    "oxlint-tsgolint": "^7.0.2005",
+    "typescript": "^7.0.2"
+  },
+  "engines": {
+    "node": ">=24"
+  },
+  "packageManager": "pnpm@12.16.1"
+}

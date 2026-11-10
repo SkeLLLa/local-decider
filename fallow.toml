@@ -1,0 +1,8 @@
+# fallow: dead code, duplication and complexity (`mise run lint:fallow`).
+# See https://fallow.tools/docs/
+
+[health]
+maxCyclomatic = 15
+maxCognitive = 15
+# Tests write lcov (node --test), not the Istanbul JSON fallow reads; gate on complexity only.
+maxCrap = 10000.0

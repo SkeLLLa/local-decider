@@ -1,0 +1,8 @@
+[global]
+exclude = ["node_modules", "**/node_modules", ".claude", ".serena", "**/CHANGELOG.md", "dist"]
+
+# Prose is hand-wrapped at 100 columns; tables and code blocks carry long literal lines.
+[MD013]
+line-length = 100
+tables = false
+code-blocks = false

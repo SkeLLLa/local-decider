@@ -1,0 +1,20 @@
+node_modules/
+dist/
+coverage/
+temp/
+*.tsbuildinfo
+*.tgz
+*.log
+lcov.info
+.env
+.env.*
+.DS_Store
+# Work in progress files
+**/*.xxx.*
+# Agent-local state
+.serena/
+.fallow/
+.rumdl_cache/
+.claude/settings.local.json
+# Runtime data never lives in the repo (it goes to ~/.local/share/local-decider)
+.local-decider/

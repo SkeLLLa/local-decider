@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json.schemastore.org/tsconfig",
+  "extends": ["@tsconfig/node24/tsconfig.json", "@tsconfig/strictest/tsconfig.json"],
+  "compilerOptions": {
+    "module": "nodenext",
+    "moduleResolution": "nodenext",
+    "declaration": true,
+    "declarationMap": true,
+    "sourceMap": true,
+    "noEmit": true,
+    // Sources run as-is under Node's type stripping (tests, `mise run gateway`), so only
+    // erasable syntax, explicit `.ts` import extensions (rewritten to `.js` on emit) and
+    // the `source` export condition, which resolves workspace packages to their src/.
+    "erasableSyntaxOnly": true,
+    "verbatimModuleSyntax": true,
+    "rewriteRelativeImportExtensions": true,
+    "customConditions": ["source"]
+  }
+}

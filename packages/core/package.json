@@ -1,0 +1,30 @@
+{
+  "name": "@local-decider/core",
+  "version": "0.0.0",
+  "description": "Types, systemone client, policy schema and loader for local-decider.",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/SkeLLLa/local-decider.git",
+    "directory": "packages/core"
+  },
+  "files": [
+    "dist"
+  ],
+  "type": "module",
+  "exports": {
+    ".": {
+      "source": "./src/index.ts",
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "rm -rf dist && tsc -p tsconfig.build.json",
+    "test": "node --test --conditions=source --experimental-test-coverage --test-coverage-include='src/**' 'test/**/*.test.ts'",
+    "typecheck": "tsc -p tsconfig.json"
+  },
+  "engines": {
+    "node": ">=24"
+  }
+}

@@ -1,0 +1,115 @@
+# Development tools for local-decider. `mise trust && mise install && mise run setup`.
+# CI installs the same pins through jdx/mise-action, so local and CI runs use the same bits.
+
+[settings]
+lockfile = true
+http_retries = 3
+pin = true
+
+[tools]
+node = "26.13.0"
+pnpm = "12.16.1"
+# Manages the Python engines' environments (strands-decider) under ~/.local/share/local-decider.
+uv = "0.13.7"
+# Workflow and dependabot.yml lint (`lint:actions`).
+jactionlint = "2.4.0"
+shellcheck = "0.11.0"
+# Markdown lint (`md-check`, .rumdl.toml).
+rumdl = "0.3.2"
+# Dead code, duplication and complexity (`lint:fallow`, fallow.toml).
+"github:fallow-rs/fallow" = "3.39.0"
+# Cognitive/cyclomatic complexity ceilings for the TypeScript sources (`lint:complexity`).
+"github:moznion/cccc" = "1.8.6"
+# Workflow security audit (`lint:zizmor`).
+zizmor = "1.31.1"
+# Agent tooling: the fff and ripwire MCP servers in .mcp.json.
+"github:dmtrKovalenko/fff.nvim" = { version = "0.11.0", bin = "fff-mcp", platforms = { linux-x64 = { asset_pattern = "fff-mcp-x86_64-unknown-linux-musl" }, linux-arm64 = { asset_pattern = "fff-mcp-aarch64-unknown-linux-musl" }, macos-x64 = { asset_pattern = "fff-mcp-x86_64-apple-darwin" }, macos-arm64 = { asset_pattern = "fff-mcp-aarch64-apple-darwin" } } }
+"github:redhat-et/ripwire" = { version = "0.6.8", bin = "ripwire", platforms = { linux-x64 = { asset_pattern = "ripwire-*-linux-x64.tar.gz" }, linux-arm64 = { asset_pattern = "ripwire-*-linux-arm64.tar.gz" }, macos-arm64 = { asset_pattern = "ripwire-*-macos-arm64.tar.gz" } } }
+
+[tasks.setup]
+description = "Install workspace dependencies (frozen lockfile)"
+run = "pnpm install --frozen-lockfile"
+
+[tasks.build]
+description = "Build every package (topological order)"
+run = "pnpm -r build"
+
+[tasks.test]
+description = "Unit tests for every package"
+run = "pnpm -r test"
+
+[tasks.typecheck]
+description = "tsc --noEmit for every package"
+run = "pnpm -r typecheck"
+
+[tasks.lint]
+description = "oxlint (type-aware) and oxfmt --check"
+run = "pnpm run lint"
+
+[tasks.fmt]
+description = "Format sources with oxfmt and Markdown with rumdl"
+run = ["pnpm run fmt", "rumdl fmt ."]
+
+[tasks.md-check]
+description = "Lint Markdown files (.rumdl.toml)"
+run = "rumdl check ."
+
+[tasks."lint:actions"]
+description = "jactionlint (with shellcheck on run: scripts) on the workflows and dependabot.yml"
+run = "jactionlint"
+
+[tasks."lint:pins"]
+description = "Every workflow `uses:` pinned to a full commit SHA"
+run = "scripts/check-action-pins.sh .github/workflows/*.yml"
+
+[tasks."lint:zizmor"]
+description = "zizmor: workflow security audit"
+run = "zizmor --offline .github/workflows"
+
+[tasks."lint:shell"]
+description = "shellcheck the repository's shell scripts"
+run = "shellcheck -S info scripts/*.sh"
+
+[tasks."lint:complexity"]
+description = "cccc: cognitive and cyclomatic complexity ceilings (cccc.toml)"
+run = "s=0; cccc --top-cognitive 10 packages/*/src || s=$?; cccc --top-cyclomatic 10 packages/*/src || s=$?; exit $s"
+
+[tasks."lint:fallow"]
+description = "fallow: dead code, duplication and complexity (fallow.toml)"
+run = "fallow"
+
+[tasks.check]
+description = "Everything CI checks"
+depends = [
+  "lint",
+  "typecheck",
+  "md-check",
+  "lint:actions",
+  "lint:pins",
+  "lint:zizmor",
+  "lint:shell",
+  "lint:complexity",
+  "lint:fallow",
+]
+run = ["pnpm -r build", "pnpm -r test"]
+
+[tasks.gateway]
+description = "Run the gateway in the foreground from source; args after --, e.g. mise run gateway -- --port 8765"
+run = "node --conditions=source packages/gateway/src/cli.ts gateway run"
+
+[tasks.sync-versions]
+description = "Sync node/pnpm pins from mise.toml into package.json"
+run = '''
+#!/usr/bin/env bash
+set -euo pipefail
+PNPM_VERSION=$(mise current pnpm)
+NODE_VERSION=$(mise current node)
+cd "{{config_root}}"
+node -e "
+const fs = require('fs');
+const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
+pkg.packageManager = 'pnpm@' + '$PNPM_VERSION';
+fs.writeFileSync('package.json', JSON.stringify(pkg, null, 2) + '\n');
+"
+echo "Synced: node=$NODE_VERSION pnpm=$PNPM_VERSION"
+'''
