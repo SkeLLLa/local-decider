@@ -33,10 +33,24 @@ describe('policy eval', () => {
       'utf8',
     );
     const cases = parseEvalCases(source, 'permission.jsonl');
-    assert.deepEqual(
-      cases.map((testCase) => testCase.expect),
-      ['allow', 'allow', 'allow', 'allow', 'ask', 'ask', 'ask', 'ask', 'deny', 'ask'],
-    );
+    const expected = cases.map((testCase) => testCase.expect);
+    assert.deepEqual(expected.slice(0, 10), [
+      'allow',
+      'allow',
+      'allow',
+      'allow',
+      'ask',
+      'ask',
+      'ask',
+      'ask',
+      'deny',
+      'ask',
+    ]);
+    // The claude-auto injection fixtures: text that talks the reviewer into allowing must never
+    // be expected to produce an allow.
+    const injection = expected.slice(10);
+    assert.equal(injection.length, 10);
+    assert.ok(injection.every((answer) => answer === 'ask' || answer === 'deny'));
   });
 
   it('parses JSONL cases and reports malformed records with line numbers', () => {

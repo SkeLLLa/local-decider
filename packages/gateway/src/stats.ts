@@ -10,6 +10,7 @@ import type {
 } from '@local-decider/core';
 
 import { classifierAgreement, type ClassifierAgreement } from './classifier-agreement.ts';
+import { percentile, wilsonUpper } from './numbers.ts';
 import type { LoadedPolicy } from './policies.ts';
 import {
   computePromptTime,
@@ -20,7 +21,6 @@ import {
   type Savings,
   type SavingsTotals,
 } from './savings.ts';
-import { wilsonUpper } from './wilson.ts';
 
 const BUCKETS = [0, 0.5, 0.7, 0.8, 0.9, 0.95, 1.000_001] as const;
 
@@ -61,13 +61,6 @@ export interface CalibrationHint {
   readonly threshold?: number;
   readonly n: number;
   readonly denies: number;
-}
-
-function percentile(sorted: readonly number[], p: number): number | undefined {
-  if (sorted.length === 0) {
-    return undefined;
-  }
-  return sorted[Math.min(sorted.length - 1, Math.max(0, Math.ceil((p / 100) * sorted.length) - 1))];
 }
 
 /** The answer an outcome labels: the first answer whose option space contains the outcome. */

@@ -430,6 +430,45 @@ const CALL_POLICY = 'permission';
 
 const decideRoute = /^\/v1\/decide\/([a-z][a-z0-9_-]{0,63})$/;
 
+/** `GET /v1/stats[?scope=claude-auto]`. */
+const statsHandler: Handler = async (req, res, { decider, log, pricing, settings }) => {
+  const scope = parseScope(new URL(req.url ?? '/', 'http://localhost').searchParams.get('scope'));
+  send(
+    res,
+    200,
+    computeStats(
+      log.read(),
+      settings?.().pricing ?? pricing,
+      decider.policies,
+      scope === undefined ? {} : { scope },
+    ),
+  );
+};
+
+/** `GET /v1/calls/:id`: the decisions recorded for a call and the scope modes in effect. */
+function callHandler(id: string): Handler {
+  return async (_req, res, { decider }) => {
+    const record = decider.calls.get(id);
+    if (record === undefined) {
+      send(res, 404, { error: 'unknown call' });
+      return;
+    }
+    const scopes = Object.fromEntries(
+      SCOPES.map((scope) => [scope, decider.effectiveMode(CALL_POLICY, scope)]),
+    );
+    send(res, 200, { ...record, scopes });
+  };
+}
+
+/** Read-only routes: `GET /v1/stats` and `GET /v1/calls/:id`. */
+function readRoute(key: string, path: string): Handler | undefined {
+  if (key === 'GET /v1/stats') {
+    return statsHandler;
+  }
+  const id = key.startsWith('GET ') ? callRoute.exec(path)?.[1] : undefined;
+  return id === undefined ? undefined : callHandler(id);
+}
+
 function route(method: string, path: string): Handler | undefined {
   const key = `${method} ${path}`;
   if (key === 'GET /health' || key === 'GET /ping') {
@@ -468,23 +507,6 @@ function route(method: string, path: string): Handler | undefined {
         })),
       );
   }
-  if (key === 'GET /v1/stats') {
-    return async (req, res, { decider, log, pricing, settings }) => {
-      const scope = parseScope(
-        new URL(req.url ?? '/', 'http://localhost').searchParams.get('scope'),
-      );
-      send(
-        res,
-        200,
-        computeStats(
-          log.read(),
-          settings?.().pricing ?? pricing,
-          decider.policies,
-          scope === undefined ? {} : { scope },
-        ),
-      );
-    };
-  }
   if (key === 'POST /v1/systemone' || key === 'POST /invocations') {
     return async (req, res, { decider }) =>
       send(
@@ -507,19 +529,9 @@ function route(method: string, path: string): Handler | undefined {
       send(res, 200, { ok: true });
     };
   }
-  const call = method === 'GET' ? callRoute.exec(path)?.[1] : undefined;
-  if (call !== undefined) {
-    return async (_req, res, { decider }) => {
-      const record = decider.calls.get(call);
-      if (record === undefined) {
-        send(res, 404, { error: 'unknown call' });
-        return;
-      }
-      const scopes = Object.fromEntries(
-        SCOPES.map((scope) => [scope, decider.effectiveMode(CALL_POLICY, scope)]),
-      );
-      send(res, 200, { ...record, scopes });
-    };
+  const read = readRoute(key, path);
+  if (read !== undefined) {
+    return read;
   }
   if (path === '/mcp') {
     return async (req, res, { decider }) =>

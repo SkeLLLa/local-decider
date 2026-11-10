@@ -1,6 +1,6 @@
 import type { OutcomeRecord, ShadowRecord } from '@local-decider/core';
 
-import { wilsonLower } from './wilson.ts';
+import { percentile, wilsonLower } from './numbers.ts';
 
 const MAX_DISAGREEMENTS = 20;
 
@@ -34,10 +34,6 @@ export interface ClassifierAgreement {
   readonly latencyP95Ms?: number;
   /** Decisions that timed out or errored. */
   readonly errors: number;
-}
-
-function percentile(sorted: readonly number[], p: number): number | undefined {
-  return sorted[Math.min(sorted.length - 1, Math.max(0, Math.ceil((p / 100) * sorted.length) - 1))];
 }
 
 /** The mod applied `allow` itself, so no classifier verdict exists to compare against. */

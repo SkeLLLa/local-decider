@@ -1,3 +1,4 @@
+// fallow-ignore-file code-duplication -- the Paseo plugin bundles its own copy (server/history.ts)
 /**
  * What a tool call is, as one stable line (`Bash: npm test`, `Edit: src/a.ts`): the precedent
  * subject and the shell-command helpers behind it. No `node:` imports, so a Claude Code mod can

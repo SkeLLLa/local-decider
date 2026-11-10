@@ -9,6 +9,7 @@ import { appendFileSync, mkdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, it } from 'node:test';
 
+import type { ClassifierAgreement } from '../src/classifier-agreement.ts';
 import type { LoadedPolicy } from '../src/policies.ts';
 import { ShadowLog } from '../src/shadow.ts';
 import { computeStats, formatStats, type PolicyStats } from '../src/stats.ts';
@@ -259,6 +260,13 @@ const verdict = (id: string, outcome: string, source = 'classifier'): LogRecord 
   source: source as 'classifier',
 });
 
+const agreement = (input: LogRecord[]): ClassifierAgreement => {
+  const found = computeStats(input, {}, undefined, { scope: 'claude-auto' })[0]
+    ?.classifierAgreement;
+  assert.ok(found, 'classifier agreement present');
+  return found;
+};
+
 describe('classifier agreement', () => {
   const scoped = (id: string, action: string, extra: Partial<ShadowRecord> = {}): ShadowRecord =>
     decision(id, action === 'allow' ? 'allow' : 'ask', 0.9, {
@@ -287,22 +295,30 @@ describe('classifier agreement', () => {
     verdict('nolabel', 'allow', 'user'),
   ];
 
-  it('compares would-allow decisions with the classifier and lists disagreements', () => {
+  it('counts compared decisions, coverage and allow precision', () => {
+    const a = agreement(records);
+    assert.equal(a.decisions, 9, 'unscoped decisions are filtered out');
+    assert.equal(a.n, 6, 'auto-allowed, unlabelled and user-labelled ones are not compared');
+    assert.equal(a.coverage, 6 / 9);
+    assert.equal(a.wouldAllow, 4);
+    assert.equal(a.bothAllowed, 3);
+    assert.equal(a.allowPrecision, 0.75);
+    assert.ok(a.allowPrecisionLower !== undefined && a.allowPrecisionLower < 0.75);
+    assert.ok(a.allowPrecisionLower !== undefined && a.allowPrecisionLower > 0.2);
+  });
+
+  it('reports the ask-rate on classifier-allowed calls, disagreements, latency and errors', () => {
+    const a = agreement(records);
+    assert.equal(a.classifierAllowed, 4);
+    assert.equal(a.askRateOnClassifierAllowed, 0.25);
+    assert.deepEqual(a.disagreements, ['d1']);
+    assert.equal(a.errors, 1);
+    assert.equal(a.latencyP50Ms, 100);
+  });
+
+  it('filters the policy decisions to the scope', () => {
     const [s] = computeStats(records, {}, undefined, { scope: 'claude-auto' });
-    const a = s?.classifierAgreement;
-    assert.equal(s?.decisions, 9, 'unscoped decisions are filtered out');
-    assert.equal(a?.decisions, 9);
-    assert.equal(a?.n, 6, 'auto-allowed, unlabelled and user-labelled ones are not compared');
-    assert.equal(a?.coverage, 6 / 9);
-    assert.equal(a?.wouldAllow, 4);
-    assert.equal(a?.bothAllowed, 3);
-    assert.equal(a?.allowPrecision, 0.75);
-    assert.ok((a?.allowPrecisionLower ?? 1) < 0.75 && (a?.allowPrecisionLower ?? 0) > 0.2);
-    assert.equal(a?.classifierAllowed, 4);
-    assert.equal(a?.askRateOnClassifierAllowed, 0.25);
-    assert.deepEqual(a?.disagreements, ['d1']);
-    assert.equal(a?.errors, 1);
-    assert.equal(a?.latencyP50Ms, 100);
+    assert.equal(s?.decisions, 9);
   });
 
   it('caps the disagreement list at 20 ids', () => {
@@ -310,10 +326,10 @@ describe('classifier agreement', () => {
     for (let i = 0; i < 25; i += 1) {
       many.push(scoped(`x${String(i)}`, 'allow'), verdict(`x${String(i)}`, 'deny'));
     }
-    const [s] = computeStats(many, {}, undefined, { scope: 'claude-auto' });
-    assert.equal(s?.classifierAgreement?.disagreements.length, 20);
-    assert.equal(s?.classifierAgreement?.disagreements[0], 'x0');
-    assert.equal(s?.classifierAgreement?.allowPrecision, 0);
+    const a = agreement(many);
+    assert.equal(a.disagreements.length, 20);
+    assert.equal(a.disagreements[0], 'x0');
+    assert.equal(a.allowPrecision, 0);
   });
 
   it('attaches the section without a filter and omits it when nothing is scoped', () => {

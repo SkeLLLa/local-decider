@@ -1,7 +1,7 @@
 import type { Action, PermissionMode } from '@local-decider/core';
 
-export const CALL_STORE_MAX = 2000;
-export const CALL_STORE_TTL_MS = 10 * 60 * 1000;
+const CALL_STORE_MAX = 2000;
+const CALL_STORE_TTL_MS = 10 * 60 * 1000;
 
 /** What one policy decided for a harness tool call. */
 export interface CallDecision {

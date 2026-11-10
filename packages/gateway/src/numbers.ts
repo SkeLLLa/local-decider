@@ -12,3 +12,11 @@ export function wilsonUpper(events: number, n: number): number {
 export function wilsonLower(successes: number, n: number): number {
   return 1 - wilsonUpper(n - successes, n);
 }
+
+/** The `p`th percentile (nearest rank) of an ascending list; undefined when it is empty. */
+export function percentile(sorted: readonly number[], p: number): number | undefined {
+  if (sorted.length === 0) {
+    return undefined;
+  }
+  return sorted[Math.min(sorted.length - 1, Math.max(0, Math.ceil((p / 100) * sorted.length) - 1))];
+}
