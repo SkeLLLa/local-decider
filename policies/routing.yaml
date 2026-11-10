@@ -1,0 +1,30 @@
+# Routing: which model tier should a new agent or task get? `route:<preset>` names a preset the
+# harness adapter maps to provider/model/mode (Paseo settings, or the gateway config).
+id: routing
+version: 1
+description: Pick a model tier for a new task from its prompt.
+mode: shadow
+cache:
+  ttlSeconds: 600
+state:
+  maxTokens: 2000
+  sections:
+    - { label: Project, from: project, keep: head }
+    - { label: Task prompt, from: prompt, keep: middle }
+questions:
+  tier:
+    type: choice
+    instructions: >-
+      Choose the smallest model tier that can reliably complete the coding task in the prompt.
+    criteria:
+      fast: A lookup, a one-line edit, a rename, formatting, or a question answerable from one file.
+      standard: A bounded feature or bug fix touching a few files with clear requirements.
+      deep: Architecture, multi-file refactors, subtle debugging, security work, or vague requirements.
+rules:
+  - when: { question: tier, answer: fast, minConfidence: 0.7 }
+    action: route:fast
+  - when: { question: tier, answer: deep, minConfidence: 0.5 }
+    action: route:deep
+  - when: { question: tier, answer: standard, minConfidence: 0.5 }
+    action: route:standard
+default: abstain

@@ -1,0 +1,190 @@
+/**
+ * Policies are data: one YAML file per decision type with its questions, how state is built from
+ * the harness input, and confidence-gated rules that map answers to an action.
+ */
+import { parse as parseYaml } from 'yaml';
+import { z } from 'zod';
+
+import type { Answers, Questions } from './systemone.ts';
+import type { StateSection } from './truncate.ts';
+
+export const MODES = ['off', 'shadow', 'act'] as const;
+export type Mode = (typeof MODES)[number];
+
+/**
+ * `abstain` means "no opinion, harness default"; `log` records only; `notify` asks the adapter to
+ * surface the decision; `route:<preset>` names a routing preset.
+ */
+const ACTION_PATTERN = /^(?:allow|ask|deny|log|abstain|notify|route:[a-z0-9][a-z0-9_.-]*)$/;
+export type Action = string;
+
+const ID_PATTERN = /^[a-z][a-z0-9_-]*$/;
+const sentence = z.string().trim().min(1).max(600);
+
+const noulSchema = z.strictObject({
+  type: z.literal('noul'),
+  instructions: sentence,
+  criteria: z.strictObject({ true: sentence.optional(), false: sentence.optional() }).optional(),
+});
+
+const choiceSchema = z.strictObject({
+  type: z.literal('choice'),
+  instructions: sentence,
+  criteria: z
+    .record(z.string().regex(ID_PATTERN), sentence.nullable())
+    .refine((c) => Object.keys(c).length >= 2 && Object.keys(c).length <= 255, {
+      message: 'choice questions need 2..255 options',
+    }),
+});
+
+const scoreSchema = z.strictObject({
+  type: z.literal('score'),
+  instructions: sentence,
+  criteria: z.array(sentence).min(2).max(10),
+});
+
+const questionSchema = z.discriminatedUnion('type', [noulSchema, choiceSchema, scoreSchema]);
+
+const sectionSchema = z.strictObject({
+  label: z.string().min(1).max(80),
+  /** Key of the harness input to render into this section. */
+  from: z.string().regex(/^[A-Za-z][A-Za-z0-9_]*$/),
+  keep: z.enum(['head', 'tail', 'middle']).default('tail'),
+});
+
+const ruleSchema = z.strictObject({
+  when: z.strictObject({
+    question: z.string().regex(ID_PATTERN),
+    answer: z.string().min(1),
+    minConfidence: z.number().min(0).max(1).optional(),
+    minProbability: z.number().min(0).max(1).optional(),
+  }),
+  action: z.string().regex(ACTION_PATTERN),
+});
+
+export const policySchema = z
+  .strictObject({
+    id: z.string().regex(ID_PATTERN),
+    version: z.literal(1),
+    description: z.string().min(1),
+    mode: z.enum(MODES).default('shadow'),
+    /** Harness ids this policy applies to; empty = all. */
+    harnesses: z.array(z.string().regex(ID_PATTERN)).default([]),
+    state: z.strictObject({
+      maxTokens: z.number().int().min(128).max(32_000).default(3000),
+      sections: z.array(sectionSchema).min(1),
+    }),
+    questions: z
+      .record(z.string().regex(ID_PATTERN), questionSchema)
+      .refine((q) => Object.keys(q).length >= 1, {
+        message: 'a policy needs at least one question',
+      }),
+    /** First matching rule wins. */
+    rules: z.array(ruleSchema).default([]),
+    /** Action when no rule matches or the engine gave no answer. */
+    default: z.string().regex(ACTION_PATTERN).default('abstain'),
+    cache: z
+      .strictObject({ ttlSeconds: z.number().int().min(0).max(86_400).default(0) })
+      .default({ ttlSeconds: 0 }),
+  })
+  .superRefine((policy, ctx) => {
+    for (const [i, rule] of policy.rules.entries()) {
+      const question = policy.questions[rule.when.question];
+      if (question === undefined) {
+        ctx.addIssue({
+          code: 'custom',
+          path: ['rules', i, 'when', 'question'],
+          message: `unknown question "${rule.when.question}"`,
+        });
+        continue;
+      }
+      const answers = answerSpace(question);
+      if (!answers.includes(rule.when.answer)) {
+        ctx.addIssue({
+          code: 'custom',
+          path: ['rules', i, 'when', 'answer'],
+          message: `"${rule.when.answer}" is not one of ${answers.join(', ')}`,
+        });
+      }
+    }
+  });
+
+export type Policy = z.infer<typeof policySchema>;
+export type PolicyRule = Policy['rules'][number];
+
+function answerSpace(question: z.infer<typeof questionSchema>): string[] {
+  if (question.type === 'noul') {
+    return ['true', 'false'];
+  }
+  if (question.type === 'choice') {
+    return Object.keys(question.criteria);
+  }
+  return question.criteria;
+}
+
+export class PolicyError extends Error {
+  override readonly name = 'PolicyError';
+}
+
+/** Parse and validate one policy document. Throws {@link PolicyError} with every issue listed. */
+export function parsePolicy(source: string, origin = '<policy>'): Policy {
+  let raw: unknown;
+  try {
+    raw = parseYaml(source, { uniqueKeys: true });
+  } catch (error) {
+    throw new PolicyError(`${origin}: invalid YAML: ${(error as Error).message}`);
+  }
+  const result = policySchema.safeParse(raw);
+  if (!result.success) {
+    const issues = result.error.issues
+      .map((issue) => `  ${issue.path.join('.') || '(root)'}: ${issue.message}`)
+      .join('\n');
+    throw new PolicyError(`${origin}: invalid policy\n${issues}`);
+  }
+  return result.data;
+}
+
+/** The questions in wire form (criteria nulls kept, as the API allows them). */
+export function policyQuestions(policy: Policy): Questions {
+  return policy.questions as Questions;
+}
+
+/** Render harness input into ordered state sections per the policy's `state.sections`. */
+export function policySections(
+  policy: Policy,
+  input: Readonly<Record<string, unknown>>,
+  render: (value: unknown) => string,
+): StateSection[] {
+  return policy.state.sections.map((section) => ({
+    label: section.label,
+    keep: section.keep,
+    text: render(input[section.from]),
+  }));
+}
+
+export interface RuleMatch {
+  readonly action: Action;
+  /** Index of the matching rule, or -1 for the policy default. */
+  readonly rule: number;
+}
+
+function ruleMatches(rule: PolicyRule, answers: Answers): boolean {
+  const answer = answers[rule.when.question];
+  if (answer === undefined || answer.answer !== rule.when.answer) {
+    return false;
+  }
+  if (rule.when.minConfidence !== undefined && answer.confidence < rule.when.minConfidence) {
+    return false;
+  }
+  const p = answer.probabilities[rule.when.answer] ?? 0;
+  return rule.when.minProbability === undefined || p >= rule.when.minProbability;
+}
+
+/** Map answers to an action: first matching rule, else the policy default. */
+export function evaluateRules(policy: Policy, answers: Answers): RuleMatch {
+  const index = policy.rules.findIndex((rule) => ruleMatches(rule, answers));
+  const rule = policy.rules[index];
+  return rule === undefined
+    ? { action: policy.default, rule: -1 }
+    : { action: rule.action, rule: index };
+}
