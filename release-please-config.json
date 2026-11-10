@@ -16,6 +16,9 @@
     },
     "packages/gateway": {
       "component": "local-decider"
+    },
+    "packages/paseo-plugin": {
+      "component": "paseo-plugin"
     }
   }
 }

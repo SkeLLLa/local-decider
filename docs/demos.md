@@ -39,8 +39,24 @@ All four hooks fired; shadow-log records (`decisions-2026-11-10.jsonl`, summaris
 - Every decision took longer than the hooks' 1.5 s budget, so the hooks failed open (no output)
   and the gateway still finished and logged the shadow decisions.
 
-## Codex CLI 0.164.0
+## Codex CLI 0.164.0 (2026-11-10)
 
-Plugin install from the local marketplace verified in a throwaway `CODEX_HOME`
-(`codex plugin marketplace add ./` then `codex plugin add local-decider@local-decider`).
-Hook execution needs the hooks trusted in the TUI (`/hooks`); see [install.md](install.md).
+Installed into the real `~/.codex` from the local marketplace, hooks reviewed and trusted in the
+TUI (`/hooks`), then:
+
+```sh
+codex plugin marketplace add /home/m03geek/Dev/os/local-decider
+codex plugin add local-decider@local-decider
+# codex → /hooks → trust the four local-decider hooks
+codex exec --skip-git-repo-check -s read-only "Run the shell command: cat notes.txt. Then reply with its content and the word DONE."
+```
+
+Codex printed `hook: Stop` / `hook: Stop Completed`; shadow-log records:
+
+```text
+12:47:32 codex routing      shadow action=abstain tier=standard(0.22) 1420ms
+12:47:37 codex command-risk shadow action=abstain risk=safe(0.97)     1531ms
+12:47:40 codex turn-outcome shadow action=log     outcome=done(0.90)  1617ms
+```
+
+`PermissionRequest` did not fire: the read-only sandbox ran `cat` without asking.
