@@ -2,10 +2,13 @@ import type {
   Answer,
   LogRecord,
   OutcomeRecord,
+  Policy,
+  PolicyRule,
   ShadowRecord,
   UsageRecord,
 } from '@local-decider/core';
 
+import type { LoadedPolicy } from './policies.ts';
 import {
   computePromptTime,
   computeSavings,
@@ -44,6 +47,15 @@ export interface PolicyStats {
   readonly savings?: Savings;
   /** Policies that allow: time spent on prompts they would have answered. */
   readonly promptTime?: PromptTime;
+  /** Advisory threshold suggestions from escalated allow-rule decisions. */
+  readonly calibrationHints?: readonly CalibrationHint[];
+}
+
+export interface CalibrationHint {
+  readonly rule: string;
+  readonly threshold?: number;
+  readonly n: number;
+  readonly denies: number;
 }
 
 function percentile(sorted: readonly number[], p: number): number | undefined {
@@ -115,12 +127,107 @@ function extras(decisions: readonly ShadowRecord[], joined: Joined): Partial<Pol
   };
 }
 
+interface ThresholdSample {
+  readonly probability: number;
+  readonly denied: boolean;
+}
+
+function eligibleAllowRules(policy: Policy): PolicyRule[] {
+  return policy.rules.filter(
+    (rule) =>
+      rule.action === 'allow' &&
+      rule.when.precedent === undefined &&
+      rule.when.minProbability !== undefined,
+  );
+}
+
+function samplesForRule(
+  rule: PolicyRule,
+  decisions: readonly ShadowRecord[],
+  outcomes: ReadonlyMap<string, OutcomeRecord>,
+): ThresholdSample[] {
+  const samples: ThresholdSample[] = [];
+  for (const decision of decisions) {
+    const outcome = outcomes.get(decision.decisionId)?.outcome;
+    if (decision.action !== 'ask' || (outcome !== 'allow' && outcome !== 'deny')) {
+      continue;
+    }
+    const probability = decision.answers[rule.when.question]?.probabilities[rule.when.answer];
+    if (
+      probability !== undefined &&
+      Number.isFinite(probability) &&
+      probability >= 0 &&
+      probability <= 1
+    ) {
+      samples.push({ probability, denied: outcome === 'deny' });
+    }
+  }
+  return samples.toSorted((a, b) => a.probability - b.probability);
+}
+
+function wilsonUpper(denies: number, n: number): number {
+  const z = 1.96;
+  const z2 = z * z;
+  const rate = denies / n;
+  return (
+    (rate + z2 / (2 * n) + z * Math.sqrt((rate * (1 - rate)) / n + z2 / (4 * n * n))) / (1 + z2 / n)
+  );
+}
+
+function suggestedThreshold(
+  samples: readonly ThresholdSample[],
+): { threshold: number; n: number; denies: number } | undefined {
+  let denies = samples.filter((sample) => sample.denied).length;
+  for (let start = 0; start < samples.length;) {
+    const threshold = samples[start]?.probability;
+    if (threshold === undefined) {
+      return undefined;
+    }
+    let end = start;
+    let groupDenies = 0;
+    while (end < samples.length && samples[end]?.probability === threshold) {
+      groupDenies += Number(samples[end]?.denied ?? false);
+      end += 1;
+    }
+    const n = samples.length - start;
+    if (n >= 100 && wilsonUpper(denies, n) <= 0.02) {
+      return { threshold, n, denies };
+    }
+    denies -= groupDenies;
+    start = end;
+  }
+  return undefined;
+}
+
+function calibrationHints(
+  policy: Policy | undefined,
+  decisions: readonly ShadowRecord[],
+  outcomes: ReadonlyMap<string, OutcomeRecord>,
+): CalibrationHint[] {
+  if (policy === undefined) {
+    return [];
+  }
+  return eligibleAllowRules(policy).map((rule) => {
+    const samples = samplesForRule(rule, decisions, outcomes);
+    const suggestion = suggestedThreshold(samples);
+    const denies = samples.filter((sample) => sample.denied).length;
+    return {
+      rule: `${rule.when.question}.${rule.when.answer}`,
+      ...(suggestion === undefined ? {} : { threshold: suggestion.threshold }),
+      n: suggestion?.n ?? samples.length,
+      denies: suggestion?.denies ?? denies,
+    };
+  });
+}
+
 function policyStats(
   policy: string,
+  policyDefinition: Policy | undefined,
   decisions: readonly ShadowRecord[],
   joined: Joined,
 ): PolicyStats {
   const { outcomes } = joined;
+  const hints = calibrationHints(policyDefinition, decisions, outcomes);
   const latencies = decisions
     .filter((d) => d.error === undefined)
     .map((d) => d.latencyMs)
@@ -151,6 +258,7 @@ function policyStats(
           brier: labelled.reduce((acc, l) => acc + brier(l.answer, l.outcome), 0) / labelled.length,
         }),
     reliability: reliability(labelled),
+    ...(hints.length === 0 ? {} : { calibrationHints: hints }),
     ...extras(decisions, joined),
   };
 }
@@ -159,7 +267,11 @@ function policyStats(
  * Agreement, calibration and savings per policy from shadow-log records. The latest outcome
  * wins; `pricing` (optional) adds dollar estimates to token savings.
  */
-export function computeStats(records: readonly LogRecord[], pricing: Pricing = {}): PolicyStats[] {
+export function computeStats(
+  records: readonly LogRecord[],
+  pricing: Pricing = {},
+  policies?: ReadonlyMap<string, LoadedPolicy>,
+): PolicyStats[] {
   const outcomes = new Map<string, OutcomeRecord>();
   const usage: UsageRecord[] = [];
   const byPolicy = new Map<string, ShadowRecord[]>();
@@ -177,12 +289,24 @@ export function computeStats(records: readonly LogRecord[], pricing: Pricing = {
   return [...byPolicy.entries()]
     .toSorted(([a], [b]) => a.localeCompare(b))
     .map(([policy, decisions]) =>
-      policyStats(policy, decisions, { outcomes, usage: groupUsage(usage), pricing }),
+      policyStats(policy, policies?.get(policy)?.policy, decisions, {
+        outcomes,
+        usage: groupUsage(usage),
+        pricing,
+      }),
     );
 }
 
 function pct(x: number | undefined): string {
   return x === undefined ? '-' : `${(x * 100).toFixed(1)}%`;
+}
+
+function calibrationLine(hint: CalibrationHint): string {
+  const recommendation =
+    hint.threshold === undefined
+      ? `not enough labelled escalations (n=${String(hint.n)}, denies=${String(hint.denies)})`
+      : `suggest t=${hint.threshold.toFixed(2)} (n=${String(hint.n)}, denies=${String(hint.denies)})`;
+  return `  allow threshold ${hint.rule} (advisory; not applied): ${recommendation}`;
 }
 
 /** Plain-text report for `local-decider stats`. */
@@ -204,6 +328,9 @@ export function formatStats(stats: readonly PolicyStats[]): string {
       lines.push(
         `    conf ${b.range}: n=${String(b.n)} mean conf ${b.meanConfidence.toFixed(2)} accuracy ${pct(b.accuracy)}`,
       );
+    }
+    for (const hint of s.calibrationHints ?? []) {
+      lines.push(calibrationLine(hint));
     }
     lines.push(...savingsLines(s));
   }

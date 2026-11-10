@@ -130,6 +130,12 @@ describe('createGateway (fail open)', () => {
       outcome: 'allow',
       source: 'user',
     });
+    assert.equal(await gw?.reportOutcome('d-2', 'deny', 'supervised'), true);
+    assert.deepEqual(JSON.parse(seen.at(-1)?.body ?? ''), {
+      decisionId: 'd-2',
+      outcome: 'deny',
+      source: 'supervised',
+    });
   });
 
   it('is null for an unusable URL', () => {

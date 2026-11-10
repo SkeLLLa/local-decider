@@ -92,6 +92,38 @@
       "additionalProperties": false,
       "description": "What the model reads: input keys in order, least relevant first, within maxTokens."
     },
+    "precedent": {
+      "type": "object",
+      "properties": {
+        "from": {
+          "type": "string",
+          "pattern": "^[A-Za-z][A-Za-z0-9_]*$",
+          "description": "Harness input key used for exact-match outcome precedent; never rendered as state."
+        },
+        "minAllows": {
+          "default": 3,
+          "type": "integer",
+          "minimum": 2,
+          "maximum": 9007199254740991
+        },
+        "maxAgeDays": {
+          "default": 14,
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 90
+        },
+        "sources": {
+          "default": ["user"],
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": ["user", "supervised", "harness", "heuristic"]
+          }
+        }
+      },
+      "required": ["from"],
+      "additionalProperties": false
+    },
     "questions": {
       "type": "object",
       "propertyNames": {
@@ -226,6 +258,10 @@
                 "type": "number",
                 "minimum": 0,
                 "maximum": 1
+              },
+              "precedent": {
+                "type": "string",
+                "const": "allow"
               }
             },
             "required": ["question", "answer"],

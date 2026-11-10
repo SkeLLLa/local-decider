@@ -67,14 +67,32 @@ describe('mergeAssistantChunks', () => {
 describe('tool summaries', () => {
   it('uses only the bounded summary field for each detail type', () => {
     const details: { detail: ToolCallDetail; summary: string }[] = [
-      { detail: { type: 'shell', command: '  git\n status ', output: 'secret output' }, summary: 'git status' },
-      { detail: { type: 'read', filePath: ' src/a.ts ', content: 'secret content' }, summary: 'src/a.ts' },
+      {
+        detail: { type: 'shell', command: '  git\n status ', output: 'secret output' },
+        summary: 'git status',
+      },
+      {
+        detail: { type: 'read', filePath: ' src/a.ts ', content: 'secret content' },
+        summary: 'src/a.ts',
+      },
       { detail: { type: 'edit', filePath: 'src/b.ts', oldString: 'secret' }, summary: 'src/b.ts' },
       { detail: { type: 'write', filePath: 'src/c.ts', content: 'secret' }, summary: 'src/c.ts' },
-      { detail: { type: 'search', query: '  TODO\n fix ', content: 'secret' }, summary: 'TODO fix' },
-      { detail: { type: 'fetch', url: 'https://example.test', result: 'secret' }, summary: 'https://example.test' },
-      { detail: { type: 'sub_agent', description: '  Inspect\n tests ', log: 'secret' }, summary: 'Inspect tests' },
-      { detail: { type: 'plain_text', label: '  approved?  ', text: 'secret' }, summary: 'approved?' },
+      {
+        detail: { type: 'search', query: '  TODO\n fix ', content: 'secret' },
+        summary: 'TODO fix',
+      },
+      {
+        detail: { type: 'fetch', url: 'https://example.test', result: 'secret' },
+        summary: 'https://example.test',
+      },
+      {
+        detail: { type: 'sub_agent', description: '  Inspect\n tests ', log: 'secret' },
+        summary: 'Inspect tests',
+      },
+      {
+        detail: { type: 'plain_text', label: '  approved?  ', text: 'secret' },
+        summary: 'approved?',
+      },
       { detail: { type: 'plan', text: 'secret plan' }, summary: '' },
       { detail: { type: 'unknown', input: 'secret input', output: 'secret output' }, summary: '' },
     ];
@@ -94,7 +112,10 @@ describe('tool summaries', () => {
   });
 
   it('normalizes and limits summaries to 200 characters', () => {
-    const line = transcript([tool('Bash', { type: 'shell', command: `  ${'x '.repeat(150)} ` })], 1000);
+    const line = transcript(
+      [tool('Bash', { type: 'shell', command: `  ${'x '.repeat(150)} ` })],
+      1000,
+    );
     assert.equal(line.slice('tool Bash (completed): '.length).length, 200);
     assert.equal(line.includes('\n'), false);
   });
@@ -201,6 +222,14 @@ describe('taskText', () => {
   });
 });
 
+const toolRequest = (name: string, input: Record<string, unknown>): AgentPermissionRequest => ({
+  id: 'r1',
+  provider: 'claude',
+  name,
+  kind: 'tool',
+  input,
+});
+
 describe('buildPermissionInput', () => {
   it('renders the request as bounded JSON with tool and project', () => {
     const request: AgentPermissionRequest = {
@@ -211,12 +240,57 @@ describe('buildPermissionInput', () => {
       title: 'Run ls',
       input: { command: 'ls -la' },
     };
-    const input = buildPermissionInput('/home/u/project', 'user: list files', 'First request: list files', request);
+    const input = buildPermissionInput(
+      '/home/u/project',
+      'user: list files',
+      'First request: list files',
+      request,
+    );
     assert.equal(input.project, '/home/u/project');
     assert.equal(input.task, 'First request: list files');
     assert.equal(input.tool, 'Bash · tool · Run ls');
     assert.deepEqual(JSON.parse(input.request), { title: 'Run ls', input: { command: 'ls -la' } });
     assert.equal(input.history, 'user: list files');
+    assert.equal(input.subject, 'Bash: ls -la');
+  });
+
+  it('normalizes shell prefixes, relative file paths, URLs, and stable fallback input', () => {
+    assert.equal(
+      buildPermissionInput(
+        '/home/u/project',
+        '',
+        '',
+        toolRequest('Bash', { command: 'cd /home/u/project && npm test' }),
+      ).subject,
+      'Bash: npm test',
+    );
+    assert.equal(
+      buildPermissionInput(
+        '/home/u/project',
+        '',
+        '',
+        toolRequest('Read', { file_path: '/home/u/project/src/a.ts' }),
+      ).subject,
+      'Read: src/a.ts',
+    );
+    assert.equal(
+      buildPermissionInput(
+        '/home/u/project',
+        '',
+        '',
+        toolRequest('Fetch', { url: 'https://example.test/x' }),
+      ).subject,
+      'Fetch: https://example.test/x',
+    );
+    assert.equal(
+      buildPermissionInput(
+        '/home/u/project',
+        '',
+        '',
+        toolRequest('tool', { z: 1, description: 'ignored', a: { b: 2 } }),
+      ).subject,
+      'tool: {"a":{"b":2},"z":1}',
+    );
   });
 });
 

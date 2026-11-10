@@ -50,6 +50,7 @@ type AgentRef = ReturnType<HookCtx['paseo']['agents']['ref']>;
 /** Per-request state, from the moment the decision starts until the request is resolved. */
 interface Pending {
   readonly agent: AgentRef;
+  readonly supervised: boolean;
   decisionId: string | null;
   /** True from the moment our allow is sent: its own `after` is not a user outcome. */
   autoAllowed: boolean;
@@ -123,6 +124,7 @@ async function handleRequest(
   // Tracked before deciding, so a user answer that arrives first is not lost.
   const entry: Pending = {
     agent,
+    supervised: event.agent.parentAgentId !== null,
     decisionId: null,
     autoAllowed: false,
     resolution: null,
@@ -130,12 +132,7 @@ async function handleRequest(
     row: null,
   };
   pending.set(`${event.agent.id}:${event.request.id}`, entry);
-  const context = await recentContext(
-    agent,
-    event.agent.id,
-    firstRequests,
-    event.agent.title,
-  );
+  const context = await recentContext(agent, event.agent.id, firstRequests, event.agent.title);
   const res = await decidePermission(gateway, event, context, ctx.signal);
   if (res === null) {
     return;
@@ -175,7 +172,7 @@ async function settleUser(deps: HookDeps, entry: Pending): Promise<void> {
   }
   if (!entry.reported) {
     entry.reported = true;
-    await reportUser(deps, entry.decisionId, resolution);
+    await reportUser(deps, entry.decisionId, resolution, entry.supervised);
   }
   const row = entry.row;
   if (row !== null && row.feedback === null) {
@@ -188,10 +185,15 @@ async function settleUser(deps: HookDeps, entry: Pending): Promise<void> {
   }
 }
 
-async function reportUser(deps: HookDeps, decisionId: string, resolution: string): Promise<void> {
+async function reportUser(
+  deps: HookDeps,
+  decisionId: string,
+  resolution: string,
+  supervised: boolean,
+): Promise<void> {
   try {
     const gateway = await deps.gateway();
-    await gateway?.reportOutcome(decisionId, resolution, 'user');
+    await gateway?.reportOutcome(decisionId, resolution, supervised ? 'supervised' : 'user');
   } catch (error) {
     deps.log(`permission outcome not reported: ${errorText(error)}`);
   }

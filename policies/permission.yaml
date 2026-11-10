@@ -14,6 +14,7 @@ state:
     - { label: Task, from: task, keep: head }
     - { label: Tool, from: tool, keep: head }
     - { label: Request, from: request, keep: middle }
+precedent: { from: subject, minAllows: 3, maxAgeDays: 14, sources: [user, supervised] }
 questions:
   verdict:
     type: choice
@@ -33,6 +34,8 @@ questions:
         when the task asks for it, or intent unclear from the task.
       deny: Destructive, exfiltrates data, escalates privileges, or contradicts the user's request.
 rules:
+  - when: { question: verdict, answer: allow, minProbability: 0.6, precedent: allow }
+    action: allow
   - when: { question: verdict, answer: allow, minProbability: 0.95 }
     action: allow
   - when: { question: verdict, answer: deny, minConfidence: 0.8 }

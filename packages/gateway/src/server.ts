@@ -159,7 +159,8 @@ function parseOutcome(body: unknown): OutcomeRecord {
     ts: new Date().toISOString(),
     decisionId: body['decisionId'].slice(0, 100),
     outcome: body['outcome'].slice(0, 100),
-    source: source === 'harness' || source === 'heuristic' ? source : 'user',
+    source:
+      source === 'harness' || source === 'heuristic' || source === 'supervised' ? source : 'user',
   };
 }
 
@@ -421,8 +422,8 @@ function route(method: string, path: string): Handler | undefined {
       );
   }
   if (key === 'GET /v1/stats') {
-    return async (_req, res, { log, pricing, settings }) =>
-      send(res, 200, computeStats(log.read(), settings?.().pricing ?? pricing));
+    return async (_req, res, { decider, log, pricing, settings }) =>
+      send(res, 200, computeStats(log.read(), settings?.().pricing ?? pricing, decider.policies));
   }
   if (key === 'POST /v1/systemone' || key === 'POST /invocations') {
     return async (req, res, { decider }) =>
@@ -439,8 +440,10 @@ function route(method: string, path: string): Handler | undefined {
     };
   }
   if (key === 'POST /v1/outcomes') {
-    return async (req, res, { log }) => {
-      log.append(parseOutcome(await readJson(req)));
+    return async (req, res, { decider, log }) => {
+      const outcome = parseOutcome(await readJson(req));
+      log.append(outcome);
+      decider.noteOutcome(outcome);
       send(res, 200, { ok: true });
     };
   }

@@ -3,6 +3,7 @@ import { request } from 'node:http';
 import { after, before, describe, it } from 'node:test';
 
 import { startGateway, type Gateway } from '../src/runtime.ts';
+import { ShadowLog } from '../src/shadow.ts';
 import { FakeEngine, tempPaths, testConfig } from './helpers.ts';
 
 async function json(res: Response): Promise<Record<string, unknown>> {
@@ -56,12 +57,63 @@ describe('routing presets per harness', () => {
   });
 });
 
+describe('gateway precedent', () => {
+  it('learns from outcomes posted for escalated requests', async () => {
+    const paths = tempPaths();
+    const gw = await startGateway({
+      config: testConfig({ policies: { permission: { mode: 'act' } } }),
+      paths,
+      engine: new FakeEngine({ allow: 0.7, ask: 0.2, deny: 0.1 }),
+      env: {},
+    });
+    const decide = async (): Promise<Record<string, unknown>> =>
+      json(
+        await fetch(`${gw.url}/v1/decide/permission`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({
+            harness: 'paseo',
+            input: { project: '/project', subject: 'Bash: npm test', request: 'npm test' },
+          }),
+        }),
+      );
+    try {
+      for (let index = 0; index < 3; index += 1) {
+        const result = await decide();
+        assert.equal(result['action'], 'ask');
+        assert.equal(
+          (
+            await fetch(`${gw.url}/v1/outcomes`, {
+              method: 'POST',
+              headers: { 'content-type': 'application/json' },
+              body: JSON.stringify({
+                decisionId: result['decisionId'],
+                outcome: 'allow',
+                source: 'user',
+              }),
+            })
+          ).status,
+          200,
+        );
+      }
+      const learned = await decide();
+      assert.equal(learned['action'], 'allow');
+      assert.deepEqual(learned['precedent'], { allows: 3, denies: 0 });
+    } finally {
+      await gw.close();
+    }
+  });
+});
+
 describe('gateway HTTP', () => {
   let gw: Gateway;
+  let logDir = '';
   const engine = new FakeEngine({ done: 0.9, needs_input: 0.05, stuck: 0.03, failed: 0.02 });
 
   before(async () => {
-    gw = await startGateway({ config: testConfig(), paths: tempPaths(), engine, env: {} });
+    const paths = tempPaths();
+    logDir = paths.logs;
+    gw = await startGateway({ config: testConfig(), paths, engine, env: {} });
   });
   after(async () => gw.close());
 
@@ -155,9 +207,21 @@ describe('gateway HTTP', () => {
       await post('/v1/decide/turn-outcome', { harness: 'cli', input: { lastMessage: 'ok' } }),
     );
     assert.equal(
-      (await post('/v1/outcomes', { decisionId: decision['decisionId'], outcome: 'done' })).status,
+      (
+        await post('/v1/outcomes', {
+          decisionId: decision['decisionId'],
+          outcome: 'done',
+          source: 'supervised',
+        })
+      ).status,
       200,
     );
+    const outcome = new ShadowLog(logDir)
+      .read()
+      .findLast(
+        (record) => record.kind === 'outcome' && record.decisionId === decision['decisionId'],
+      );
+    assert.equal(outcome?.kind === 'outcome' ? outcome.source : undefined, 'supervised');
     assert.equal((await post('/v1/outcomes', { outcome: 'done' })).status, 400);
     const stats = (await (await fetch(`${gw.url}/v1/stats`)).json()) as {
       policy: string;

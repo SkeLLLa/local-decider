@@ -19,7 +19,9 @@ that policy is also `act`.
   needs input, stuck, or failed. Enforced attention cases are highlighted in the row. No follow-up
   prompt is ever sent.
 - Permission: tool permission requests can be auto-allowed when the model is very confident. The
-  plugin never denies a request; everything else stays pending for you.
+  plugin never denies a request; everything else stays pending for you. With Paseo child agents,
+  the parent can answer a pending request; that answer is reported as supervised feedback and can
+  become exact-match precedent.
 - Routing: when a new agent is created, the gateway's routing policy picks a preset, which you map
   to a provider, model, and mode. The default picks `fast`, `standard`, or `deep`; you can switch
   to a budget or task-kind policy, or write your own. Paseo 0.15.3 does not pass the first prompt
@@ -116,6 +118,9 @@ Brier score, and calibration. Permission rows have no buttons: your Accept or De
 is the one ground-truth outcome, and the row then reads "You allowed" or "You denied". A row
 says "auto-allowed" when the plugin allowed the request, otherwise "asked you", followed by what
 the model leaned towards (or "unsure" below 50% confidence).
+
+For child-agent setup, parent-answer guidance, and which standalone CLI hooks can report feedback,
+see the [supervised child agent guide](../../docs/supervised-subagents.md).
 
 ## Commands
 

@@ -144,7 +144,10 @@ export function lastUserText(turns: readonly Turn[]): string | undefined {
 }
 
 /** Format the first request and any later user steering for a permission decision. */
-export function taskText(first: string | undefined, latest: string | undefined): string | undefined {
+export function taskText(
+  first: string | undefined,
+  latest: string | undefined,
+): string | undefined {
   const initial = first?.trim() ?? '';
   const current = latest?.trim() ?? '';
   if (initial === '' && current === '') {

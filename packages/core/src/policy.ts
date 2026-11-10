@@ -63,6 +63,16 @@ const sectionSchema = z.strictObject({
     .describe('Which part survives truncation.'),
 });
 
+const precedentSchema = z.strictObject({
+  from: z
+    .string()
+    .regex(/^[A-Za-z][A-Za-z0-9_]*$/)
+    .describe('Harness input key used for exact-match outcome precedent; never rendered as state.'),
+  minAllows: z.number().int().min(2).default(3),
+  maxAgeDays: z.number().int().min(1).max(90).default(14),
+  sources: z.array(z.enum(['user', 'supervised', 'harness', 'heuristic'])).default(['user']),
+});
+
 const ruleSchema = z.strictObject({
   when: z.strictObject({
     question: z.string().regex(ID_PATTERN),
@@ -79,6 +89,7 @@ const ruleSchema = z.strictObject({
       .max(1)
       .optional()
       .describe('Probability of the named answer.'),
+    precedent: z.literal('allow').optional(),
   }),
   action: z
     .string()
@@ -122,6 +133,7 @@ export const policySchema = z
       .describe(
         'What the model reads: input keys in order, least relevant first, within maxTokens.',
       ),
+    precedent: precedentSchema.optional(),
     questions: z
       .record(z.string().regex(ID_PATTERN), questionSchema)
       .refine((q) => Object.keys(q).length >= 1, {
@@ -148,6 +160,13 @@ export const policySchema = z
       });
     }
     for (const [i, rule] of policy.rules.entries()) {
+      if (rule.when.precedent !== undefined && policy.precedent === undefined) {
+        ctx.addIssue({
+          code: 'custom',
+          path: ['rules', i, 'when', 'precedent'],
+          message: 'precedent rules require policy.precedent',
+        });
+      }
       const question = policy.questions[rule.when.question];
       if (question === undefined) {
         ctx.addIssue({
@@ -227,7 +246,14 @@ export interface RuleMatch {
   readonly rule: number;
 }
 
-function ruleMatches(rule: PolicyRule, answers: Answers): boolean {
+function ruleMatches(
+  rule: PolicyRule,
+  answers: Answers,
+  context: { precedentAllows: boolean },
+): boolean {
+  if (rule.when.precedent === 'allow' && !context.precedentAllows) {
+    return false;
+  }
   const answer = answers[rule.when.question];
   if (answer === undefined || answer.answer !== rule.when.answer) {
     return false;
@@ -240,8 +266,12 @@ function ruleMatches(rule: PolicyRule, answers: Answers): boolean {
 }
 
 /** Map answers to an action: first matching rule, else the policy default. */
-export function evaluateRules(policy: Policy, answers: Answers): RuleMatch {
-  const index = policy.rules.findIndex((rule) => ruleMatches(rule, answers));
+export function evaluateRules(
+  policy: Policy,
+  answers: Answers,
+  context: { precedentAllows: boolean } = { precedentAllows: false },
+): RuleMatch {
+  const index = policy.rules.findIndex((rule) => ruleMatches(rule, answers, context));
   const rule = policy.rules[index];
   return rule === undefined
     ? { action: policy.default, rule: -1 }
@@ -295,7 +325,10 @@ function ruleThreshold(rule: PolicyRule): { kind: ThresholdKind; value: number |
 }
 
 function floorOf(rules: readonly PolicyRule[], key: string): number {
-  return rules.some((rule) => rule.action === 'allow' && thresholdKey(rule) === key)
+  return rules.some(
+    (rule) =>
+      rule.when.precedent === undefined && rule.action === 'allow' && thresholdKey(rule) === key,
+  )
     ? ALLOW_THRESHOLD_FLOOR
     : 0;
 }
@@ -323,6 +356,9 @@ export function withThresholds(
     return policy;
   }
   const rules = policy.rules.map((rule): PolicyRule => {
+    if (rule.when.precedent !== undefined) {
+      return rule;
+    }
     const key = thresholdKey(rule);
     const value = override(overrides, key, floorOf(policy.rules, key));
     if (value === undefined) {
@@ -342,6 +378,9 @@ export function policyThresholds(
 ): PolicyThreshold[] {
   const out = new Map<string, PolicyThreshold>();
   for (const rule of policy.rules) {
+    if (rule.when.precedent !== undefined) {
+      continue;
+    }
     const key = thresholdKey(rule);
     if (out.has(key)) {
       continue;

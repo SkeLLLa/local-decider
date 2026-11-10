@@ -59,6 +59,10 @@ export interface DecideResponse {
   readonly model: string;
   readonly latencyMs: number;
   readonly cached: boolean;
+  /** Exact-match precedent count used to evaluate this decision, when configured. */
+  readonly precedent?: PrecedentTally;
+  /** SHA-256 of policy id, project and redacted subject; never the subject itself. */
+  readonly precedentKey?: string;
   /** Set when the engine failed; the action is then the policy default and never enforced. */
   readonly error?: string;
 }
@@ -73,6 +77,9 @@ export interface ShadowRecord {
   readonly variant?: string;
   readonly mode: Mode;
   readonly inputHash: string;
+  /** Exact-match precedent hash, never the subject itself. */
+  readonly precedentKey?: string;
+  readonly precedent?: PrecedentTally;
   /** Estimated tokens of the state sent to the engine. */
   readonly stateTokens?: number;
   /** `DecideRequest.models.requested`. */
@@ -95,7 +102,14 @@ export interface OutcomeRecord {
   readonly decisionId: string;
   /** The ground-truth answer for the policy's primary question, in its answer space. */
   readonly outcome: string;
-  readonly source: 'user' | 'harness' | 'heuristic';
+  readonly source: OutcomeSource;
+}
+
+export type OutcomeSource = 'user' | 'harness' | 'heuristic' | 'supervised';
+
+export interface PrecedentTally {
+  readonly allows: number;
+  readonly denies: number;
 }
 
 /**

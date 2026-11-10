@@ -61,6 +61,7 @@ export async function startGateway(options: StartOptions): Promise<Gateway> {
     log,
     decisionTimeoutMs: config.decisionTimeoutMs,
   });
+  decider.rebuildPrecedent(log.readRecent(90));
   engineControl?.bind(decider);
   const server = createGatewayServer({
     decider,

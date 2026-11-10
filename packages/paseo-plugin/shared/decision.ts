@@ -76,7 +76,14 @@ export interface DecideResponse {
   readonly model: string;
   readonly latencyMs: number;
   readonly cached: boolean;
+  readonly precedent?: PrecedentTally;
+  readonly precedentKey?: string;
   readonly error?: string;
+}
+
+export interface PrecedentTally {
+  readonly allows: number;
+  readonly denies: number;
 }
 
 export interface GatewayHealth {
@@ -89,4 +96,4 @@ export interface GatewayHealth {
   readonly p50Ms?: number;
 }
 
-export type OutcomeSource = 'user' | 'harness' | 'heuristic';
+export type OutcomeSource = 'user' | 'harness' | 'heuristic' | 'supervised';

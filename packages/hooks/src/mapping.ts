@@ -1,8 +1,9 @@
+import { canonicalJson } from '@local-decider/core';
 /**
  * Event → policy mapping. Each hook event becomes one gateway policy call whose input keys match
  * the policy's `state.sections[].from` (see policies/*.yaml).
  */
-import { basename } from 'node:path';
+import { basename, relative, resolve } from 'node:path';
 
 import {
   firstUserText,
@@ -112,13 +113,74 @@ class Transcript {
 function permissionInput(hook: HookInput, t: Transcript): Record<string, unknown> {
   const head = t.head();
   const tail = t.tail();
+  const subject = permissionSubject(hook);
   return {
     project: projectOf(hook),
     history: historyText(tail),
     task: taskText(firstUserText(head), lastUserText(tail)),
     tool: str(hook['tool_name']),
     request: hook['tool_input'],
+    ...(subject === undefined ? {} : { subject }),
   };
+}
+
+function permissionSubject(hook: HookInput): string | undefined {
+  const tool = str(hook['tool_name']);
+  if (tool === undefined) {
+    return undefined;
+  }
+  const input = hook['tool_input'];
+  const fields = asRecord(input);
+  const command = isShellTool(hook) ? commandOf(hook) : undefined;
+  const path = firstString(fields, ['file_path', 'filePath', 'path']);
+  const url = firstString(fields, ['url']);
+  const cwd = str(hook['cwd']) ?? '';
+  const value =
+    command !== undefined
+      ? stripCwd(command, cwd)
+      : path !== undefined
+        ? relative(cwd, resolve(cwd, path)).replaceAll('\\', '/')
+        : (url ?? stableToolInput(input));
+  return collapse(`${tool}: ${value}`);
+}
+
+function asRecord(value: unknown): Record<string, unknown> | undefined {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : undefined;
+}
+
+function firstString(
+  value: Record<string, unknown> | undefined,
+  keys: readonly string[],
+): string | undefined {
+  for (const key of keys) {
+    const candidate = value?.[key];
+    if (typeof candidate === 'string' && candidate !== '') {
+      return candidate;
+    }
+  }
+  return undefined;
+}
+
+function stableToolInput(value: unknown): string {
+  const fields = asRecord(value);
+  if (fields === undefined) {
+    return canonicalJson(value) ?? '';
+  }
+  const input = { ...fields };
+  delete input['description'];
+  return canonicalJson(input);
+}
+
+function stripCwd(command: string, cwd: string): string {
+  const line = collapse(command);
+  const prefix = `cd ${collapse(cwd)} && `;
+  return line.startsWith(prefix) ? line.slice(prefix.length) : line;
+}
+
+function collapse(value: string): string {
+  return value.replace(/\s+/g, ' ').trim();
 }
 
 function commandRiskInput(hook: HookInput): Record<string, unknown> {

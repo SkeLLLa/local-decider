@@ -117,6 +117,10 @@ describe('variants and routes', () => {
   });
 });
 
+const allowAt = (p: number): Record<string, Answer> => ({
+  verdict: choice('allow', { allow: p, ask: 1 - p, deny: 0 }, 0.5),
+});
+
 describe('evaluateRules', () => {
   const policy: Policy = parsePolicy(MINIMAL);
 
@@ -153,6 +157,22 @@ describe('evaluateRules', () => {
       }).action;
     assert.equal(at(0.96), 'allow');
     assert.equal(at(0.94), 'ask');
+  });
+
+  it('uses precedent only when the model still leans allow', () => {
+    const permission = parsePolicy(readFileSync(join(POLICY_DIR, 'permission.yaml'), 'utf8'));
+    assert.equal(evaluateRules(permission, allowAt(0.7)).action, 'ask');
+    assert.equal(
+      evaluateRules(permission, allowAt(0.7), { precedentAllows: true }).action,
+      'allow',
+    );
+    assert.equal(evaluateRules(permission, allowAt(0.59), { precedentAllows: true }).action, 'ask');
+    assert.deepEqual(permission.precedent, {
+      from: 'subject',
+      minAllows: 3,
+      maxAgeDays: 14,
+      sources: ['user', 'supervised'],
+    });
   });
 });
 
@@ -200,6 +220,17 @@ describe('thresholds', () => {
     assert.equal(tuned.rules[0]?.when.minConfidence, ALLOW_THRESHOLD_FLOOR);
     assert.equal(tuned.rules[1]?.when.minProbability, 0.1, 'route rules have no floor');
     assert.equal(policyThresholds(policy, { 'pick.a': 0.1 })[0]?.value, ALLOW_THRESHOLD_FLOOR);
+  });
+
+  it('does not apply user threshold overrides to precedent rules', () => {
+    const permission = parsePolicy(readFileSync(join(POLICY_DIR, 'permission.yaml'), 'utf8'));
+    const tuned = withThresholds(permission, { 'verdict.allow': 0.9 });
+    assert.equal(tuned.rules[0]?.when.minProbability, 0.6);
+    assert.equal(tuned.rules[1]?.when.minProbability, 0.9);
+    assert.equal(
+      policyThresholds(permission).find((threshold) => threshold.key === 'verdict.allow')?.default,
+      0.95,
+    );
   });
 
   it('changes what the rules decide', () => {

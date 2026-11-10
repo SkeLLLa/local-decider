@@ -13,6 +13,8 @@ export {
   type Harness,
   type LogRecord,
   type OutcomeRecord,
+  type OutcomeSource,
+  type PrecedentTally,
   type ShadowRecord,
   type UsageRecord,
   type RouteTarget,

@@ -73,7 +73,9 @@ Which requests those are depends on the agent's mode:
 
 To have the local model handle routine permissions instead of a hosted model, run agents in
 Always Ask with the permission policy in `act`, and lower the auto-allow threshold in settings
-if it asks too often.
+if it asks too often. The shipped threshold is 0.95; 0.9 is a reasonable user override. Paseo can
+also let a parent answer an escalated child request, and those answers can become exact-match
+precedent. See the [supervised child agent guide](../../docs/supervised-subagents.md).
 
 ## Privacy and what it runs
 

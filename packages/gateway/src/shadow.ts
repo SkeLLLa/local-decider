@@ -4,6 +4,7 @@ import { join } from 'node:path';
 
 const FILE_PATTERN = /^decisions-\d{4}-\d{2}-\d{2}\.jsonl$/;
 const KINDS = new Set<string>(['decision', 'outcome', 'usage']);
+const DAY_MS = 24 * 60 * 60 * 1000;
 
 /** Append-only JSONL, one file per UTC day. Holds hashes, answers, actions and token counts; never state text. */
 export class ShadowLog {
@@ -30,12 +31,23 @@ export class ShadowLog {
 
   /** Every record, oldest file first. Malformed lines are skipped. */
   read(): LogRecord[] {
+    return this.#readFrom();
+  }
+
+  /** Recent records only, with exact timestamp filtering left to their consumers. */
+  readRecent(maxAgeDays: number, now = Date.now()): LogRecord[] {
+    const from = new Date(now - maxAgeDays * DAY_MS).toISOString().slice(0, 10);
+    return this.#readFrom(from);
+  }
+
+  #readFrom(from?: string): LogRecord[] {
     if (!existsSync(this.#dir)) {
       return [];
     }
     const records: LogRecord[] = [];
     for (const name of readdirSync(this.#dir)
       .filter((n) => FILE_PATTERN.test(n))
+      .filter((n) => from === undefined || n.slice('decisions-'.length, -'.jsonl'.length) >= from)
       .toSorted()) {
       for (const line of readFileSync(join(this.#dir, name), 'utf8').split('\n')) {
         const record = parseLine(line);

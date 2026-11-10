@@ -16,6 +16,7 @@ import {
 import { ConfigFile } from './config-file.ts';
 import { DEFAULT_FLM_MODEL, DEFAULT_PORT, loadConfig, type GatewayConfig } from './config.ts';
 import { defaultFlavor, installStrandsEngine, type InstallFlavor } from './engine-install.ts';
+import { parseEvalCases, runPolicyEval } from './eval.ts';
 import { FLM_VERSION, installFlm } from './flm-install.ts';
 import { serveMcpStdio, type McpBackend } from './mcp.ts';
 import { resolvePaths, type Paths } from './paths.ts';
@@ -41,6 +42,7 @@ Usage:
   local-decider decide <policy> [--input JSON] [key=value ...]
   local-decider stats [--json]                      agreement and calibration from the shadow log
   local-decider policies [check <file>]             list policies, or validate a policy file
+  local-decider policies eval <policy> <file>       report decisions on JSONL fixtures
   local-decider policies use <policy> <variant>     answer <policy> with one of its variants
   local-decider policies mode <policy> off|shadow|act
   local-decider policies reload                     re-read policy files without a restart
@@ -203,7 +205,11 @@ async function decide(ctx: Context): Promise<void> {
 }
 
 async function stats(ctx: Context): Promise<void> {
-  const result = computeStats(new ShadowLog(ctx.paths.logs).read(), ctx.config.pricing);
+  const result = computeStats(
+    new ShadowLog(ctx.paths.logs).read(),
+    ctx.config.pricing,
+    loadPolicies(ctx.config, policyDirs(ctx.config, ctx.paths)),
+  );
   console.log(ctx.args.includes('--json') ? JSON.stringify(result, null, 2) : formatStats(result));
 }
 
@@ -237,27 +243,63 @@ async function gatewayPost(ctx: Context, path: string, body: unknown): Promise<v
   console.log(JSON.stringify(answer, null, 2));
 }
 
-async function policies(ctx: Context): Promise<void> {
-  const [sub, first, second] = ctx.args;
-  if (sub === 'check' && first !== undefined) {
-    checkPolicy(first);
-  } else if (sub === 'prompt') {
-    const loaded = loadPolicies(ctx.config, policyDirs(ctx.config, ctx.paths));
-    process.stdout.write(authoringPrompt(first ?? 'routing', loaded, ctx.paths));
-  } else if (sub === 'use' && first !== undefined && second !== undefined) {
-    console.log(useVariant(ctx.paths, first, second));
-  } else if (sub === 'mode' && first !== undefined && second !== undefined) {
-    console.log(setMode(ctx.paths, first, second));
-  } else if (sub === 'reload') {
-    await gatewayPost(ctx, '/v1/policies/reload', {});
-  } else if (sub === undefined) {
-    const res = await fetch(`${gatewayUrl(ctx.config)}/v1/policies`, {
-      signal: AbortSignal.timeout(3000),
-    });
-    console.log(JSON.stringify(await res.json(), null, 2));
-  } else {
+type PolicySubcommand = (
+  ctx: Context,
+  first: string | undefined,
+  second: string | undefined,
+) => Promise<void>;
+
+function requiredPolicyArg(value: string | undefined): string {
+  if (value === undefined) {
     throw new UsageError();
   }
+  return value;
+}
+
+async function evalPolicy(
+  ctx: Context,
+  policy: string | undefined,
+  file: string | undefined,
+): Promise<void> {
+  const path = requiredPolicyArg(file);
+  const cases = parseEvalCases(readFileSync(path, 'utf8'), path);
+  const gw = client(ctx.config, ctx.config.decisionTimeoutMs);
+  await runPolicyEval(requiredPolicyArg(policy), cases, (id, request) => gw.decide(id, request));
+}
+
+async function promptPolicy(ctx: Context, policy: string | undefined): Promise<void> {
+  const loaded = loadPolicies(ctx.config, policyDirs(ctx.config, ctx.paths));
+  process.stdout.write(authoringPrompt(policy ?? 'routing', loaded, ctx.paths));
+}
+
+async function listPolicies(ctx: Context): Promise<void> {
+  const res = await fetch(`${gatewayUrl(ctx.config)}/v1/policies`, {
+    signal: AbortSignal.timeout(3000),
+  });
+  console.log(JSON.stringify(await res.json(), null, 2));
+}
+
+const POLICY_SUBCOMMANDS: Readonly<Record<string, PolicySubcommand>> = {
+  check: async (_ctx, first) => checkPolicy(requiredPolicyArg(first)),
+  eval: evalPolicy,
+  prompt: promptPolicy,
+  use: async (ctx, first, second) =>
+    console.log(useVariant(ctx.paths, requiredPolicyArg(first), requiredPolicyArg(second))),
+  mode: async (ctx, first, second) =>
+    console.log(setMode(ctx.paths, requiredPolicyArg(first), requiredPolicyArg(second))),
+  reload: async (ctx) => gatewayPost(ctx, '/v1/policies/reload', {}),
+};
+
+async function policies(ctx: Context): Promise<void> {
+  const [sub, first, second] = ctx.args;
+  if (sub === undefined) {
+    return listPolicies(ctx);
+  }
+  const handler = POLICY_SUBCOMMANDS[sub];
+  if (handler === undefined) {
+    throw new UsageError();
+  }
+  await handler(ctx, first, second);
 }
 
 async function benchCmd(ctx: Context): Promise<void> {

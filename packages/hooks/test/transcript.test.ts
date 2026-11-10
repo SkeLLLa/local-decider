@@ -101,7 +101,10 @@ describe('parseTurns', () => {
     assert.equal(taskText(undefined, 'Latest request'), 'Latest request: Latest request');
     assert.equal(taskText(undefined, undefined), undefined);
     const bounded = taskText('x'.repeat(1600), 'y'.repeat(1600)) ?? '';
-    assert.equal(bounded.length, 'First request: '.length + 1500 + '\nLatest request: '.length + 1500);
+    assert.equal(
+      bounded.length,
+      'First request: '.length + 1500 + '\nLatest request: '.length + 1500,
+    );
   });
 
   it('extracts Codex response items', () => {

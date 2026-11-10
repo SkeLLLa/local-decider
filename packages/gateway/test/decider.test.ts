@@ -47,6 +47,57 @@ const req = { harness: 'cli' as const, input: INPUT };
 const signal = (): AbortSignal => new AbortController().signal;
 
 describe('Decider', () => {
+  it('uses precedent only to lower the allow threshold for an exact subject', async () => {
+    const { decider, engine, log } = setup(
+      'act',
+      new FakeEngine({ allow: 0.7, ask: 0.2, deny: 0.1 }),
+    );
+    const input = { ...INPUT, subject: 'Bash: npm test' };
+    let firstKey: string | undefined;
+    for (let index = 0; index < 3; index += 1) {
+      const response = await decider.decide('permission', { harness: 'cli', input }, signal());
+      assert.equal(response.action, 'ask');
+      firstKey ??= response.precedentKey;
+      assert.equal(response.precedentKey, firstKey);
+      const outcome = {
+        kind: 'outcome' as const,
+        ts: new Date().toISOString(),
+        decisionId: response.decisionId,
+        outcome: 'allow',
+        source: 'user' as const,
+      };
+      log.append(outcome);
+      decider.noteOutcome(outcome);
+    }
+    const loaded = decider.policies.get('permission');
+    assert.ok(loaded);
+    decider.replacePolicies(
+      new Map([
+        [
+          'permission',
+          {
+            ...loaded,
+            policy: { ...loaded.policy, version: loaded.policy.version === 1 ? 2 : 1 },
+          },
+        ],
+      ]),
+    );
+    const learned = await decider.decide('permission', { harness: 'cli', input }, signal());
+    assert.equal(learned.action, 'allow', JSON.stringify(learned));
+    assert.deepEqual(learned.precedent, { allows: 3, denies: 0 });
+    assert.equal(learned.precedentKey, firstKey);
+    assert.equal(engine.requests.length, 4);
+    assert.ok(!JSON.stringify(engine.requests).includes('Bash: npm test'));
+    assert.ok(!JSON.stringify(log.read()).includes('Bash: npm test'));
+    const otherProject = await decider.decide(
+      'permission',
+      { harness: 'cli', input: { ...input, project: '/another-project' } },
+      signal(),
+    );
+    assert.equal(otherProject.action, 'ask');
+    assert.notEqual(otherProject.precedentKey, firstKey);
+  });
+
   it('enforces only in act mode', async () => {
     const act = await setup('act').decider.decide('permission', req, signal());
     assert.equal(act.action, 'allow');

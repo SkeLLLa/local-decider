@@ -96,6 +96,12 @@ function parsed(stdout: string): unknown {
   return stdout === '' ? '' : JSON.parse(stdout);
 }
 
+const subjectOf = (tool: string, tool_input: Record<string, unknown>): unknown =>
+  mapEvent('PermissionRequest', { ...BASE, tool_name: tool, tool_input }, () => ({
+    head: '',
+    tail: '',
+  })).input['subject'];
+
 describe('event → policy mapping', () => {
   const slice = {
     head: `${JSON.stringify({ type: 'user', message: { role: 'user', content: 'First task' } })}\n`,
@@ -117,16 +123,33 @@ describe('event → policy mapping', () => {
       ...slice,
       tail: `${JSON.stringify({ type: 'user', message: { role: 'user', content: 'Narrow the change' } })}\n${slice.tail}`,
     };
-    assert.deepEqual(mapEvent('PermissionRequest', HOOKS.PermissionRequest, () => permissionSlice), {
-      policy: 'permission',
-      input: {
-        project: 'my-app (/work/my-app)',
-        history: 'User: Narrow the change\nAssistant: Working',
-        task: 'First request: First task\nLatest request: Narrow the change',
-        tool: 'Bash',
-        request: { command: 'npm test' },
+    assert.deepEqual(
+      mapEvent('PermissionRequest', HOOKS.PermissionRequest, () => permissionSlice),
+      {
+        policy: 'permission',
+        input: {
+          project: 'my-app (/work/my-app)',
+          history: 'User: Narrow the change\nAssistant: Working',
+          task: 'First request: First task\nLatest request: Narrow the change',
+          tool: 'Bash',
+          request: { command: 'npm test' },
+          subject: 'Bash: npm test',
+        },
       },
-    });
+    );
+  });
+
+  it('normalizes permission subjects by command, relative path, URL, or stable input', () => {
+    assert.equal(subjectOf('Bash', { command: 'cd /work/my-app && npm test' }), 'Bash: npm test');
+    assert.equal(subjectOf('Read', { file_path: '/work/my-app/src/a.ts' }), 'Read: src/a.ts');
+    assert.equal(
+      subjectOf('Fetch', { url: 'https://example.test/x' }),
+      'Fetch: https://example.test/x',
+    );
+    assert.equal(
+      subjectOf('mcp__x__y', { z: 1, description: 'ignored', a: { b: 2 } }),
+      'mcp__x__y: {"a":{"b":2},"z":1}',
+    );
   });
 
   it('maps Stop to turn-outcome', () => {

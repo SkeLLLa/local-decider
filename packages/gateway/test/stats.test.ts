@@ -1,9 +1,15 @@
-import type { LogRecord, ShadowRecord, UsageRecord } from '@local-decider/core';
+import {
+  parsePolicy,
+  type LogRecord,
+  type ShadowRecord,
+  type UsageRecord,
+} from '@local-decider/core';
 import assert from 'node:assert/strict';
-import { appendFileSync, mkdirSync } from 'node:fs';
+import { appendFileSync, mkdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, it } from 'node:test';
 
+import type { LoadedPolicy } from '../src/policies.ts';
 import { ShadowLog } from '../src/shadow.ts';
 import { computeStats, formatStats, type PolicyStats } from '../src/stats.ts';
 import { tempPaths } from './helpers.ts';
@@ -66,8 +72,65 @@ describe('computeStats', () => {
     assert.match(formatStats([s]), /agreement 100\.0%/);
   });
 
+  it('counts supervised outcomes as labelled decisions', () => {
+    const [stats] = computeStats([
+      decision('child-decision', 'allow', 0.9),
+      {
+        kind: 'outcome',
+        ts: '2026-11-10T00:00:01.000Z',
+        decisionId: 'child-decision',
+        outcome: 'allow',
+        source: 'supervised',
+      },
+    ]);
+    assert.equal(stats?.labelled, 1);
+    assert.equal(stats?.agreement, 1);
+  });
+
   it('reports an empty log', () => {
     assert.equal(formatStats(computeStats([])), 'No decisions logged yet.');
+  });
+});
+
+function escalations(total: number, denied: number, lowBand = 0): LogRecord[] {
+  const records: LogRecord[] = [];
+  for (let i = 0; i < total; i += 1) {
+    const id = `escalation-${String(i)}`;
+    const probability = i < lowBand ? 0.8 : 0.9;
+    records.push(decision(id, 'allow', probability, { action: 'ask' }));
+    records.push({
+      kind: 'outcome',
+      ts: '2026-11-10T00:00:01.000Z',
+      decisionId: id,
+      outcome: i < denied ? 'deny' : 'allow',
+      source: 'user',
+    });
+  }
+  return records;
+}
+
+describe('calibration hints', () => {
+  const permissionPolicy = parsePolicy(
+    readFileSync(new URL('../../../policies/permission.yaml', import.meta.url), 'utf8'),
+  );
+  const policies = new Map<string, LoadedPolicy>([
+    ['permission', { policy: permissionPolicy, mode: 'act', source: 'permission.yaml' }],
+  ]);
+
+  it('suggests the lowest threshold meeting the Wilson deny bound', () => {
+    const records = escalations(300, 100, 100);
+    const [stats] = computeStats(records, {}, policies);
+    assert.deepEqual(stats?.calibrationHints, [
+      { rule: 'verdict.allow', threshold: 0.9, n: 200, denies: 0 },
+    ]);
+    assert.match(formatStats([stats]), /suggest t=0\.90 \(n=200, denies=0\)/);
+    assert.match(formatStats([stats]), /advisory; not applied/);
+  });
+
+  it('reports the sample count when no threshold has a low enough deny bound', () => {
+    const [stats] = computeStats(escalations(120, 3), {}, policies);
+    assert.deepEqual(stats?.calibrationHints, [{ rule: 'verdict.allow', n: 120, denies: 3 }]);
+    assert.match(formatStats([stats]), /not enough labelled escalations \(n=120, denies=3\)/);
   });
 });
 
@@ -174,5 +237,16 @@ describe('ShadowLog', () => {
     appendFileSync(join(logs, 'decisions-2026-11-10.jsonl'), 'garbage\n{"kind":"other"}\n\n');
     assert.equal(log.read().length, 1);
     assert.equal(log.dir, logs);
+  });
+
+  it('reads only the date window requested for precedent rebuilds', () => {
+    const { logs } = tempPaths();
+    const log = new ShadowLog(logs);
+    log.append({ ...decision('old', 'ask', 0.8), ts: '2026-10-01T00:00:00.000Z' });
+    log.append({ ...decision('recent', 'ask', 0.8), ts: '2026-11-09T00:00:00.000Z' });
+    assert.deepEqual(
+      log.readRecent(2, Date.parse('2026-11-10T00:00:00.000Z')).map((record) => record.decisionId),
+      ['recent'],
+    );
   });
 });

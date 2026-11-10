@@ -8,6 +8,8 @@ import type {
   AgentTimelineItem,
   ToolCallDetail,
 } from '@getpaseo/protocol/agent-types';
+import { canonicalJson } from '@local-decider/core';
+import { relative, resolve } from 'node:path';
 
 export const LIMITS = {
   line: 600,
@@ -227,6 +229,65 @@ export interface PermissionInput {
   readonly task: string;
   readonly tool: string;
   readonly request: string;
+  readonly subject: string;
+}
+
+function record(value: unknown): Record<string, unknown> | undefined {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : undefined;
+}
+
+function firstString(
+  value: Record<string, unknown> | undefined,
+  keys: readonly string[],
+): string | undefined {
+  for (const key of keys) {
+    const candidate = value?.[key];
+    if (typeof candidate === 'string' && candidate !== '') {
+      return candidate;
+    }
+  }
+  return undefined;
+}
+
+function relativePath(cwd: string, path: string): string {
+  return relative(cwd, resolve(cwd, path)).replaceAll('\\', '/');
+}
+
+function stableInput(value: unknown): string {
+  const fields = record(value);
+  if (fields === undefined) {
+    return canonicalJson(value) ?? '';
+  }
+  const input = { ...fields };
+  delete input['description'];
+  return canonicalJson(input);
+}
+
+function permissionSubject(cwd: string, request: AgentPermissionRequest): string {
+  const fields = record(request.input);
+  const detail = request.detail;
+  const command = detail?.type === 'shell' ? detail.command : firstString(fields, ['command']);
+  const detailPath =
+    detail?.type === 'read' || detail?.type === 'edit' || detail?.type === 'write'
+      ? detail.filePath
+      : undefined;
+  const path = detailPath ?? firstString(fields, ['file_path', 'filePath', 'path']);
+  const url = detail?.type === 'fetch' ? detail.url : firstString(fields, ['url']);
+  const value =
+    command !== undefined
+      ? stripCwd(command, cwd)
+      : path !== undefined
+        ? relativePath(cwd, path)
+        : (url ?? stableInput(request.input));
+  return oneLine(`${request.name}: ${value}`);
+}
+
+function stripCwd(command: string, cwd: string): string {
+  const line = oneLine(command);
+  const prefix = `cd ${oneLine(cwd)} && `;
+  return line.startsWith(prefix) ? line.slice(prefix.length) : line;
 }
 
 export function buildPermissionInput(
@@ -248,6 +309,7 @@ export function buildPermissionInput(
     task: head(task, LIMITS.task),
     tool: head(tool, 500),
     request: safeJson(body, LIMITS.request),
+    subject: permissionSubject(cwd, request),
   };
 }
 

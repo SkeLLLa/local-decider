@@ -5,6 +5,7 @@ import {
   evaluateRules,
   inputHash,
   normaliseAnswers,
+  type OutcomeRecord,
   policyQuestions,
   policySections,
   policyThresholds,
@@ -14,9 +15,11 @@ import {
   type Answers,
   type DecideRequest,
   type DecideResponse,
+  type LogRecord,
   type Mode,
   type Policy,
   type PolicyThreshold,
+  type PrecedentTally,
   type ShadowRecord,
   type SystemOneRequest,
   type SystemOneResponse,
@@ -25,6 +28,7 @@ import { randomUUID } from 'node:crypto';
 
 import type { Engine } from './engines/types.ts';
 import type { LoadedPolicy } from './policies.ts';
+import { PrecedentStore } from './precedent.ts';
 import { LatencyWindow, SerialQueue, type Priority } from './queue.ts';
 import type { ShadowLog } from './shadow.ts';
 
@@ -56,6 +60,12 @@ interface EngineResult {
   readonly error?: string;
 }
 
+interface PrecedentDecision {
+  readonly key: string;
+  readonly tally: PrecedentTally;
+  readonly allows: boolean;
+}
+
 /** Strings pass through; everything else becomes key-sorted JSON. */
 export function renderValue(value: unknown): string {
   if (value === undefined || value === null) {
@@ -78,6 +88,7 @@ export class Decider {
   readonly #queue = new SerialQueue();
   readonly #latency = new LatencyWindow();
   readonly #cache = new Map<string, CacheEntry>();
+  readonly #precedent: PrecedentStore;
 
   constructor(options: DeciderOptions) {
     this.#engine = options.engine;
@@ -85,6 +96,10 @@ export class Decider {
     this.#log = options.log;
     this.#timeoutMs = options.decisionTimeoutMs;
     this.#now = options.now ?? (() => new Date());
+    this.#precedent = new PrecedentStore(
+      (id) => this.#policies.get(id)?.policy.precedent,
+      () => this.#now().getTime(),
+    );
   }
 
   get policies(): ReadonlyMap<string, LoadedPolicy> {
@@ -178,6 +193,17 @@ export class Decider {
         this.#variants.delete(id);
       }
     }
+    this.#precedent.rebuild(this.#log.readRecent(90, this.#now().getTime()));
+  }
+
+  /** Rebuild precedent once from the append-only decision log during startup. */
+  rebuildPrecedent(records: readonly LogRecord[]): void {
+    this.#precedent.rebuild(records);
+  }
+
+  /** Add a reported outcome to recent precedent evidence. */
+  noteOutcome(outcome: OutcomeRecord): void {
+    this.#precedent.noteOutcome(outcome);
   }
 
   #canAnswer(id: string, variant: string): boolean {
@@ -263,7 +289,14 @@ export class Decider {
         cached: false,
       };
     }
-    const sections = policySections(policy, redactDeep(request.input), renderValue);
+    const input = redactDeep(request.input);
+    const precedent = this.#precedentFor(policy, input);
+    const modelInput = { ...input };
+    delete modelInput['subject'];
+    if (policy.precedent !== undefined) {
+      delete modelInput[policy.precedent.from];
+    }
+    const sections = policySections(policy, modelInput, renderValue);
     const state = buildState(sections, policy.state.maxTokens);
     const questions = sortKeysDeep(policyQuestions(policy));
     const hash = inputHash({ id: policy.id, version: policy.version, state, questions });
@@ -277,7 +310,9 @@ export class Decider {
       callerSignal,
       policy.priority,
     );
-    const match = evaluateRules(policy, result.answers);
+    const match = evaluateRules(policy, result.answers, {
+      precedentAllows: precedent?.allows ?? false,
+    });
     const enforced = mode === 'act' && result.error === undefined;
     const response: DecideResponse = {
       ...base,
@@ -287,6 +322,9 @@ export class Decider {
       rule: match.rule,
       latencyMs: result.latencyMs,
       cached: result.cached,
+      ...(precedent === undefined
+        ? {}
+        : { precedentKey: precedent.key, precedent: precedent.tally }),
       ...(result.error === undefined ? {} : { error: result.error }),
     };
     this.#record(request, response, {
@@ -294,6 +332,27 @@ export class Decider {
       stateTokens: Math.ceil(state.length / CHARS_PER_TOKEN),
     });
     return response;
+  }
+
+  #precedentFor(
+    policy: Policy,
+    input: Readonly<Record<string, unknown>>,
+  ): PrecedentDecision | undefined {
+    const settings = policy.precedent;
+    if (settings === undefined) {
+      return undefined;
+    }
+    const subject = renderValue(input[settings.from]).replace(/\s+/g, ' ').trim();
+    if (subject === '') {
+      return undefined;
+    }
+    const key = inputHash([policy.id, input['project'], subject]);
+    const tally = this.#precedent.tally(key);
+    return {
+      key,
+      tally,
+      allows: tally.allows >= settings.minAllows && tally.denies === 0,
+    };
   }
 
   async #answers(
@@ -374,6 +433,8 @@ export class Decider {
       ...(response.variant === undefined ? {} : { variant: response.variant }),
       mode: response.mode,
       inputHash: state.hash,
+      ...(response.precedentKey === undefined ? {} : { precedentKey: response.precedentKey }),
+      ...(response.precedent === undefined ? {} : { precedent: response.precedent }),
       stateTokens: state.stateTokens,
       ...modelFields(request, response.action),
       answers: response.answers,
@@ -385,6 +446,7 @@ export class Decider {
       ...(response.error === undefined ? {} : { error: response.error }),
     };
     this.#log.append(record);
+    this.#precedent.noteDecision(record);
   }
 }
 

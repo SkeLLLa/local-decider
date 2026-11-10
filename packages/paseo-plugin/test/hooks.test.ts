@@ -200,7 +200,9 @@ describe('agent.permission.before', () => {
   });
 
   it('keeps task context after it falls outside the 100 item window', async () => {
-    let items: { item: AgentTimelineItem }[] = [{ item: { type: 'user_message', text: 'Build parser' } }];
+    let items: { item: AgentTimelineItem }[] = [
+      { item: { type: 'user_message', text: 'Build parser' } },
+    ];
     const limits: number[] = [];
     const paseo = fakePaseo(items);
     paseo.agent.timeline.refetch = async (options) => {
@@ -259,6 +261,18 @@ describe('agent.permission.before', () => {
     assert.equal(paseo.agent.appended[1]?.id, paseo.agent.appended[0]?.id, 'same row id');
     assert.equal(flag(paseo.agent.appended[0], 'feedback'), null);
     assert.equal(flag(paseo.agent.appended[1], 'feedback'), 'allow');
+  });
+
+  it('reports parent answers as supervised outcomes', async () => {
+    const child = { ...agent, id: 'child', parentAgentId: 'parent' };
+    const gw = fakeGateway(() => response({ policy: 'permission', action: 'ask' }));
+    const paseo = fakePaseo(turn);
+    const handlers = createPermissionHandlers(deps(settings(), gw), bg);
+    await handlers.before({ agent: child, request: toolRequest }, ctx(paseo));
+    await bg.idle();
+    await handlers.after({ agent: child, requestId: 'r1', resolution: { behavior: 'deny' } });
+
+    assert.deepEqual(gw.outcomes, [{ decisionId: 'd-1', outcome: 'deny', source: 'supervised' }]);
   });
 
   it('keeps a user answer that arrives before the decision lands', async () => {
@@ -344,6 +358,35 @@ const routingAct = settings({
   },
 });
 
+const autoProfileRoute = (): ReturnType<typeof response> =>
+  response({
+    policy: 'routing',
+    action: 'route:fast',
+    mode: 'act',
+    enforced: true,
+    route: { preset: 'fast', profile: 'implementer' },
+  });
+const paseoWithProfile = {
+  config: {
+    get: async () => ({
+      config: {
+        agentProfiles: [{ id: 'implementer', provider: 'claude', model: 'haiku', modeId: 'auto' }],
+      },
+    }),
+  },
+};
+const withMode = (modeId: string | undefined, provider = 'claude'): { request: CreateRequest } => ({
+  request: {
+    config: {
+      provider,
+      cwd: '/p',
+      model: 'opus',
+      title: 'Rename',
+      ...(modeId === undefined ? {} : { modeId }),
+    },
+  },
+});
+
 describe('agent.create.before', () => {
   const signal = new AbortController().signal;
 
@@ -377,37 +420,6 @@ describe('agent.create.before', () => {
   });
 
   describe('caller mode', () => {
-    const autoProfileRoute = (): ReturnType<typeof response> =>
-      response({
-        policy: 'routing',
-        action: 'route:fast',
-        mode: 'act',
-        enforced: true,
-        route: { preset: 'fast', profile: 'implementer' },
-      });
-    const paseoWithProfile = {
-      config: {
-        get: async () => ({
-          config: {
-            agentProfiles: [
-              { id: 'implementer', provider: 'claude', model: 'haiku', modeId: 'auto' },
-            ],
-          },
-        }),
-      },
-    };
-    const withMode = (modeId: string | undefined, provider = 'claude'): { request: CreateRequest } => ({
-      request: {
-        config: {
-          provider,
-          cwd: '/p',
-          model: 'opus',
-          title: 'Rename',
-          ...(modeId === undefined ? {} : { modeId }),
-        },
-      },
-    });
-
     it('keeps the mode the caller pinned', async () => {
       const gw = fakeGateway(autoProfileRoute);
       const out = await createRoutingHandler(deps(routingAct, gw))(withMode('default'), {
