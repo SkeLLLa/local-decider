@@ -11,18 +11,10 @@ import {
   type HookInput,
   type PermissionMode,
 } from '@local-decider/core';
-import { basename } from 'node:path';
 
-import {
-  firstUserText,
-  historyText,
-  lastUserText,
-  lastAssistantText,
-  parseTurns,
-  taskText,
-  type TranscriptSlice,
-  type Turn,
-} from './transcript.ts';
+import { permissionInput, projectLabel } from './permission-input.ts';
+import { parseTurns, type TranscriptSlice } from './transcript.ts';
+import { firstUserText, historyText, lastAssistantText, type Turn } from './turns.ts';
 
 const HOOK_HARNESSES = ['claude', 'codex'] as const;
 export type HookHarness = (typeof HOOK_HARNESSES)[number];
@@ -57,7 +49,7 @@ export function parseHarness(name: string): HookHarness | undefined {
 
 function projectOf(hook: HookInput): string | undefined {
   const cwd = str(hook['cwd']);
-  return cwd === undefined ? undefined : `${basename(cwd)} (${cwd})`;
+  return cwd === undefined ? undefined : projectLabel(cwd);
 }
 
 function compact(input: Record<string, unknown>): Record<string, unknown> {
@@ -90,18 +82,15 @@ class Transcript {
   }
 }
 
-function permissionInput(hook: HookInput, t: Transcript): Record<string, unknown> {
-  const head = t.head();
-  const tail = t.tail();
-  const subject = permissionSubject(hook);
-  return {
-    project: projectOf(hook),
-    history: historyText(tail),
-    task: taskText(firstUserText(head), lastUserText(tail)),
+function permissionHookInput(hook: HookInput, t: Transcript): Record<string, unknown> {
+  return permissionInput({
+    cwd: str(hook['cwd']),
     tool: str(hook['tool_name']),
     request: hook['tool_input'],
-    ...(subject === undefined ? {} : { subject }),
-  };
+    subject: permissionSubject(hook),
+    head: t.head(),
+    tail: t.tail(),
+  });
 }
 
 function commandRiskInput(hook: HookInput): Record<string, unknown> {
@@ -129,7 +118,7 @@ type InputBuilder = (hook: HookInput, t: Transcript) => Record<string, unknown>;
 
 const BUILDERS: Record<HookEvent, InputBuilder> = {
   PreToolUse: (hook) => commandRiskInput(hook),
-  PermissionRequest: permissionInput,
+  PermissionRequest: permissionHookInput,
   Stop: turnOutcomeInput,
   UserPromptSubmit: (hook) => routingInput(hook),
 };

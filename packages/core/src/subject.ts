@@ -135,7 +135,7 @@ function normalizeSegments(path: string): string[] {
 }
 
 /** `path` against `base` (POSIX), as absolute segments; a relative `base` is taken from `/`. */
-function resolveSegments(base: string, path: string): string[] {
+export function resolveSegments(base: string, path: string): string[] {
   return normalizeSegments(path.startsWith('/') ? path : `/${base}/${path}`);
 }
 

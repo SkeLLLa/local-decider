@@ -4,15 +4,14 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { after, describe, it } from 'node:test';
 
+import { parseTurns, readSlice } from '../src/transcript.ts';
 import {
   firstUserText,
   historyText,
   lastAssistantText,
   lastUserText,
-  parseTurns,
-  readSlice,
   taskText,
-} from '../src/transcript.ts';
+} from '../src/turns.ts';
 
 const dir = mkdtempSync(join(tmpdir(), 'ld-hooks-'));
 after(() => {

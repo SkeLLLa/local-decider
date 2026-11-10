@@ -70,6 +70,7 @@ export {
   firstString,
   isShellTool,
   permissionSubject,
+  resolveSegments,
   str,
   subjectLine,
   type HookInput,
