@@ -1,4 +1,4 @@
-import type { SystemOneRequest, SystemOneResponse } from '@local-decider/core';
+import { tokenAllowed, type SystemOneRequest, type SystemOneResponse } from '@local-decider/core';
 
 import type { RemoteEngineConfig } from '../config.ts';
 import { getHealth, postSystemOne } from './http.ts';
@@ -16,7 +16,9 @@ export class SystemOneRemoteEngine implements Engine {
   constructor(config: RemoteEngineConfig, env: NodeJS.ProcessEnv = process.env) {
     this.model = config.model;
     this.#url = config.url;
-    this.#token = config.tokenEnv === undefined ? undefined : env[config.tokenEnv];
+    // Like the gateway client: a token travels only over https or to this machine.
+    this.#token =
+      config.tokenEnv === undefined || !tokenAllowed(config.url) ? undefined : env[config.tokenEnv];
   }
 
   async start(): Promise<void> {

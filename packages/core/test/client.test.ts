@@ -65,6 +65,8 @@ describe('tokenAllowed', () => {
     assert.equal(tokenAllowed('http://127.0.0.1:8765'), true);
     assert.equal(tokenAllowed('http://localhost:8765'), true);
     assert.equal(tokenAllowed('http://[::1]:8765'), true);
+    assert.equal(tokenAllowed('http://127.8.9.10:8765'), true);
+    assert.equal(tokenAllowed('http://127.evil.example:8765'), false);
     assert.equal(tokenAllowed('http://192.168.1.10:8765'), false);
     assert.equal(tokenAllowed('not a url'), false);
   });

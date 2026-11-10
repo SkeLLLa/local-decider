@@ -2,6 +2,7 @@ export { canonicalJson, sortKeysDeep } from './canonical.ts';
 export {
   DEFAULT_GATEWAY_URL,
   GatewayClient,
+  tokenAllowed,
   type ClientOptions,
   type GatewayHealth,
 } from './client.ts';

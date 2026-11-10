@@ -24,14 +24,15 @@ export interface GatewayHealth {
   readonly p50Ms?: number;
 }
 
-const LOOPBACK = new Set(['127.0.0.1', 'localhost', '[::1]', '::1']);
+const LOOPBACK = new Set(['localhost', '[::1]', '::1']);
+const LOOPBACK_V4 = /^127\.\d{1,3}\.\d{1,3}\.\d{1,3}$/;
 
 /** True for https URLs and loopback hosts; a bearer token is only sent to those. */
 export function tokenAllowed(baseUrl: string): boolean {
   try {
     const url = new URL(baseUrl);
     return (
-      url.protocol === 'https:' || LOOPBACK.has(url.hostname) || url.hostname.startsWith('127.')
+      url.protocol === 'https:' || LOOPBACK.has(url.hostname) || LOOPBACK_V4.test(url.hostname)
     );
   } catch {
     return false;
