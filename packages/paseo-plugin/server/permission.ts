@@ -9,6 +9,7 @@ import type { PluginHookAgent } from '@getpaseo/plugin/server';
 import type {
   AgentPermissionRequest,
   AgentPermissionResponse,
+  AgentTimelineItem,
 } from '@getpaseo/protocol/agent-types';
 
 import { ROW_KIND, ROW_VERSION } from '../shared/constants.ts';
@@ -16,12 +17,20 @@ import type { Gateway } from '../shared/gateway.ts';
 import { rowVisible, toRowData, type DecisionRow } from '../shared/row.ts';
 import { Background, detach } from './background.ts';
 import { errorText, type HookDeps } from './deps.ts';
-import { buildPermissionInput, transcript, mergeAssistantChunks } from './history.ts';
+import {
+  buildPermissionInput,
+  firstOfType,
+  mergeAssistantChunks,
+  taskText,
+  transcript,
+  type RecentContext,
+} from './history.ts';
 import { BoundedMap } from './limits.ts';
 import { pluginEnforces, type HookCtx } from './turn.ts';
 
 const PERMISSION_POLICY = 'permission';
 const HISTORY_LIMIT = 20;
+const TIMELINE_FETCH_LIMIT = 100;
 /** Detached from the hook; the request stays pending for the user meanwhile. */
 const DECIDE_TIMEOUT_MS = 60_000;
 
@@ -68,6 +77,7 @@ export function createPermissionHandlers(
   after: (event: PermissionResolvedEvent) => Promise<void>;
 } {
   const pending = new BoundedMap<Pending>(500);
+  const firstRequests = new BoundedMap<string>(500);
 
   // Returns at once: the request stays pending for the user while the decision runs detached.
   const before = async (event: PermissionEvent, ctx: HookCtx): Promise<void> => {
@@ -75,7 +85,8 @@ export function createPermissionHandlers(
       background,
       (m) => deps.log(m),
       `permission for ${event.agent.id}`,
-      async (signal) => handleRequest(deps, pending, event, { paseo: ctx.paseo, signal }),
+      async (signal) =>
+        handleRequest(deps, pending, firstRequests, event, { paseo: ctx.paseo, signal }),
     );
   };
 
@@ -94,6 +105,7 @@ export function createPermissionHandlers(
 async function handleRequest(
   deps: HookDeps,
   pending: BoundedMap<Pending>,
+  firstRequests: BoundedMap<string>,
   event: PermissionEvent,
   ctx: HookCtx,
 ): Promise<void> {
@@ -118,8 +130,13 @@ async function handleRequest(
     row: null,
   };
   pending.set(`${event.agent.id}:${event.request.id}`, entry);
-  const history = await recentHistory(agent);
-  const res = await decidePermission(gateway, event, history, ctx.signal);
+  const context = await recentContext(
+    agent,
+    event.agent.id,
+    firstRequests,
+    event.agent.title,
+  );
+  const res = await decidePermission(gateway, event, context, ctx.signal);
   if (res === null) {
     return;
   }
@@ -190,23 +207,37 @@ async function appendRow(agent: AgentRef, data: DecisionRow): Promise<void> {
   });
 }
 
-async function recentHistory(agent: AgentRef): Promise<string> {
+async function recentContext(
+  agent: AgentRef,
+  agentId: string,
+  firstRequests: BoundedMap<string>,
+  title: string | null | undefined,
+): Promise<RecentContext> {
+  let items: AgentTimelineItem[] = [];
   try {
-    const page = await agent.timeline.refetch({ direction: 'tail', limit: HISTORY_LIMIT });
-    const items = page.entries.map((e) => e.item).filter((i) => i.type !== 'plugin');
-    return transcript(mergeAssistantChunks(items), 6000);
+    const page = await agent.timeline.refetch({ direction: 'tail', limit: TIMELINE_FETCH_LIMIT });
+    items = page.entries.map((e) => e.item).filter((item) => item.type !== 'plugin');
+    const first = firstOfType(items, 'user_message')?.text.trim();
+    if (firstRequests.get(agentId) === undefined && first !== undefined && first !== '') {
+      firstRequests.set(agentId, first);
+    }
   } catch {
-    return '';
+    // The cached first request and agent title still make useful task context when refetch fails.
   }
+  const recent = mergeAssistantChunks(items.slice(-HISTORY_LIMIT));
+  return {
+    history: transcript(recent, 6000),
+    task: taskText(items, firstRequests.get(agentId), title),
+  };
 }
 
 async function decidePermission(
   gateway: Gateway,
   event: PermissionEvent,
-  history: string,
+  context: RecentContext,
   signal: AbortSignal,
 ): Promise<Awaited<ReturnType<Gateway['decide']>>> {
-  const input = buildPermissionInput(event.agent.cwd, history, event.request);
+  const input = buildPermissionInput(event.agent.cwd, context.history, context.task, event.request);
   return gateway.decide(
     PERMISSION_POLICY,
     { harness: 'paseo', sessionId: event.agent.id, input: { ...input } },

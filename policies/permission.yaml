@@ -2,15 +2,16 @@
 # Permission triage: may a pending tool/permission request be auto-approved?
 # v1 never auto-denies through this policy's adapters' permission hooks; `deny` is a flag.
 id: permission
-version: 1
+version: 2
 description: Decide whether a tool or permission request is routine enough to allow without asking.
 mode: shadow
 priority: high
 state:
-  maxTokens: 2000
+  maxTokens: 2500
   sections:
     - { label: Project, from: project, keep: head }
     - { label: Recent conversation, from: history, keep: tail }
+    - { label: Task, from: task, keep: head }
     - { label: Tool, from: tool, keep: head }
     - { label: Request, from: request, keep: middle }
 questions:

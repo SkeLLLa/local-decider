@@ -13,6 +13,7 @@ import {
   head,
   LIMITS,
   mergeAssistantChunks,
+  taskText,
   tail,
   transcript,
   turnItems,
@@ -181,6 +182,25 @@ describe('buildTurnInput', () => {
   });
 });
 
+describe('taskText', () => {
+  it('formats first and latest requests when a user steers the task', () => {
+    assert.equal(
+      taskText([user('First request'), user('Narrow the change')], 'First request', null),
+      'First request: First request\nLatest request: Narrow the change',
+    );
+  });
+
+  it('uses the title when no user request is available', () => {
+    assert.equal(taskText([], undefined, '  Fix the parser  '), 'Agent title: Fix the parser');
+    assert.equal(taskText([], undefined, '  '), '');
+  });
+
+  it('bounds each request to 1500 characters', () => {
+    const task = taskText([user('y'.repeat(1600))], 'x'.repeat(1600), null);
+    assert.equal(task.length, 'First request: '.length + 1500 + '\nLatest request: '.length + 1500);
+  });
+});
+
 describe('buildPermissionInput', () => {
   it('renders the request as bounded JSON with tool and project', () => {
     const request: AgentPermissionRequest = {
@@ -191,8 +211,9 @@ describe('buildPermissionInput', () => {
       title: 'Run ls',
       input: { command: 'ls -la' },
     };
-    const input = buildPermissionInput('/home/u/project', 'user: list files', request);
+    const input = buildPermissionInput('/home/u/project', 'user: list files', 'First request: list files', request);
     assert.equal(input.project, '/home/u/project');
+    assert.equal(input.task, 'First request: list files');
     assert.equal(input.tool, 'Bash · tool · Run ls');
     assert.deepEqual(JSON.parse(input.request), { title: 'Run ls', input: { command: 'ls -la' } });
     assert.equal(input.history, 'user: list files');

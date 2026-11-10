@@ -33,6 +33,15 @@ const turn: { item: AgentTimelineItem; turnId?: string }[] = [
   { item: { type: 'assistant_message', text: 'Should I use vitest or node:test?' }, turnId: 't1' },
 ];
 
+const toolItem = (name: string): AgentTimelineItem => ({
+  type: 'tool_call',
+  callId: name,
+  name,
+  status: 'completed',
+  error: null,
+  detail: { type: 'unknown', input: null, output: null },
+});
+
 const completed = { kind: 'completed' } as const;
 
 /** A boolean field of an appended row's data. */
@@ -188,6 +197,32 @@ describe('agent.permission.before', () => {
       assert.deepEqual(paseo.agent.responses, []);
       assert.equal(paseo.agent.appended.length, 1, 'still recorded');
     }
+  });
+
+  it('keeps task context after it falls outside the 100 item window', async () => {
+    let items: { item: AgentTimelineItem }[] = [{ item: { type: 'user_message', text: 'Build parser' } }];
+    const limits: number[] = [];
+    const paseo = fakePaseo(items);
+    paseo.agent.timeline.refetch = async (options) => {
+      limits.push(options.limit);
+      return { entries: items.slice(-options.limit) };
+    };
+    const gw = fakeGateway(() => response({ policy: 'permission', action: 'ask' }));
+    const handlers = permissionHandlers(deps(settings(), gw));
+
+    await handlers.request(paseo);
+    items = [
+      ...Array.from({ length: 120 }, (_, index) => ({ item: toolItem(`Tool${index}`) })),
+      { item: { type: 'user_message', text: 'Narrow the change' } },
+    ];
+    await handlers.request(paseo, { ...toolRequest, id: 'r2' });
+
+    assert.deepEqual(limits, [100, 100]);
+    assert.equal(
+      gw.calls[1]?.input['task'],
+      'First request: Build parser\nLatest request: Narrow the change',
+    );
+    assert.equal(String(gw.calls[1]?.input['history']).split('\n').length, 20);
   });
 
   it('swallows the already-resolved race', async () => {

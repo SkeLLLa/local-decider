@@ -29,6 +29,11 @@ export interface TurnInput {
   readonly lastMessage: string;
 }
 
+export interface RecentContext {
+  readonly task: string;
+  readonly history: string;
+}
+
 /** Keep the head of `text` within `max` characters. */
 export function head(text: string, max: number): string {
   return text.length <= max ? text : `${text.slice(0, Math.max(0, max - 1))}…`;
@@ -153,6 +158,36 @@ function lastOfType<T extends AgentTimelineItem['type']>(
   return undefined;
 }
 
+export function firstOfType<T extends AgentTimelineItem['type']>(
+  items: readonly AgentTimelineItem[],
+  type: T,
+): Extract<AgentTimelineItem, { type: T }> | undefined {
+  for (const item of items) {
+    if (item.type === type) {
+      return item as Extract<AgentTimelineItem, { type: T }>;
+    }
+  }
+  return undefined;
+}
+
+/** First and latest user requests in the fetched window, or the agent title when none were seen. */
+export function taskText(
+  items: readonly AgentTimelineItem[],
+  firstKnown: string | undefined,
+  title: string | null | undefined,
+): string {
+  const first = firstKnown?.trim() || firstOfType(items, 'user_message')?.text.trim() || '';
+  if (first === '') {
+    const fallback = (title ?? '').trim();
+    return fallback === '' ? '' : `Agent title: ${head(fallback, 1500)}`;
+  }
+  const initial = `First request: ${head(first, 1500)}`;
+  const latest = lastOfType(items, 'user_message')?.text.trim();
+  return latest === undefined || latest === '' || latest === first
+    ? initial
+    : `${initial}\nLatest request: ${head(latest, 1500)}`;
+}
+
 export function transcript(items: readonly AgentTimelineItem[], max: number): string {
   const lines = items.map(itemLine).filter((l): l is string => l !== null);
   return tail(lines.join('\n'), max);
@@ -189,6 +224,7 @@ function safeJson(value: unknown, max: number): string {
 export interface PermissionInput {
   readonly project: string;
   readonly history: string;
+  readonly task: string;
   readonly tool: string;
   readonly request: string;
 }
@@ -196,6 +232,7 @@ export interface PermissionInput {
 export function buildPermissionInput(
   cwd: string,
   history: string,
+  task: string,
   request: AgentPermissionRequest,
 ): PermissionInput {
   const tool = [request.name, request.kind, request.title].filter(Boolean).join(' · ');
@@ -208,6 +245,7 @@ export function buildPermissionInput(
   return {
     project: head(cwd, 500),
     history: tail(history, LIMITS.history / 2),
+    task: head(task, LIMITS.task),
     tool: head(tool, 500),
     request: safeJson(body, LIMITS.request),
   };
