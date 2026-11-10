@@ -110,8 +110,8 @@ jobs:
         run: pnpm -r typecheck
       - name: Build
         run: pnpm -r build
-      # plugins/local-decider/dist/hook.mjs is committed; it must match a fresh build.
-      - name: Hook bundle is up to date
-        run: git diff --exit-code -- plugins/local-decider/dist
+      # dist/hook.mjs and hooks/register.mjs (the Claude Code mod) are committed; they must match a fresh build.
+      - name: Hook bundles are up to date
+        run: git diff --exit-code -- plugins/local-decider/dist plugins/local-decider/hooks/register.mjs
       - name: Test
         run: pnpm -r test
