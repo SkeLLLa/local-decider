@@ -4,10 +4,12 @@ import type {
   OutcomeRecord,
   Policy,
   PolicyRule,
+  Scope,
   ShadowRecord,
   UsageRecord,
 } from '@local-decider/core';
 
+import { classifierAgreement, type ClassifierAgreement } from './classifier-agreement.ts';
 import type { LoadedPolicy } from './policies.ts';
 import {
   computePromptTime,
@@ -18,6 +20,7 @@ import {
   type Savings,
   type SavingsTotals,
 } from './savings.ts';
+import { wilsonUpper } from './wilson.ts';
 
 const BUCKETS = [0, 0.5, 0.7, 0.8, 0.9, 0.95, 1.000_001] as const;
 
@@ -49,6 +52,8 @@ export interface PolicyStats {
   readonly promptTime?: PromptTime;
   /** Advisory threshold suggestions from escalated allow-rule decisions. */
   readonly calibrationHints?: readonly CalibrationHint[];
+  /** Decisions made for the Claude Code auto-mode scope, compared with the classifier's verdicts. */
+  readonly classifierAgreement?: ClassifierAgreement;
 }
 
 export interface CalibrationHint {
@@ -114,6 +119,9 @@ function countActions(decisions: readonly ShadowRecord[]): Record<string, number
 
 interface Joined {
   readonly outcomes: ReadonlyMap<string, OutcomeRecord>;
+  /** The latest outcome per decision that the auto-mode classifier reported. */
+  readonly classifier: ReadonlyMap<string, OutcomeRecord>;
+  readonly scope: Scope;
   readonly usage: ReadonlyMap<string, readonly UsageRecord[]>;
   readonly pricing: Pricing;
 }
@@ -124,7 +132,16 @@ function extras(decisions: readonly ShadowRecord[], joined: Joined): Partial<Pol
   return {
     ...(savings === undefined ? {} : { savings }),
     ...(promptTime === undefined ? {} : { promptTime }),
+    ...agreementOf(decisions, joined),
   };
+}
+
+function agreementOf(
+  decisions: readonly ShadowRecord[],
+  joined: Joined,
+): { classifierAgreement?: ClassifierAgreement } {
+  const agreement = classifierAgreement(joined.scope, decisions, joined.classifier);
+  return agreement === undefined ? {} : { classifierAgreement: agreement };
 }
 
 interface ThresholdSample {
@@ -163,15 +180,6 @@ function samplesForRule(
     }
   }
   return samples.toSorted((a, b) => a.probability - b.probability);
-}
-
-function wilsonUpper(denies: number, n: number): number {
-  const z = 1.96;
-  const z2 = z * z;
-  const rate = denies / n;
-  return (
-    (rate + z2 / (2 * n) + z * Math.sqrt((rate * (1 - rate)) / n + z2 / (4 * n * n))) / (1 + z2 / n)
-  );
 }
 
 function suggestedThreshold(
@@ -263,6 +271,13 @@ function policyStats(
   };
 }
 
+export interface StatsOptions {
+  /** Only decisions made for this request scope. */
+  readonly scope?: Scope;
+}
+
+const DEFAULT_SCOPE: Scope = 'claude-auto';
+
 /**
  * Agreement, calibration and savings per policy from shadow-log records. The latest outcome
  * wins; `pricing` (optional) adds dollar estimates to token savings.
@@ -271,16 +286,21 @@ export function computeStats(
   records: readonly LogRecord[],
   pricing: Pricing = {},
   policies?: ReadonlyMap<string, LoadedPolicy>,
+  options: StatsOptions = {},
 ): PolicyStats[] {
   const outcomes = new Map<string, OutcomeRecord>();
+  const classifier = new Map<string, OutcomeRecord>();
   const usage: UsageRecord[] = [];
   const byPolicy = new Map<string, ShadowRecord[]>();
   for (const record of records) {
     if (record.kind === 'outcome') {
       outcomes.set(record.decisionId, record);
+      if (record.source === 'classifier') {
+        classifier.set(record.decisionId, record);
+      }
     } else if (record.kind === 'usage') {
       usage.push(record);
-    } else {
+    } else if (options.scope === undefined || record.scope === options.scope) {
       const list = byPolicy.get(record.policy) ?? [];
       list.push(record);
       byPolicy.set(record.policy, list);
@@ -291,6 +311,8 @@ export function computeStats(
     .map(([policy, decisions]) =>
       policyStats(policy, policies?.get(policy)?.policy, decisions, {
         outcomes,
+        classifier,
+        scope: options.scope ?? DEFAULT_SCOPE,
         usage: groupUsage(usage),
         pricing,
       }),
@@ -332,9 +354,26 @@ export function formatStats(stats: readonly PolicyStats[]): string {
     for (const hint of s.calibrationHints ?? []) {
       lines.push(calibrationLine(hint));
     }
-    lines.push(...savingsLines(s));
+    lines.push(...savingsLines(s), ...agreementLines(s.classifierAgreement));
   }
   return lines.join('\n');
+}
+
+function agreementLines(a: ClassifierAgreement | undefined): string[] {
+  if (a === undefined) {
+    return [];
+  }
+  const lower =
+    a.allowPrecisionLower === undefined ? '' : `, Wilson 95% lower ${pct(a.allowPrecisionLower)}`;
+  return [
+    `  classifier agreement (${a.scope}): ${String(a.decisions)} decisions, ${String(a.n)} compared, coverage ${pct(a.coverage)}`,
+    `    allow precision ${pct(a.allowPrecision)}${lower} (${String(a.bothAllowed)}/${String(a.wouldAllow)} would-allow calls the classifier allowed)`,
+    `    decider ask-rate on classifier-allowed ${pct(a.askRateOnClassifierAllowed)} (n=${String(a.classifierAllowed)})`,
+    `    latency p50 ${a.latencyP50Ms?.toFixed(0) ?? '-'} ms, p95 ${a.latencyP95Ms?.toFixed(0) ?? '-'} ms, ${String(a.errors)} timeouts or errors`,
+    ...(a.disagreements.length === 0
+      ? []
+      : [`    disagreements (decider allow, classifier deny): ${a.disagreements.join(' ')}`]),
+  ];
 }
 
 function tokens(n: number): string {

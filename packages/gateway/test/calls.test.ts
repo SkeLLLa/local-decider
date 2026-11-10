@@ -271,3 +271,43 @@ describe('GET /v1/calls/:id', () => {
     }
   });
 });
+
+describe('GET /v1/stats?scope=', () => {
+  it('serves the classifier agreement section for a scope filter', async () => {
+    const paths = tempPaths();
+    const gw = await startGateway({
+      config: testConfig({ policies: { permission: { mode: 'shadow' } } }),
+      paths,
+      engine: new FakeEngine({ allow: 0.97, ask: 0.02, deny: 0.01 }),
+      env: {},
+    });
+    try {
+      const scoped = await post(gw, '/v1/decide/permission', {
+        harness: 'claude-code',
+        input,
+        scope: 'claude-auto',
+        call: { id: 'toolu_s' },
+      });
+      await post(gw, '/v1/decide/permission', {
+        harness: 'claude-code',
+        input: { ...input, request: 'ls' },
+      });
+      await post(gw, '/v1/outcomes', {
+        decisionId: scoped['decisionId'],
+        outcome: 'allow',
+        source: 'classifier',
+      });
+      const all = (await (await fetch(`${gw.url}/v1/stats`)).json()) as Body[];
+      assert.equal(all[0]?.['decisions'], 2);
+      const filtered = (await (await fetch(`${gw.url}/v1/stats?scope=claude-auto`)).json()) as {
+        decisions: number;
+        classifierAgreement: { n: number; allowPrecision: number };
+      }[];
+      assert.equal(filtered[0]?.decisions, 1);
+      assert.equal(filtered[0]?.classifierAgreement.n, 1);
+      assert.equal(filtered[0]?.classifierAgreement.allowPrecision, 1);
+    } finally {
+      await gw.close();
+    }
+  });
+});

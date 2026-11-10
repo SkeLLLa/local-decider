@@ -1,5 +1,11 @@
 #!/usr/bin/env node
-import { GatewayClient, parsePolicy, type DecideRequest } from '@local-decider/core';
+import {
+  GatewayClient,
+  parsePolicy,
+  SCOPES,
+  type DecideRequest,
+  type Scope,
+} from '@local-decider/core';
 import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { parseArgs } from 'node:util';
@@ -40,7 +46,7 @@ Usage:
   local-decider engine install [--flavor cpu|mlx|cuda] [--model ID] [--no-download]
   local-decider engine install --engine fastflowlm [--model d3:nano]  AMD NPU (Linux)
   local-decider decide <policy> [--input JSON] [key=value ...]
-  local-decider stats [--json]                      agreement and calibration from the shadow log
+  local-decider stats [--json] [--scope claude-auto]  agreement and calibration from the shadow log
   local-decider policies [check <file>]             list policies, or validate a policy file
   local-decider policies eval <policy> <file>       report decisions on JSONL fixtures
   local-decider policies use <policy> <variant>     answer <policy> with one of its variants
@@ -205,12 +211,20 @@ async function decide(ctx: Context): Promise<void> {
 }
 
 async function stats(ctx: Context): Promise<void> {
+  const { values } = parseArgs({
+    args: [...ctx.args],
+    options: { json: { type: 'boolean' }, scope: { type: 'string' } },
+  });
+  if (values.scope !== undefined && !(SCOPES as readonly string[]).includes(values.scope)) {
+    throw new SettingsUsageError(`scope must be one of ${SCOPES.join(', ')}`);
+  }
   const result = computeStats(
     new ShadowLog(ctx.paths.logs).read(),
     ctx.config.pricing,
     loadPolicies(ctx.config, policyDirs(ctx.config, ctx.paths)),
+    values.scope === undefined ? {} : { scope: values.scope as Scope },
   );
-  console.log(ctx.args.includes('--json') ? JSON.stringify(result, null, 2) : formatStats(result));
+  console.log(values.json === true ? JSON.stringify(result, null, 2) : formatStats(result));
 }
 
 function checkPolicy(file: string): void {

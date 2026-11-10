@@ -469,8 +469,21 @@ function route(method: string, path: string): Handler | undefined {
       );
   }
   if (key === 'GET /v1/stats') {
-    return async (_req, res, { decider, log, pricing, settings }) =>
-      send(res, 200, computeStats(log.read(), settings?.().pricing ?? pricing, decider.policies));
+    return async (req, res, { decider, log, pricing, settings }) => {
+      const scope = parseScope(
+        new URL(req.url ?? '/', 'http://localhost').searchParams.get('scope'),
+      );
+      send(
+        res,
+        200,
+        computeStats(
+          log.read(),
+          settings?.().pricing ?? pricing,
+          decider.policies,
+          scope === undefined ? {} : { scope },
+        ),
+      );
+    };
   }
   if (key === 'POST /v1/systemone' || key === 'POST /invocations') {
     return async (req, res, { decider }) =>

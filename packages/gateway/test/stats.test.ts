@@ -250,3 +250,87 @@ describe('ShadowLog', () => {
     );
   });
 });
+
+const verdict = (id: string, outcome: string, source = 'classifier'): LogRecord => ({
+  kind: 'outcome',
+  ts: 't',
+  decisionId: id,
+  outcome,
+  source: source as 'classifier',
+});
+
+describe('classifier agreement', () => {
+  const scoped = (id: string, action: string, extra: Partial<ShadowRecord> = {}): ShadowRecord =>
+    decision(id, action === 'allow' ? 'allow' : 'ask', 0.9, {
+      scope: 'claude-auto',
+      action,
+      ...extra,
+    });
+  const records: LogRecord[] = [
+    scoped('a1', 'allow'),
+    scoped('a2', 'allow'),
+    scoped('a3', 'allow'),
+    scoped('d1', 'allow'),
+    scoped('k1', 'ask'),
+    scoped('k2', 'ask'),
+    scoped('auto', 'allow', { enforced: true }),
+    scoped('slow', 'ask', { error: 'decision timed out', latencyMs: 1500 }),
+    scoped('nolabel', 'allow'),
+    decision('other', 'allow', 0.9),
+    verdict('a1', 'allow'),
+    verdict('a2', 'allow'),
+    verdict('a3', 'allow'),
+    verdict('d1', 'deny'),
+    verdict('k1', 'allow'),
+    verdict('k2', 'deny'),
+    verdict('auto', 'allow'),
+    verdict('nolabel', 'allow', 'user'),
+  ];
+
+  it('compares would-allow decisions with the classifier and lists disagreements', () => {
+    const [s] = computeStats(records, {}, undefined, { scope: 'claude-auto' });
+    const a = s?.classifierAgreement;
+    assert.equal(s?.decisions, 9, 'unscoped decisions are filtered out');
+    assert.equal(a?.decisions, 9);
+    assert.equal(a?.n, 6, 'auto-allowed, unlabelled and user-labelled ones are not compared');
+    assert.equal(a?.coverage, 6 / 9);
+    assert.equal(a?.wouldAllow, 4);
+    assert.equal(a?.bothAllowed, 3);
+    assert.equal(a?.allowPrecision, 0.75);
+    assert.ok((a?.allowPrecisionLower ?? 1) < 0.75 && (a?.allowPrecisionLower ?? 0) > 0.2);
+    assert.equal(a?.classifierAllowed, 4);
+    assert.equal(a?.askRateOnClassifierAllowed, 0.25);
+    assert.deepEqual(a?.disagreements, ['d1']);
+    assert.equal(a?.errors, 1);
+    assert.equal(a?.latencyP50Ms, 100);
+  });
+
+  it('caps the disagreement list at 20 ids', () => {
+    const many: LogRecord[] = [];
+    for (let i = 0; i < 25; i += 1) {
+      many.push(scoped(`x${String(i)}`, 'allow'), verdict(`x${String(i)}`, 'deny'));
+    }
+    const [s] = computeStats(many, {}, undefined, { scope: 'claude-auto' });
+    assert.equal(s?.classifierAgreement?.disagreements.length, 20);
+    assert.equal(s?.classifierAgreement?.disagreements[0], 'x0');
+    assert.equal(s?.classifierAgreement?.allowPrecision, 0);
+  });
+
+  it('attaches the section without a filter and omits it when nothing is scoped', () => {
+    const all = computeStats(records);
+    assert.equal(all[0]?.decisions, 10);
+    assert.equal(all[0]?.classifierAgreement?.n, 6);
+    assert.equal(computeStats([decision('z', 'allow', 0.9)])[0]?.classifierAgreement, undefined);
+    assert.deepEqual(
+      computeStats([decision('z', 'allow', 0.9)], {}, undefined, { scope: 'claude-auto' }),
+      [],
+    );
+  });
+
+  it('formats the section for the CLI', () => {
+    const text = formatStats(computeStats(records, {}, undefined, { scope: 'claude-auto' }));
+    assert.match(text, /classifier agreement \(claude-auto\): 9 decisions, 6 compared/);
+    assert.match(text, /allow precision 75\.0%, Wilson 95% lower/);
+    assert.match(text, /disagreements \(decider allow, classifier deny\): d1/);
+  });
+});
