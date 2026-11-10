@@ -165,6 +165,13 @@ async function route(
   if (target === null) {
     return undefined;
   }
+  // A preset's or profile's mode applies only when the creator left modeId unset.
+  const pinned = (request.config.modeId ?? '').trim() !== '';
+  if (pinned && target.provider !== request.config.provider) {
+    deps.log('routing skipped: caller pinned mode on another provider');
+    return undefined;
+  }
+  const applied = pinned ? { ...target, modeId: '' } : target;
   deps.log(`routing ${res.action} → ${target.provider}/${target.model} (${res.decisionId})`);
-  return { ...request, config: applyPreset(request.config, target) };
+  return { ...request, config: applyPreset(request.config, applied) };
 }

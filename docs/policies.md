@@ -72,7 +72,8 @@ unsure about); the shipped default for `permission` is p(allow) ≥ 0.95.
 A policy with `variantOf: <id>` is an alternative for policy `<id>`. Adapters keep asking for
 `<id>`; the gateway answers with the variant the user selected, or `<id>` itself by default.
 The run mode stays the one of `<id>`, so switching variants never turns enforcement on or off.
-Responses and shadow-log records carry `variant` when a variant answered.
+Responses and shadow-log records carry `variant` when a variant answered. A preset's or profile's
+mode applies only when the agent was created without one.
 
 Routing ships three (`policies/routing*.yaml`); they differ in preset names, not just wording:
 

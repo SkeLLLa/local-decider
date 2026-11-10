@@ -341,6 +341,74 @@ describe('agent.create.before', () => {
     assert.equal(out?.config.modeId, 'auto');
   });
 
+  describe('caller mode', () => {
+    const autoProfileRoute = (): ReturnType<typeof response> =>
+      response({
+        policy: 'routing',
+        action: 'route:fast',
+        mode: 'act',
+        enforced: true,
+        route: { preset: 'fast', profile: 'implementer' },
+      });
+    const paseoWithProfile = {
+      config: {
+        get: async () => ({
+          config: {
+            agentProfiles: [
+              { id: 'implementer', provider: 'claude', model: 'haiku', modeId: 'auto' },
+            ],
+          },
+        }),
+      },
+    };
+    const withMode = (modeId: string | undefined, provider = 'claude'): { request: CreateRequest } => ({
+      request: {
+        config: {
+          provider,
+          cwd: '/p',
+          model: 'opus',
+          title: 'Rename',
+          ...(modeId === undefined ? {} : { modeId }),
+        },
+      },
+    });
+
+    it('keeps the mode the caller pinned', async () => {
+      const gw = fakeGateway(autoProfileRoute);
+      const out = await createRoutingHandler(deps(routingAct, gw))(withMode('default'), {
+        signal,
+        paseo: paseoWithProfile,
+      });
+      assert.equal(out?.config.model, 'haiku');
+      assert.equal(out?.config.modeId, 'default');
+    });
+
+    it('applies the profile mode when the caller left it unset', async () => {
+      const gw = fakeGateway(autoProfileRoute);
+      const out = await createRoutingHandler(deps(routingAct, gw))(withMode(undefined), {
+        signal,
+        paseo: paseoWithProfile,
+      });
+      assert.equal(out?.config.modeId, 'auto');
+    });
+
+    it('does not route a pinned agent to another provider', async () => {
+      const gw = fakeGateway(() =>
+        response({
+          policy: 'routing',
+          action: 'route:fast',
+          mode: 'act',
+          enforced: true,
+          route: { preset: 'fast', model: 'claude/haiku', mode: 'auto' },
+        }),
+      );
+      const out = await createRoutingHandler(deps(routingAct, gw))(withMode('default', 'codex'), {
+        signal,
+      });
+      assert.equal(out, undefined);
+    });
+  });
+
   it('applies a preset of a user-written routing variant', async () => {
     const gw = fakeGateway(() =>
       response({
