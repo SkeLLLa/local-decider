@@ -7,7 +7,7 @@ mode: shadow
 cache:
   ttlSeconds: 600
 state:
-  maxTokens: 2000
+  maxTokens: 1500
   sections:
     - { label: Project, from: project, keep: head }
     - { label: Task prompt, from: prompt, keep: middle }

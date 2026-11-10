@@ -5,7 +5,7 @@ version: 1
 description: Flag risky shell commands and tool calls before they run.
 mode: shadow
 state:
-  maxTokens: 2000
+  maxTokens: 1000
   sections:
     - { label: Project, from: project, keep: head }
     - { label: Tool, from: tool, keep: head }

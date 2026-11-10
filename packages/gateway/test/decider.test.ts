@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { describe, it } from 'node:test';
 import { setTimeout as sleep } from 'node:timers/promises';
 
-import { Decider, renderValue, UnknownPolicyError } from '../src/decider.ts';
+import { Decider, QUEUE_MAX, renderValue, UnknownPolicyError } from '../src/decider.ts';
 import { defaultPolicyDir, type LoadedPolicy } from '../src/policies.ts';
 import { ShadowLog } from '../src/shadow.ts';
 import { FakeEngine, tempPaths } from './helpers.ts';
@@ -170,6 +170,55 @@ describe('Decider', () => {
       JSON.stringify(engine.requests[0]?.state),
       '{"a":1,"b":"[REDACTED:anthropic-key]"}',
     );
+  });
+});
+
+describe('Decider under load', () => {
+  it('finishes and logs a shadow decision after the caller aborts', async () => {
+    const engine = new FakeEngine({ allow: 1 });
+    const inner = engine.respond;
+    engine.respond = async (r, s) => {
+      await sleep(50);
+      return inner(r, s);
+    };
+    const { decider, log } = setup('shadow', engine);
+    const caller = new AbortController();
+    const pending = decider.decide('permission', req, caller.signal);
+    caller.abort();
+    const res = await pending;
+    assert.equal(res.error, undefined);
+    assert.equal(log.read().length, 1);
+  });
+
+  it('aborts an act-mode decision with its caller', async () => {
+    const engine = new FakeEngine({ allow: 1 });
+    engine.respond = async (_r, s) => {
+      await sleep(5000, undefined, { signal: s });
+      throw new Error('unreachable');
+    };
+    const { decider } = setup('act', engine);
+    const caller = new AbortController();
+    const pending = decider.decide('permission', req, caller.signal);
+    caller.abort();
+    const res = await pending;
+    assert.equal(res.enforced, false);
+    assert.equal(res.error, 'decision timed out');
+  });
+
+  it('refuses new work once the engine queue is full', async () => {
+    const engine = new FakeEngine({ allow: 1 });
+    const inner = engine.respond;
+    engine.respond = async (r, s) => {
+      await sleep(30);
+      return inner(r, s);
+    };
+    const { decider } = setup('shadow', engine);
+    const all = await Promise.all(
+      Array.from({ length: QUEUE_MAX + 2 }, (_, i) =>
+        decider.decide('permission', { harness: 'cli', input: { ...INPUT, tool: String(i) } }, signal()),
+      ),
+    );
+    assert.equal(all.filter((r) => r.error === 'engine queue full').length, 2);
   });
 });
 

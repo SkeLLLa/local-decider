@@ -23,6 +23,8 @@ import { LatencyWindow, SerialQueue } from './queue.ts';
 import type { ShadowLog } from './shadow.ts';
 
 const CACHE_MAX = 500;
+/** Decisions waiting for the engine before new ones are refused (fail open, logged). */
+export const QUEUE_MAX = 8;
 
 export class UnknownPolicyError extends Error {
   override readonly name = 'UnknownPolicyError';
@@ -134,11 +136,14 @@ export class Decider {
     const state = buildState(sections, policy.state.maxTokens);
     const questions = sortKeysDeep(policyQuestions(policy));
     const hash = inputHash({ id: policy.id, version: policy.version, state, questions });
+    // Nobody acts on a shadow decision, so it outlives a caller that gave up (a hook's 1.5 s
+    // budget is shorter than a CPU decision) and is still logged, within decisionTimeoutMs.
+    const callerSignal = mode === 'shadow' ? new AbortController().signal : signal;
     const result = await this.#answers(
       { state, questions },
       hash,
       loaded.policy.cache.ttlSeconds,
-      signal,
+      callerSignal,
     );
     const match = evaluateRules(policy, result.answers);
     const enforced = mode === 'act' && result.error === undefined;
@@ -173,6 +178,9 @@ export class Decider {
         cached: false,
         error: `engine ${this.#engine.health().state}`,
       };
+    }
+    if (this.#queue.depth >= QUEUE_MAX) {
+      return { answers: {}, latencyMs: 0, cached: false, error: 'engine queue full' };
     }
     const started = performance.now();
     try {
