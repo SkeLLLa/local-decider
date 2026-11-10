@@ -63,7 +63,7 @@ export class FakeEngine implements Engine {
   }
 }
 
-export function choiceResponse(
+function choiceResponse(
   request: SystemOneRequest,
   probs: Record<string, number>,
 ): SystemOneResponse {

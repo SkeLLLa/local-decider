@@ -1,0 +1,13 @@
+{
+  // Daemon side: index.server.ts, server/, shared/ and the tests. Paseo bundles the TypeScript
+  // source itself (esbuild), so this only typechecks. The app side has its own config
+  // (tsconfig.client.json) because React Native's global types clash with Node's.
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "declaration": false,
+    "declarationMap": false,
+    "sourceMap": false
+  },
+  "include": ["index.server.ts", "server/**/*", "shared/**/*", "test/**/*"]
+}

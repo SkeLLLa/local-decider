@@ -61,7 +61,7 @@ export type EngineConfig = GatewayConfig['engine'];
 export type StrandsEngineConfig = z.infer<typeof strandsSchema>;
 export type RemoteEngineConfig = z.infer<typeof remoteSchema>;
 
-export function configFile(paths: Paths): string {
+function configFile(paths: Paths): string {
   return join(paths.config, 'config.yaml');
 }
 

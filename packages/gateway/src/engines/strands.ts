@@ -10,7 +10,7 @@ import type { Paths } from '../paths.ts';
 import { getHealth, postSystemOne } from './http.ts';
 import { EngineError, type Engine, type EngineHealth, type EngineState } from './types.ts';
 
-export const STRANDS_VENV = 'strands-decider';
+const STRANDS_VENV = 'strands-decider';
 const MAX_RESTARTS = 5;
 
 export function strandsBinary(paths: Paths): string {
@@ -27,7 +27,7 @@ export function serveArgs(config: StrandsEngineConfig, port: number): string[] {
   return args;
 }
 
-export async function freePort(): Promise<number> {
+async function freePort(): Promise<number> {
   return new Promise((resolve, reject) => {
     const server = createServer();
     server.unref();

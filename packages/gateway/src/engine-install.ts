@@ -12,7 +12,7 @@ export function defaultFlavor(): InstallFlavor {
 }
 
 /** The pinned uv project shipped with the gateway (`engines/strands-decider`). */
-export function engineProjectDir(): string {
+function engineProjectDir(): string {
   const here = dirname(fileURLToPath(import.meta.url));
   return join(here, '..', 'engines', 'strands-decider');
 }

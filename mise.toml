@@ -72,7 +72,7 @@ run = "shellcheck -S info scripts/*.sh"
 
 [tasks."lint:complexity"]
 description = "cccc: cognitive and cyclomatic complexity ceilings (cccc.toml)"
-run = "s=0; cccc --top-cognitive 10 packages/*/src || s=$?; cccc --top-cyclomatic 10 packages/*/src || s=$?; exit $s"
+run = "s=0; cccc --top-cognitive 10 packages/*/src packages/paseo-plugin/{server,shared,client} || s=$?; cccc --top-cyclomatic 10 packages/*/src packages/paseo-plugin/{server,shared,client} || s=$?; exit $s"
 
 [tasks."lint:fallow"]
 description = "fallow: dead code, duplication and complexity (fallow.toml)"

@@ -1,0 +1,285 @@
+import type { PluginSurfaceProps } from '@getpaseo/plugin/client';
+import { usePaseo, useRpc, useSettings } from '@getpaseo/plugin/client';
+import {
+  Loading,
+  SettingsAction,
+  SettingsCard,
+  SettingsInput,
+  SettingsSection,
+  SettingsSelect,
+  SettingsSwitch,
+} from '@getpaseo/plugin/client/ui';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { useState, type ReactNode } from 'react';
+import { Text, View } from 'react-native';
+
+import {
+  DEVICES,
+  ENGINES,
+  HOOK_POLICIES,
+  PLUGIN_MODES,
+  ROUTING_PRESETS,
+  type RoutingPreset,
+} from '../shared/constants.ts';
+import {
+  decisionModelOptions,
+  parsePresetModel,
+  presetModelOptions,
+  withCurrent,
+} from '../shared/presets.ts';
+import { gatewayModelsRpc } from '../shared/rpc.ts';
+import { deciderSettings, type DeciderSettings } from '../shared/settings.ts';
+import { normaliseBaseUrl } from '../shared/url.ts';
+import type { Theme } from './ui.tsx';
+
+type Save = (next: DeciderSettings) => void;
+
+const PROVIDER_MODELS_KEY = ['local-decider', 'provider-models'] as const;
+
+const options = <V extends string>(values: readonly V[]): { label: string; value: V }[] =>
+  values.map((value) => ({ label: value, value }));
+
+/** Models of every available provider, for the routing preset selects. */
+function useProviderModels(): ReturnType<typeof useQuery<Awaited<ReturnType<typeof loadModels>>>> {
+  const paseo = usePaseo();
+  return useQuery({
+    queryKey: PROVIDER_MODELS_KEY,
+    queryFn: async () => loadModels(paseo),
+    staleTime: Number.POSITIVE_INFINITY,
+    retry: false,
+  });
+}
+
+type Paseo = ReturnType<typeof usePaseo>;
+type ProviderModels = Awaited<ReturnType<Paseo['providers']['listModels']>>;
+
+async function loadModels(paseo: Paseo): Promise<ProviderModels[]> {
+  const available = await paseo.providers.listAvailable();
+  const providers = available.providers.filter((p) => p.available).map((p) => p.provider);
+  const results = await Promise.all(
+    providers.map(async (provider) => paseo.providers.listModels(provider).catch(() => null)),
+  );
+  return results.filter((r) => r !== null);
+}
+
+function GatewaySection({ values, save }: { values: DeciderSettings; save: Save }): ReactNode {
+  const [draft, setDraft] = useState(values.gatewayUrl);
+  const normalised = normaliseBaseUrl(draft);
+  const gatewayModels = useRpc(gatewayModelsRpc);
+  const discovered = useQuery({
+    queryKey: ['local-decider', 'gateway-models', values.gatewayUrl],
+    queryFn: async () => gatewayModels({}),
+    retry: false,
+    staleTime: 60_000,
+  });
+  return (
+    <SettingsSection title="Gateway">
+      <SettingsCard>
+        <SettingsInput
+          label="Gateway URL"
+          hint="Reached from the daemon. Default http://127.0.0.1:8765. A remote gateway's token comes only from LOCAL_DECIDER_TOKEN in the daemon's environment."
+          initialValue={values.gatewayUrl}
+          placeholder="http://127.0.0.1:8765"
+          onChangeText={setDraft}
+          error={normalised === null ? 'Enter an http(s) URL without credentials or query.' : null}
+        />
+        <SettingsAction
+          label="Apply URL"
+          actionLabel="Save"
+          disabled={normalised === null || normalised === values.gatewayUrl}
+          onPress={() => {
+            if (normalised !== null) {
+              save({ ...values, gatewayUrl: normalised });
+            }
+          }}
+        />
+        <SettingsSelect
+          label="Engine"
+          hint="Preferred engine. The gateway's config.yaml decides what runs; Status shows the live engine."
+          value={values.engine}
+          options={options(ENGINES)}
+          onValueChange={(engine) => save({ ...values, engine })}
+        />
+        <SettingsSelect
+          label="Decision model"
+          hint="StrandsAgents models, plus any the gateway lists at GET /models."
+          value={values.model}
+          options={decisionModelOptions(discovered.data?.models ?? [], values.model)}
+          onValueChange={(model) => save({ ...values, model })}
+        />
+        <SettingsSelect
+          label="Device"
+          value={values.device}
+          options={options(DEVICES)}
+          onValueChange={(device) => save({ ...values, device })}
+        />
+      </SettingsCard>
+    </SettingsSection>
+  );
+}
+
+function PolicySection({ values, save }: { values: DeciderSettings; save: Save }): ReactNode {
+  return (
+    <SettingsSection
+      title="Policies"
+      info="Shadow records what would have happened. Act changes Paseo's behaviour, and only when the gateway's own policy mode is act too."
+    >
+      <SettingsCard>
+        {HOOK_POLICIES.map((policy) => (
+          <SettingsSelect
+            key={policy}
+            label={policy}
+            value={values.modes[policy]}
+            options={options(PLUGIN_MODES)}
+            onValueChange={(mode) =>
+              save({ ...values, modes: { ...values.modes, [policy]: mode } })
+            }
+          />
+        ))}
+        <SettingsSwitch
+          label="Add the decide MCP tool to agents"
+          hint="Injects <gateway>/mcp into every agent session. Providers without MCP support then fail to open; leave off unless you need it."
+          value={values.injectMcp}
+          onValueChange={(injectMcp: boolean) => save({ ...values, injectMcp })}
+        />
+      </SettingsCard>
+    </SettingsSection>
+  );
+}
+
+function PresetRows({
+  preset,
+  values,
+  save,
+  modelOptions,
+}: {
+  preset: RoutingPreset;
+  values: DeciderSettings;
+  save: Save;
+  modelOptions: readonly { label: string; value: string }[];
+}): ReactNode {
+  const paseo = usePaseo();
+  const setting = values.presets[preset];
+  const provider = parsePresetModel(setting.model)?.provider ?? null;
+  const modes = useQuery({
+    queryKey: ['local-decider', 'provider-modes', provider],
+    queryFn: async () => (provider === null ? null : paseo.providers.listModes(provider)),
+    enabled: provider !== null,
+    staleTime: Number.POSITIVE_INFINITY,
+    retry: false,
+  });
+  const modeOptions = withCurrent(
+    [
+      { label: 'Provider default', value: '' },
+      ...(modes.data?.modes ?? []).map((m) => ({ label: m.label, value: m.id })),
+    ],
+    setting.modeId,
+  );
+  const update = (next: Partial<DeciderSettings['presets'][RoutingPreset]>): void =>
+    save({ ...values, presets: { ...values.presets, [preset]: { ...setting, ...next } } });
+  return (
+    <>
+      <SettingsSelect
+        label={`route:${preset}`}
+        value={setting.model}
+        options={withCurrent(modelOptions, setting.model)}
+        onValueChange={(model) => update({ model, modeId: '' })}
+      />
+      {provider === null ? null : (
+        <SettingsSelect
+          label={`route:${preset} mode`}
+          value={setting.modeId}
+          options={modeOptions}
+          onValueChange={(modeId) => update({ modeId })}
+        />
+      )}
+    </>
+  );
+}
+
+function RoutingSection({ values, save }: { values: DeciderSettings; save: Save }): ReactNode {
+  const paseo = usePaseo();
+  const queryClient = useQueryClient();
+  const models = useProviderModels();
+  const [refreshing, setRefreshing] = useState(false);
+  const modelOptions = presetModelOptions(models.data ?? []);
+  const refresh = async (): Promise<void> => {
+    setRefreshing(true);
+    try {
+      await paseo.providers.refresh();
+      await paseo.providers.waitForReady({ timeoutMs: 20_000 });
+    } catch {
+      // Discovery keeps going in the background; list whatever is there now.
+    } finally {
+      await queryClient.invalidateQueries({ queryKey: ['local-decider'] });
+      setRefreshing(false);
+    }
+  };
+  return (
+    <SettingsSection
+      title="Routing presets"
+      info="When routing is enforced, a new agent's provider and model follow the preset the gateway picks. Unmapped presets change nothing."
+    >
+      <SettingsCard>
+        {ROUTING_PRESETS.map((preset) => (
+          <PresetRows
+            key={preset}
+            preset={preset}
+            values={values}
+            save={save}
+            modelOptions={modelOptions}
+          />
+        ))}
+        <SettingsAction
+          label="Provider models"
+          {...(models.error === null ? {} : { hint: String(models.error) })}
+          actionLabel={refreshing || models.isFetching ? 'Refreshing…' : 'Refresh'}
+          disabled={refreshing}
+          onPress={() => void refresh()}
+        />
+      </SettingsCard>
+    </SettingsSection>
+  );
+}
+
+function Message({ theme, text }: { theme: Theme; text: string }): ReactNode {
+  return (
+    <View style={{ padding: 16 }}>
+      <Text style={{ color: theme.colors.foregroundMuted }}>{text}</Text>
+    </View>
+  );
+}
+
+export function SettingsScreen({ theme }: PluginSurfaceProps): ReactNode {
+  const settings = useSettings(deciderSettings);
+  if (settings.status === 'loading') {
+    return <Loading />;
+  }
+  if (settings.status === 'error') {
+    return <Message theme={theme} text={`Settings unavailable: ${settings.error}`} />;
+  }
+  if (settings.status === 'invalid') {
+    return (
+      <SettingsSection title="Settings">
+        <SettingsAction
+          label="Stored settings are invalid"
+          hint={settings.error}
+          actionLabel="Reset to defaults"
+          onPress={() => void settings.reset()}
+        />
+      </SettingsSection>
+    );
+  }
+  const { values, revision } = settings;
+  const save: Save = (next) => {
+    void settings.save(next, revision);
+  };
+  return (
+    <View style={{ gap: 16 }}>
+      {settings.saveError === null ? null : <Message theme={theme} text={settings.saveError} />}
+      <GatewaySection values={values} save={save} />
+      <PolicySection values={values} save={save} />
+      <RoutingSection values={values} save={save} />
+    </View>
+  );
+}

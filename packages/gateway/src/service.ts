@@ -5,11 +5,11 @@ import { join } from 'node:path';
 
 import type { Paths } from './paths.ts';
 
-export const SERVICE_NAME = 'local-decider';
-export const LAUNCHD_LABEL = 'dev.local-decider.gateway';
+const SERVICE_NAME = 'local-decider';
+const LAUNCHD_LABEL = 'dev.local-decider.gateway';
 
 /** The argv that runs `gateway run` with the same node and flags as this process. */
-export function gatewayCommand(): string[] {
+function gatewayCommand(): string[] {
   const script = process.argv[1] ?? '';
   return [process.execPath, ...process.execArgv, script, 'gateway', 'run'];
 }

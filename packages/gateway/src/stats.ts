@@ -1,6 +1,6 @@
 import type { Answer, LogRecord, OutcomeRecord, ShadowRecord } from '@local-decider/core';
 
-export const BUCKETS = [0, 0.5, 0.7, 0.8, 0.9, 0.95, 1.000_001] as const;
+const BUCKETS = [0, 0.5, 0.7, 0.8, 0.9, 0.95, 1.000_001] as const;
 
 export interface Bucket {
   readonly range: string;

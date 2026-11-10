@@ -1,0 +1,443 @@
+import type {
+  PluginHookAgent,
+  PluginSessionOpenRequest,
+  PluginTurnOutcome,
+} from '@getpaseo/plugin/server';
+import type { AgentPermissionRequest, AgentTimelineItem } from '@getpaseo/protocol/agent-types';
+import assert from 'node:assert/strict';
+import { describe, it } from 'node:test';
+
+import { Background } from '../server/background.ts';
+import type { HookDeps } from '../server/deps.ts';
+import { createMcpHandler, mcpServerConfig } from '../server/mcp.ts';
+import { allowResponse, createPermissionHandlers } from '../server/permission.ts';
+import { createRoutingHandler, type CreateRequest } from '../server/routing.ts';
+import { createStatusHandler, manualDecide } from '../server/rpc.ts';
+import { createTurnHandler, pluginEnforces } from '../server/turn.ts';
+import { ctx, deps, fakeGateway, fakePaseo, response, settings } from './fakes.ts';
+
+type Paseo = ReturnType<typeof fakePaseo>;
+
+const agent: PluginHookAgent = {
+  id: 'a1',
+  workspaceId: 'w1',
+  parentAgentId: null,
+  provider: 'claude',
+  cwd: '/p',
+  title: null,
+};
+
+const turn: { item: AgentTimelineItem; turnId?: string }[] = [
+  { item: { type: 'user_message', text: 'Add tests' }, turnId: 't1' },
+  { item: { type: 'assistant_message', text: 'Should I use vitest or node:test?' }, turnId: 't1' },
+];
+
+const completed = { kind: 'completed' } as const;
+
+/** A boolean field of an appended row's data. */
+function flag(item: { data: unknown } | undefined, key: string): unknown {
+  assert.ok(item !== undefined, 'a row was appended');
+  return (item.data as Record<string, unknown>)[key];
+}
+
+describe('pluginEnforces', () => {
+  it('needs gateway enforcement, plugin act and no engine error', () => {
+    assert.equal(pluginEnforces(response({ enforced: true }), 'act'), true);
+    assert.equal(pluginEnforces(response({ enforced: true }), 'shadow'), false);
+    assert.equal(pluginEnforces(response({ enforced: false }), 'act'), false);
+    assert.equal(pluginEnforces(response({ enforced: true, error: 'x' }), 'act'), false);
+  });
+});
+
+describe('agent.turn.after', () => {
+  const bg = new Background();
+  const turnHandler = (
+    d: HookDeps,
+  ): ((paseo: Paseo, outcome?: PluginTurnOutcome) => Promise<void>) => {
+    const handler = createTurnHandler(d, { background: bg });
+    return async (paseo, outcome = completed) => {
+      await handler({ agent, turnId: 't1', outcome }, ctx(paseo));
+      await bg.idle();
+    };
+  };
+
+  it('returns before the decision and appends one row per turn when it lands', async () => {
+    const { promise: gate, resolve: release } = Promise.withResolvers<void>();
+    const gw = fakeGateway(async () => {
+      await gate;
+      return response({ action: 'notify', mode: 'act', enforced: true });
+    });
+    const s = settings({
+      modes: { 'turn-outcome': 'act', 'permission': 'shadow', 'routing': 'shadow' },
+    });
+    const paseo = fakePaseo(turn);
+    const handler = createTurnHandler(deps(s, gw), { background: bg });
+    await handler({ agent, turnId: 't1', outcome: completed }, ctx(paseo));
+    assert.equal(paseo.agent.appended.length, 0, 'hook returned before the decision');
+    release();
+    await bg.idle();
+    await handler({ agent, turnId: 't1', outcome: completed }, ctx(paseo));
+    await bg.idle();
+
+    assert.equal(gw.calls.length, 1, 'deduped per turn');
+    assert.equal(gw.calls[0]?.policy, 'turn-outcome');
+    assert.equal(gw.calls[0]?.sessionId, 'a1');
+    assert.deepEqual(Object.keys(gw.calls[0]?.input ?? {}), ['task', 'history', 'lastMessage']);
+    assert.equal(paseo.agent.appended.length, 1);
+    const row = paseo.agent.appended[0];
+    assert.equal(row?.id, 'local-decider-turn-t1');
+    assert.equal(row?.kind, 'decision');
+    assert.equal(flag(row, 'attention'), true);
+  });
+
+  it('records but never flags attention in shadow mode', async () => {
+    const gw = fakeGateway(() => response({ action: 'notify', mode: 'act', enforced: true }));
+    const paseo = fakePaseo(turn);
+    await turnHandler(deps(settings(), gw))(paseo);
+    assert.equal(flag(paseo.agent.appended[0], 'attention'), false);
+  });
+
+  it('does nothing when off, canceled, or the gateway is down', async () => {
+    const off = settings({
+      modes: { 'turn-outcome': 'off', 'permission': 'shadow', 'routing': 'shadow' },
+    });
+    const gw = fakeGateway(() => response());
+    const paseo = fakePaseo(turn);
+    await turnHandler(deps(off, gw))(paseo);
+    await turnHandler(deps(settings(), gw))(paseo, { kind: 'canceled', reason: 'user' });
+    await turnHandler(
+      deps(
+        settings(),
+        fakeGateway(() => null),
+      ),
+    )(paseo);
+    assert.equal(gw.calls.length, 0);
+    assert.equal(paseo.agent.appended.length, 0);
+  });
+
+  it('swallows timeline failures', async () => {
+    const d = deps(
+      settings(),
+      fakeGateway(() => response()),
+    );
+    const paseo = fakePaseo(turn);
+    paseo.agent.timeline.refetch = async () => {
+      throw new Error('agent gone');
+    };
+    await turnHandler(d)(paseo);
+    assert.match(d.logs[0] ?? '', /agent gone/);
+  });
+});
+
+const toolRequest: AgentPermissionRequest = {
+  id: 'r1',
+  provider: 'claude',
+  name: 'Read',
+  kind: 'tool',
+  input: { path: 'README.md' },
+};
+
+const actMode = settings({
+  modes: { 'turn-outcome': 'shadow', 'permission': 'act', 'routing': 'shadow' },
+});
+
+describe('agent.permission.before', () => {
+  const bg = new Background();
+  const permissionHandlers = (
+    d: HookDeps,
+  ): ReturnType<typeof createPermissionHandlers> & {
+    request: (paseo: Paseo, request?: AgentPermissionRequest) => Promise<void>;
+  } => {
+    const handlers = createPermissionHandlers(d, bg);
+    return {
+      ...handlers,
+      request: async (paseo, request = toolRequest) => {
+        await handlers.before({ agent, request }, ctx(paseo));
+        await bg.idle();
+      },
+    };
+  };
+
+  it('auto-allows only an enforced allow with the plugin in act', async () => {
+    const gw = fakeGateway(() =>
+      response({ policy: 'permission', action: 'allow', mode: 'act', enforced: true }),
+    );
+    const paseo = fakePaseo(turn);
+    const handlers = permissionHandlers(deps(actMode, gw));
+    await handlers.request(paseo);
+    assert.deepEqual(paseo.agent.responses, [{ requestId: 'r1', response: { behavior: 'allow' } }]);
+    assert.equal(flag(paseo.agent.appended[0], 'applied'), true);
+    await handlers.after({ agent, requestId: 'r1', resolution: { behavior: 'allow' } });
+    assert.equal(gw.outcomes.length, 0, 'own auto-allow is not ground truth');
+  });
+
+  it('never denies and leaves the request pending otherwise', async () => {
+    for (const [s, res] of [
+      [actMode, response({ action: 'deny', mode: 'act', enforced: true })],
+      [actMode, response({ action: 'allow', mode: 'shadow', enforced: false })],
+      [settings(), response({ action: 'allow', mode: 'act', enforced: true })],
+    ] as const) {
+      const paseo = fakePaseo(turn);
+      await permissionHandlers(
+        deps(
+          s,
+          fakeGateway(() => res),
+        ),
+      ).request(paseo);
+      assert.deepEqual(paseo.agent.responses, []);
+      assert.equal(paseo.agent.appended.length, 1, 'still recorded');
+    }
+  });
+
+  it('swallows the already-resolved race', async () => {
+    const gw = fakeGateway(() => response({ action: 'allow', mode: 'act', enforced: true }));
+    const paseo = fakePaseo(turn, async () => {
+      throw new Error('Permission request r1 is not pending');
+    });
+    const d = deps(actMode, gw);
+    await permissionHandlers(d).request(paseo);
+    assert.equal(flag(paseo.agent.appended[0], 'applied'), false);
+    assert.deepEqual(d.logs, []);
+  });
+
+  it('skips questions and plan approvals, and reports user answers as outcomes', async () => {
+    const gw = fakeGateway(() => response({ action: 'ask' }));
+    const paseo = fakePaseo(turn);
+    const handlers = permissionHandlers(deps(settings(), gw));
+    await handlers.request(paseo, { ...toolRequest, id: 'q', kind: 'question' });
+    assert.equal(gw.calls.length, 0);
+    await handlers.request(paseo);
+    await handlers.after({ agent, requestId: 'r1', resolution: { behavior: 'deny' } });
+    assert.deepEqual(gw.outcomes, [{ decisionId: 'd-1', outcome: 'deny', source: 'user' }]);
+  });
+
+  it('selects the primary allow action when the request offers actions', () => {
+    assert.deepEqual(
+      allowResponse({
+        ...toolRequest,
+        actions: [
+          { id: 'no', label: 'No', behavior: 'deny' },
+          { id: 'once', label: 'Once', behavior: 'allow' },
+          { id: 'always', label: 'Always', behavior: 'allow', variant: 'primary' },
+        ],
+      }),
+      { behavior: 'allow', selectedActionId: 'always' },
+    );
+  });
+});
+
+const createRequest = (title: string | null): { request: CreateRequest } => ({
+  request: { config: { provider: 'claude', cwd: '/p', model: 'opus', title } },
+});
+
+const routingAct = settings({
+  modes: { 'turn-outcome': 'shadow', 'permission': 'shadow', 'routing': 'act' },
+  presets: {
+    fast: { model: 'claude/haiku', modeId: '' },
+    standard: { model: '', modeId: '' },
+    deep: { model: 'codex/gpt-5.5', modeId: '' },
+  },
+});
+
+describe('agent.create.before', () => {
+  const signal = new AbortController().signal;
+
+  it('applies an enforced, mapped preset', async () => {
+    const gw = fakeGateway(() =>
+      response({ policy: 'routing', action: 'route:fast', mode: 'act', enforced: true }),
+    );
+    const out = await createRoutingHandler(deps(routingAct, gw))(createRequest('Rename foo'), {
+      signal,
+    });
+    assert.equal(out?.config.model, 'haiku');
+    assert.deepEqual(gw.calls[0]?.input, { project: '/p', prompt: 'Rename foo' });
+  });
+
+  it('changes nothing when unmapped, not enforced, without a prompt, or on failure', async () => {
+    const cases = [
+      [routingAct, response({ action: 'route:standard', mode: 'act', enforced: true })],
+      [routingAct, response({ action: 'route:fast', mode: 'shadow', enforced: false })],
+      [settings(), response({ action: 'route:fast', mode: 'act', enforced: true })],
+      [routingAct, null],
+    ] as const;
+    for (const [s, res] of cases) {
+      assert.equal(
+        await createRoutingHandler(
+          deps(
+            s,
+            fakeGateway(() => res),
+          ),
+        )(createRequest('Task'), { signal }),
+        undefined,
+      );
+    }
+    const gw = fakeGateway(() => response());
+    assert.equal(
+      await createRoutingHandler(deps(routingAct, gw))(createRequest(null), { signal }),
+      undefined,
+    );
+    assert.equal(gw.calls.length, 0);
+  });
+
+  it('gives up within its budget and never throws', async () => {
+    const slow = fakeGateway(async () => new Promise(() => {}));
+    const started = Date.now();
+    const out = await createRoutingHandler(deps(routingAct, slow), 100)(createRequest('Task'), {
+      signal,
+    });
+    assert.equal(out, undefined);
+    assert.ok(Date.now() - started < 1000);
+
+    const broken = deps(routingAct, null);
+    broken.settings = async () => {
+      throw new Error('settings exploded');
+    };
+    assert.equal(await createRoutingHandler(broken)(createRequest('Task'), { signal }), undefined);
+    assert.match(broken.logs[0] ?? '', /settings exploded/);
+  });
+
+  it('skips the gateway entirely while it is known to be down', async () => {
+    const gw = fakeGateway(() => response({ action: 'route:fast', mode: 'act', enforced: true }));
+    const d = { ...deps(routingAct, gw), gatewayKnownDown: () => true };
+    assert.equal(await createRoutingHandler(d)(createRequest('Task'), { signal }), undefined);
+    assert.equal(gw.calls.length, 0);
+  });
+
+  it('skips internal agents', async () => {
+    const gw = fakeGateway(() => response());
+    const req = createRequest('Commit message');
+    req.request.config.internal = true;
+    assert.equal(await createRoutingHandler(deps(routingAct, gw))(req, { signal }), undefined);
+    assert.equal(gw.calls.length, 0);
+  });
+});
+
+const open = (purpose: 'interactive' | 'history'): { request: PluginSessionOpenRequest } => ({
+  request: {
+    agentId: 'a1',
+    workspaceId: 'w1',
+    provider: 'claude',
+    cwd: '/p',
+    reason: 'resume',
+    purpose,
+    title: null,
+    labels: {},
+    tools: [],
+    env: {},
+    mcpServers: {},
+  },
+});
+
+describe('agent.open.before', () => {
+  it('injects the gateway MCP server only when enabled', async () => {
+    const gw = fakeGateway(() => null);
+    const on = createMcpHandler(deps(settings({ injectMcp: true }), gw), () => undefined);
+    const out = await on(open('interactive'));
+    assert.deepEqual(out?.mcpServers, {
+      'local-decider': { type: 'http', url: 'http://127.0.0.1:8765/mcp' },
+    });
+    assert.equal(await on(open('history')), undefined);
+    assert.equal(
+      await createMcpHandler(deps(settings(), gw), () => undefined)(open('interactive')),
+      undefined,
+    );
+  });
+
+  it('adds a bearer header only when a token is set', () => {
+    assert.deepEqual(mcpServerConfig('http://h', 't'), {
+      type: 'http',
+      url: 'http://h/mcp',
+      headers: { authorization: 'Bearer t' },
+    });
+  });
+});
+
+describe('rpc handlers', () => {
+  it('tracks the down streak for client backoff', async () => {
+    const up = fakeGateway(() => null);
+    let healthy = false;
+    up.health = async () => (healthy ? { status: 'ok', model: 'm', p50Ms: 5 } : null);
+    const status = createStatusHandler(deps(settings(), up), () => new Date(0));
+    assert.equal((await status()).downStreak, 1);
+    assert.equal((await status()).downStreak, 2);
+    healthy = true;
+    const ok = await status();
+    assert.deepEqual(ok, {
+      up: true,
+      status: 'ok',
+      engine: null,
+      model: 'm',
+      p50Ms: 5,
+      gatewayUrl: 'http://127.0.0.1:8765',
+      downStreak: 0,
+      checkedAt: '1970-01-01T00:00:00.000Z',
+    });
+  });
+
+  it('manual decide appends an unenforced row, and throws when the gateway is down', async () => {
+    const gw = fakeGateway(() =>
+      response({ policy: 'routing', action: 'route:fast', mode: 'act', enforced: true }),
+    );
+    const paseo = fakePaseo([]);
+    const row = await manualDecide(deps(settings(), gw), paseo, {
+      policy: 'routing',
+      text: 'x',
+      agentId: 'a1',
+    });
+    assert.equal(row.enforced, false);
+    assert.deepEqual(gw.calls[0]?.input, { prompt: 'x' });
+    assert.equal(paseo.agent.appended[0]?.id, 'local-decider-manual-d-1');
+    await assert.rejects(
+      manualDecide(
+        deps(
+          settings(),
+          fakeGateway(() => null),
+        ),
+        paseo,
+        { policy: 'routing', text: 'x', agentId: null },
+      ),
+      /no decision/,
+    );
+  });
+});
+
+describe('Background', () => {
+  it('refuses work at capacity and after stop, and never rejects', async () => {
+    const bg = new Background(1);
+    const errors: unknown[] = [];
+    const { promise: gate, resolve: release } = Promise.withResolvers<void>();
+    assert.equal(
+      bg.run(
+        async () => gate,
+        (e) => errors.push(e),
+      ),
+      true,
+    );
+    assert.equal(
+      bg.run(
+        async () => {},
+        (e) => errors.push(e),
+      ),
+      false,
+    );
+    release();
+    await bg.idle();
+    assert.equal(
+      bg.run(
+        async () => Promise.reject(new Error('x')),
+        (e) => errors.push(e),
+      ),
+      true,
+    );
+    await bg.idle();
+    assert.equal(errors.length, 1);
+    bg.stop();
+    assert.equal(
+      bg.run(
+        async () => {},
+        () => {},
+      ),
+      false,
+    );
+  });
+});

@@ -13,4 +13,4 @@ export function createEngine(config: EngineConfig, paths: Paths): Engine {
 
 export { SystemOneRemoteEngine } from './remote.ts';
 export { serveArgs, StrandsDeciderEngine, strandsBinary } from './strands.ts';
-export { EngineError, type Engine, type EngineHealth, type EngineState } from './types.ts';
+export { type Engine, type EngineHealth, type EngineState } from './types.ts';

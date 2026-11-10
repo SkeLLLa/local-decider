@@ -1,0 +1,14 @@
+{
+  // App side: index.client.tsx and client/ (shared/ comes in through imports). React Native JSX
+  // with the automatic runtime; no Node or DOM types.
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "jsx": "react-jsx",
+    "types": [],
+    "noEmit": true,
+    "declaration": false,
+    "declarationMap": false,
+    "sourceMap": false
+  },
+  "include": ["index.client.tsx", "client/**/*"]
+}

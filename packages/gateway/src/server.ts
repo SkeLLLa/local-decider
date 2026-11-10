@@ -13,7 +13,7 @@ import { KNOWN_MODELS } from './models.ts';
 import type { ShadowLog } from './shadow.ts';
 import { computeStats } from './stats.ts';
 
-export const MAX_BODY_BYTES = 256 * 1024;
+const MAX_BODY_BYTES = 256 * 1024;
 
 export interface ServerOptions {
   readonly decider: Decider;

@@ -215,7 +215,11 @@ describe('Decider under load', () => {
     const { decider } = setup('shadow', engine);
     const all = await Promise.all(
       Array.from({ length: QUEUE_MAX + 2 }, (_, i) =>
-        decider.decide('permission', { harness: 'cli', input: { ...INPUT, tool: String(i) } }, signal()),
+        decider.decide(
+          'permission',
+          { harness: 'cli', input: { ...INPUT, tool: String(i) } },
+          signal(),
+        ),
       ),
     );
     assert.equal(all.filter((r) => r.error === 'engine queue full').length, 2);
