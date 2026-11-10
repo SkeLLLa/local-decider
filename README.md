@@ -2,42 +2,187 @@
 
 ![local-decider logo](docs/assets/logo.svg)
 
-Local decision models ("System One" models) for coding-agent harnesses: Paseo, Claude Code and
-Codex. A small local model answers routine fixed-choice questions — is this turn done or stuck,
-can this permission be allowed, which model should this task get, is this command risky — in one
-forward pass, with a probability per option and a calibrated confidence. Anything uncertain still
-goes to the large LLM or to you.
+**Coding agents stop to ask you about routine things, or spend expensive model tokens deciding
+them. local-decider lets a small decision model on your own machine answer the routine ones, and
+leaves everything uncertain to you or to the large model.**
 
-> **Status:** early development.
+It works with [Paseo](https://paseo.sh), Claude Code and Codex.
+
+> **Status:** early development. Every policy ships in shadow mode (log only).
 >
 > **Unofficial.** This project is not affiliated with, endorsed by, or sponsored by Strands
 > Agents, Amazon Web Services, Anthropic, OpenAI or Paseo.
 
-## How it works
+## What it is
 
-```text
-engines (strands-decider, any /v1/systemone server) ─► gateway 127.0.0.1:8765 ─► Paseo / Claude Code / Codex
+A coding-agent harness keeps hitting small, fixed-choice questions. Can this `git status` run
+without asking? Did the agent finish, or is it waiting for me? Does this task need the big model?
+Is this command risky?
+
+local-decider answers them with a local "System One" decision model. The model reads the state
+once and returns a probability for each option, plus a calibrated confidence. A YAML **policy**
+turns the answer into an action (`allow`, `ask`, `deny`, `notify`, `route:<preset>`, ...). Only
+high-confidence answers act. Everything else falls through to the harness's normal behaviour.
+
+A local **gateway** runs the model and the policies. Thin harness plugins call it over HTTP on
+`127.0.0.1:8765`. If the gateway is down, slow or erroring, the plugins do nothing and the
+harness behaves as if they were not installed.
+
+```mermaid
+flowchart LR
+  H["Harness<br/>Paseo · Claude Code · Codex"] -->|event| P["Plugin / hook<br/>(thin client)"]
+  P -->|"POST /v1/decide/:policy"| G["Gateway 127.0.0.1:8765<br/>redact · policy · rules · shadow log"]
+  G -->|"/v1/systemone"| E["Engine<br/>strands-decider · FastFlowLM · remote"]
+  E --> G
+  G -->|"action, enforced?"| P
+  P -.->|"down, slow or error:<br/>no output, default behaviour"| H
 ```
 
-- **Gateway** (`local-decider`): `POST /v1/systemone` (Strands/Jev/Laya compatible),
-  `POST /v1/decide/:policy`, `GET /health`, `GET /models`, MCP `decide` tool at `/mcp`, shadow log
-  and `local-decider stats` (agreement, Brier score, reliability).
-- **Policies are data** (`policies/*.yaml`): turn outcome, permission triage, routing, command
-  risk. Each runs `off`, `shadow` (log only, the default) or `act`.
-- **Harness adapters** are thin, fail-open clients: a Paseo plugin, and one plugin directory
-  serving both Claude Code and Codex.
+See [docs/architecture.md](docs/architecture.md) for the full pipeline.
+
+## What's in the monorepo
+
+| Path | What it is |
+|---|---|
+| [`packages/core`](packages/core) | `@local-decider/core`: `/v1/systemone` types, policy schema and loader, redaction, truncation, gateway client |
+| [`packages/gateway`](packages/gateway) | `local-decider`: the local HTTP service, engine adapters, MCP server and CLI |
+| [`packages/hooks`](packages/hooks) | The Claude Code and Codex hook runner, bundled into `plugins/local-decider/dist/hook.mjs` |
+| [`packages/paseo-plugin`](packages/paseo-plugin) | `paseo-plugin-local-decider`: the Paseo plugin, with settings page, chat rows and sidebar status |
+| [`plugins/local-decider`](plugins/local-decider) | One plugin directory for both Claude Code and Codex (both manifests) |
+| [`policies/`](policies) | Default policies: `turn-outcome`, `permission`, `routing` (plus two variants), `command-risk`; test fixtures in `policies/fixtures/` |
+| [`schemas/`](schemas) | JSON Schemas for `config.yaml` and policy files |
+| [`docs/`](docs) | Architecture, install, policies, security, benchmarks, ADRs, research notes |
+
+## Benefits
+
+- **Fewer prompts.** Read-only commands, builds, tests and in-project edits can be auto-allowed
+  when the model is very sure (p(allow) ≥ 0.95 by default).
+- **Cheaper routing.** A routing policy picks a preset such as `fast`, `cheap` or `deep` for a new
+  task. You map each preset to a model, so small tasks can go to a cheaper one.
+- **Private and local.** The model runs on your machine. Secrets are redacted before the model
+  sees the state. The decision log stores hashes, never prompts or code.
+- **Fails open.** A missing, slow or broken gateway changes nothing.
+- **Measure before you enforce.** In `shadow` mode every decision is logged with what it *would*
+  have done. `local-decider stats` reports agreement, Brier score, calibration buckets and
+  estimated savings. Switch a policy to `act` only when the numbers look right.
+- **Learns from your answers.** Exact-match precedent: after three allows of the same request in
+  the same project, and no deny, a lower threshold (p ≥ 0.6) applies. Any deny vetoes it.
+- **Supervised subagents in Paseo.** An orchestrator agent can answer its child's escalated
+  permission request, and that answer counts as precedent. See
+  [docs/supervised-subagents.md](docs/supervised-subagents.md).
+- **Policies are data.** Change questions, thresholds and actions in YAML, without code.
+
+## Drawbacks and limits
+
+Read [docs/security.md](docs/security.md) before you turn on `act`.
+
+- **Small models make mistakes.** Calibration differs per model, so thresholds tuned on one model
+  do not transfer. Re-check `local-decider stats` after switching models.
+- **It needs local hardware.** The default 2B model downloads about 4.8 GB (E4B about 16 GB).
+  FastFlowLM `d3:mini` downloads about 3.2 GiB and needs under 9 GB of RAM.
+- **Every decision costs latency.** On CPU the 2B model takes 1.2–2.5 s for a short decision.
+  The hooks give up after 1.5 s, so on CPU the decider suits shadow logging, turn outcomes and
+  routing hints, not a per-tool-call guard. An NPU or GPU engine is much faster (see
+  [Results](#results)).
+- **Prompts are untrusted input.** The model reads text an attacker may control. It cannot run
+  anything, but it can be steered toward a label. That is why auto-allow needs p ≥ 0.95,
+  `command-risk` can only add friction, Paseo never auto-denies, and a deterministic deny layer
+  runs first.
+- **Redaction is best-effort** pattern matching. Unusual secret formats can reach the local
+  engine (never the log).
+- **Claude Code auto mode ignores a hook `allow`**
+  ([anthropics/claude-code#94740](https://github.com/anthropics/claude-code/issues/94740)), so in
+  auto mode the decider can only add `ask` or `deny`.
+- **Codex `PreToolUse` is deny-only.** Approval goes through `PermissionRequest`.
+- **Paseo auto mode** still sends each action to the provider's hosted classifier first. The
+  plugin saves prompts in Always Ask or Accept File Edits mode.
+- **Paseo 0.15.3** gives plugins no first prompt at agent creation, so routing sees only the agent
+  title.
+- **Shadow savings are an upper bound.** A cheaper model may need more turns or fail.
+- **Outcome labels are not authenticated.** Any local process can post one to the loopback
+  gateway.
+
+## Quick start
+
+Requirements:
+
+- Node >= 24 for the gateway (Node 20+ is enough for the Claude Code and Codex hooks).
+- [uv](https://docs.astral.sh/uv/) for the strands-decider engine.
+- Linux or macOS. Optional: an AMD Ryzen AI NPU (FastFlowLM), Apple Silicon (MLX) or CUDA.
+
+The commands below are fish-compatible. [docs/install.md](docs/install.md) has every option.
+
+### 1. Gateway and engine
+
+From a checkout (`mise install` provides Node, pnpm and uv):
+
+```sh
+git clone https://github.com/SkeLLLa/local-decider.git; and cd local-decider
+mise trust; and mise install; and mise run setup; and mise run build
+alias local-decider "node $PWD/packages/gateway/dist/cli.js"
+local-decider engine install      # uv venv + weights; cpu on Linux, mlx on Apple Silicon
+local-decider gateway start       # systemd user unit (Linux) or launchd agent (macOS)
+local-decider gateway status
+```
+
+`engine install` takes `--flavor cpu|mlx|cuda`, `--model <id>` and `--no-download`. On Linux with
+an AMD Ryzen AI NPU, install FastFlowLM instead and pick the engine in Paseo's settings:
+
+```sh
+local-decider engine install --engine fastflowlm   # pulls d3:nano; checks sha256, runs flm validate
+```
+
+Check that it answers:
+
+```sh
+local-decider decide turn-outcome lastMessage="All tests pass; the PR is open."
+```
+
+### 2. Paseo
+
+Enable plugins on the daemon first (**Settings → Plugins → Enable plugins**), then:
+
+```sh
+paseo plugin install github:SkeLLLa/local-decider:packages/paseo-plugin
+# or from your checkout (the plugin directory, not the repo root)
+paseo plugin install (pwd)/packages/paseo-plugin
+paseo plugin ls                   # local-decider should show "running"
+```
+
+Open **Settings → Local decider** to pick the engine and model, and set each policy's mode.
+
+### 3. Claude Code
+
+```sh
+claude plugin marketplace add SkeLLLa/local-decider; and claude plugin install local-decider@local-decider
+```
+
+### 4. Codex
+
+```sh
+codex plugin marketplace add SkeLLLa/local-decider; and codex plugin add local-decider@local-decider
+```
+
+Then open the Codex TUI and run `/hooks` to review and trust the hooks. Codex does not run
+untrusted plugin hooks.
+
+Inside Paseo, Claude Code and Codex agents load their plugin too. The Paseo plugin tells the
+hooks which policies it already runs, so each event is decided once. See
+[plugins/local-decider/README.md](plugins/local-decider/README.md).
+
+## What it looks like
+
+A decision row in a Paseo chat after a turn ends: answer, confidence, action, model, latency,
+and feedback buttons.
+
+![Turn-outcome decision row](docs/assets/screenshots/chat-decision.png)
 
 <details>
-<summary>Screenshots: the Paseo plugin</summary>
+<summary>More screenshots: quick status, settings, service and statistics</summary>
 
 Quick status from the sidebar: engine state, latency and each policy's mode.
 
 ![Quick-status popover](docs/assets/screenshots/quick-status.png)
-
-A decision row in the chat after a turn ends, with the answer, confidence, action, model and
-latency, and your feedback.
-
-![Turn-outcome decision row](docs/assets/screenshots/chat-decision.png)
 
 Engine and model picker with download sizes, memory, latency and the FastFlowLM NPU check.
 
@@ -53,31 +198,166 @@ Gateway service controls and shadow statistics.
 
 </details>
 
-## Quick start
+Shadow-log records from one Claude Code turn, summarised, from [docs/demos.md](docs/demos.md)
+(2B model on CPU, every policy in `shadow`):
 
-```sh
-mise trust; and mise install; and mise run setup; and mise run build
-node packages/gateway/dist/cli.js engine install     # uv venv + model weights (~4.8 GB for 2B)
-node packages/gateway/dist/cli.js gateway start      # systemd user unit / launchd agent
+```text
+12:43:46 claude-code routing      shadow action=abstain tier=standard(0.37)     1561ms
+12:43:49 claude-code command-risk shadow action=log risk=safe(0.97)         1617ms
+12:43:51 claude-code permission   shadow action=ask     verdict=allow(0.69)     1766ms
+12:43:56 claude-code turn-outcome shadow action=notify  outcome=needs_input(0.65) 2260ms
 ```
 
-Then add one or more harnesses:
+## Configuration
 
-```sh
-# Paseo, from this checkout or straight from GitHub (the path after ':' is the plugin directory)
-paseo plugin install (pwd)/packages/paseo-plugin
-paseo plugin install github:SkeLLLa/local-decider:packages/paseo-plugin
-# Claude Code
-claude plugin marketplace add SkeLLLa/local-decider; and claude plugin install local-decider@local-decider
-# Codex (then trust the hooks with /hooks in the TUI)
-codex plugin marketplace add SkeLLLa/local-decider; and codex plugin add local-decider@local-decider
+Every setting lives in `~/.config/local-decider/config.yaml`. All keys are optional.
+`local-decider config path` prints the location, and `local-decider config check` validates the
+file and every policy. The gateway applies edits as they happen; only `host`, `port`, `engine`
+and `decisionTimeoutMs` need a restart. Paseo's **Settings → Local decider** page and the
+`local-decider policies` and `local-decider routing` commands write to the same file, so Paseo,
+Claude Code and Codex share it.
+
+The settings that matter most:
+
+| Key | What it does | Default |
+|---|---|---|
+| `engine` | `type: strands-decider`, `systemone-remote` or `fastflowlm`, with `model`, `device`, `url` | strands-decider, `StrandsAgents/strands-decider-2B-qwen3.5-v1-2610`, `device: auto` |
+| `selection` | Engine and model picked in the settings page; beats `engine.type` and `engine.model` | unset |
+| `policies.<id>.mode` | `off` (never asked), `shadow` (log only), `act` (adapters may enforce) | the policy file's mode, `shadow` |
+| `policies.<id>.thresholds` | Rule thresholds by `<question>.<answer>`, e.g. `verdict.allow: 0.9`; an allow never goes below 0.5 | the policy file's values |
+| `policies.<id>.variant` | Another policy with `variantOf: <id>` that answers instead | unset |
+| `routing.presets.<harness>` | Preset name → model (and mode, thinking level, Paseo profile) per harness | none: a preset changes nothing |
+| `pricing` | USD per million tokens, for savings in dollars; never fetched | unset: savings in tokens |
+| `lifecycle` | `lazy` (load on first decision, unload when idle) or `eager` | `lazy`, 15 idle minutes |
+
+A short example:
+
+```yaml
+# yaml-language-server: $schema=schemas/config.schema.json
+engine:
+  type: strands-decider
+  device: auto                  # auto | cpu | mlx | mps | cuda
+policies:
+  permission: { mode: act, thresholds: { verdict.allow: 0.9 } }
+  routing: { mode: act, variant: routing-budget }
+routing:
+  presets:
+    paseo:
+      cheap: { model: claude/haiku }
+      premium: { model: claude/opus, thinking: high }
+    claude-code:
+      cheap: { model: haiku }
+pricing:                        # example values; keys match the preset models (`claude/haiku` or `haiku`)
+  haiku: { input: 1, cachedInput: 0.1, output: 5 }
+  opus: { input: 5, cachedInput: 0.5, output: 25 }
 ```
 
-Docs: [install and configure](docs/install.md), [architecture](docs/architecture.md),
-[policy authoring](docs/policies.md), [threat model and limits](docs/security.md),
-[supervised child agents](docs/supervised-subagents.md),
-[benchmarks](docs/benchmarks.md), [demos](docs/demos.md), [ADRs](docs/adr/),
-[research notes](docs/research/).
+Secrets never go in this file. A non-loopback gateway needs `LOCAL_DECIDER_TOKEN` in the
+environment (see [docs/install.md](docs/install.md#2-configuration)).
+
+In Paseo, a policy changes behaviour only when both the gateway's mode and the plugin's setting
+for that policy are `act`. The settings page also covers thresholds, the routing policy and its
+preset mappings, engine and model downloads, the gateway service and how decisions show in chat.
+See [packages/paseo-plugin/OVERVIEW.md](packages/paseo-plugin/OVERVIEW.md).
+
+## Examples
+
+### Auto-allow a read-only command
+
+The `permission` policy allows read-only commands, builds, tests and in-project edits when
+p(allow) ≥ 0.95. On FastFlowLM `d3:mini`, `cat README.md` scored p(allow) = 0.97 and would be
+allowed; the 2B CPU model scored 0.93 and would ask. Try one by hand:
+
+```sh
+local-decider decide permission tool=Bash request="git status" task="Inspect repository state"
+```
+
+### Flag an exfiltration with command-risk
+
+`command-risk` rates a command `safe`, `caution` or `dangerous` before it runs. It can only add
+friction: `ask` on a caution lead, `deny` on a confident `dangerous`. Its criteria name concrete
+examples because that matters: on the 2B model, a vague "exposes secrets" criterion scored an
+`~/.ssh` exfiltration p = 0.25 dangerous, while "sends credentials, keys or private files (such
+as ~/.ssh, ~/.aws or .env) off the machine" scored it p = 0.81. A deterministic guard runs before
+the model and always denies a short list of destructive commands (`rm -rf /`, `mkfs`, `curl | sh`,
+force-pushing `main`, ...).
+
+### Route a task to a cheaper model
+
+Pick the budget routing variant and map its presets:
+
+```sh
+local-decider policies use routing routing-budget
+local-decider routing map paseo cheap claude/haiku
+local-decider routing map claude-code cheap haiku
+local-decider policies mode routing act
+```
+
+Paseo switches the new agent's provider and model. Claude Code and Codex hooks cannot switch the
+session model, so they add a hint naming it. Other variants: `routing` (`fast`, `standard`,
+`deep`) and `routing-task-kind` (`docs`, `ui`, `code`, `debug`, `plan`).
+
+### Notice when an agent needs you
+
+`turn-outcome` classifies each finished turn as `done`, `needs_input`, `stuck` or `failed`, and
+returns `notify` for the last three at confidence ≥ 0.6. In Paseo an enforced attention case is
+highlighted in the chat row. In Claude Code and Codex it is logged only.
+
+### Test a policy on fixtures
+
+Put `{"input": {...}, "expect": "allow"}` cases in a JSONL file, one per line, and run them
+against the gateway:
+
+```sh
+local-decider policies eval permission policies/fixtures/permission.jsonl
+```
+
+It prints the expected action, the returned action and the selected answer's probability for
+each case. It reports differences; it does not fail on them. See
+[docs/policies.md](docs/policies.md#testing-a-policy).
+
+### Measure, then enforce
+
+```sh
+local-decider stats                          # agreement, Brier, calibration, savings
+local-decider policies mode permission act   # when the high-confidence buckets are accurate
+```
+
+## Results
+
+Examples from one machine (AMD Ryzen AI 9 365, 61 GB RAM, 2026-11-10). Your numbers will differ.
+Details and methods: [docs/benchmarks.md](docs/benchmarks.md) and [docs/demos.md](docs/demos.md).
+
+Latency of one 4-option question, measured at the client (p50):
+
+| State tokens (target) | Strands 2B, CPU | FastFlowLM d3:lite, NPU | FastFlowLM d3:nano, NPU |
+|---:|---:|---:|---:|
+| 256 | 2,426 ms | 228 ms | 325 ms |
+| 1,024 | 5,468 ms | 532 ms | 764 ms |
+| 2,048 | 11,127 ms | 929 ms | 1,351 ms |
+| 3,800 | 19,310 ms | 1,646 ms | 2,367 ms |
+
+- The NPU is 7–11× faster than the 2B on CPU. Through the gateway, a short decision took 250 ms
+  on `d3:nano` and about 600 ms on `d3:mini`.
+- `d3:mini` answered all six integration cases correctly with p ≥ 0.91 (turn outcome, command
+  risk and permission, two cases each). It is the recommended FastFlowLM model
+  ([research notes](docs/research/flm-decision-models.md)).
+- End-to-end, all four hooks fired in Claude Code 2.1.311 and Codex CLI 0.164.0, and the Paseo
+  plugin classified a turn in Paseo 0.15.3. On CPU every decision exceeded the 1.5 s hook budget,
+  so the hooks failed open while the gateway still logged the shadow decisions.
+
+## Documentation
+
+- [Install and configure](docs/install.md)
+- [Architecture](docs/architecture.md)
+- [Policy authoring](docs/policies.md): schema, thresholds, precedent, variants, testing
+- [Threat model and known limits](docs/security.md)
+- [Supervised child agents](docs/supervised-subagents.md)
+- [Benchmarks](docs/benchmarks.md) and [end-to-end demos](docs/demos.md)
+- [Architecture decision records](docs/adr/)
+- [Research notes](docs/research/): engines, hooks, Paseo plugin API, FastFlowLM models
+- [Paseo plugin](packages/paseo-plugin/README.md) and its [settings overview](packages/paseo-plugin/OVERVIEW.md)
+- [Claude Code and Codex plugin](plugins/local-decider/README.md)
 
 ## Prior art and credits
 
@@ -93,12 +373,17 @@ and models, Apache-2.0), [Laya](https://github.com/NandhaKishorM/laya),
 [destructive_command_guard](https://github.com/Dicklesworthstone/destructive_command_guard),
 [codex-policy-hooks](https://github.com/jakubc78/codex-policy-hooks).
 
-## Development
+## Contributing
 
 ```sh
 mise trust; and mise install; and mise run setup
-mise run check
+mise run check      # lint, typecheck, Markdown, workflows, complexity, build and test
 ```
+
+Read [AGENTS.md](AGENTS.md) for conventions. Commits and PR titles follow
+[Conventional Commits](https://www.conventionalcommits.org/) (`<type>(<scope>): <description>`);
+CI enforces it and release-please derives versions from it. Run `mise run check` before you open
+a PR.
 
 ## Licence
 
