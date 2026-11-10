@@ -50,6 +50,7 @@ interface RoutePlan {
   readonly settings: DeciderSettings;
   readonly gateway: Gateway;
   readonly body: DecideRequest;
+  readonly profiles: readonly ProfileLike[];
 }
 
 export function createRoutingHandler(
@@ -96,6 +97,7 @@ function withBudget<T>(work: Promise<T | undefined>, signal: AbortSignal): Promi
 export function routingModels(
   config: { provider: string; model?: string | undefined },
   presets: Parameters<typeof presetTarget>[0],
+  profiles: readonly ProfileLike[] = [],
 ): DecisionModels {
   const routes: Record<string, string> = {};
   for (const preset of Object.keys(presets)) {
@@ -105,20 +107,30 @@ export function routingModels(
     }
   }
   const model = config.model?.trim() ?? '';
-  return { ...(model === '' ? {} : { requested: `${config.provider}/${model}` }), routes };
+  return {
+    ...(model === '' ? {} : { requested: `${config.provider}/${model}` }),
+    routes,
+    ...profileModels(profiles),
+  };
+}
+
+/** Profile id → `provider/model`, so the gateway can resolve config.yaml profile presets. */
+function profileModels(profiles: readonly ProfileLike[]): { profiles?: Record<string, string> } {
+  const out: Record<string, string> = {};
+  for (const p of profiles) {
+    const model = p.model?.trim() ?? '';
+    if (model !== '') {
+      out[p.id] = `${p.provider}/${model}`;
+    }
+  }
+  return Object.keys(out).length > 0 ? { profiles: out } : {};
 }
 
 /** The gateway resolves presets from config.yaml; settings.presets is the pre-config.yaml map. */
-async function targetOf(
-  res: DecideResponse,
-  presets: DeciderSettings['presets'],
-  paseo: ProfileSource | undefined,
-): Promise<PresetTarget | null> {
-  if (res.route === undefined) {
-    return presetTarget(presets, res.action);
-  }
-  const profiles = res.route.profile === undefined ? [] : await loadProfiles(paseo);
-  return routeTarget(res.route, profiles);
+function targetOf(res: DecideResponse, plan: RoutePlan): PresetTarget | null {
+  return res.route === undefined
+    ? presetTarget(plan.settings.presets, res.action)
+    : routeTarget(res.route, plan.profiles);
 }
 
 async function route(
@@ -128,16 +140,20 @@ async function route(
   usage: UsageLinks | undefined,
   paseo: ProfileSource | undefined,
 ): Promise<CreateRequest | undefined> {
-  const plan = await routePlan(deps, request);
+  const plan = await routePlan(deps, request, paseo);
   if (plan === undefined) {
     return undefined;
   }
   return plan.mode === 'act'
-    ? routeAct(plan, deps, request, signal, usage, paseo)
+    ? routeAct(plan, deps, request, signal, usage)
     : routeShadow(plan, request, usage);
 }
 
-async function routePlan(deps: HookDeps, request: CreateRequest): Promise<RoutePlan | undefined> {
+async function routePlan(
+  deps: HookDeps,
+  request: CreateRequest,
+  paseo: ProfileSource | undefined,
+): Promise<RoutePlan | undefined> {
   // Internal helper agents (commit messages, titles) are not user tasks.
   if (request.config.internal === true || deps.gatewayKnownDown?.() === true) {
     return undefined;
@@ -152,14 +168,16 @@ async function routePlan(deps: HookDeps, request: CreateRequest): Promise<RouteP
   if (gateway === null) {
     return undefined;
   }
+  const profiles = await loadProfiles(paseo);
   return {
     mode,
     settings,
     gateway,
+    profiles,
     body: {
       harness: 'paseo',
       input: { ...input },
-      models: routingModels(request.config, settings.presets),
+      models: routingModels(request.config, settings.presets, profiles),
     },
   };
 }
@@ -187,7 +205,6 @@ async function routeAct(
   request: CreateRequest,
   signal: AbortSignal,
   usage: UsageLinks | undefined,
-  paseo: ProfileSource | undefined,
 ): Promise<CreateRequest | undefined> {
   const pending = plan.gateway.decide(ROUTING_POLICY, plan.body, {
     timeoutMs: ROUTING_BUDGET_MS,
@@ -205,7 +222,7 @@ async function routeAct(
   if (res === null || !pluginEnforces(res, plan.mode)) {
     return undefined;
   }
-  const target = await targetOf(res, plan.settings.presets, paseo);
+  const target = targetOf(res, plan);
   if (target === null) {
     return undefined;
   }

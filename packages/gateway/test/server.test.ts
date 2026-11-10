@@ -56,6 +56,42 @@ describe('routing presets per harness', () => {
       await gw.close();
     }
   });
+
+  it('resolves a profile preset to a routed model from the harness profile models', async () => {
+    const paths = tempPaths();
+    const gw = await startGateway({
+      config: testConfig({
+        policies: { routing: { mode: 'act' } },
+        routing: { presets: { paseo: { fast: { profile: 'implementer-luna' } } } },
+      }),
+      paths,
+      engine: new FakeEngine({ fast: 0.9, standard: 0.05, deep: 0.05 }),
+      env: {},
+    });
+    try {
+      const res = await fetch(`${gw.url}/v1/decide/routing`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          harness: 'paseo',
+          input: { prompt: 'rename foo' },
+          models: {
+            requested: 'claude/claude-opus-5-5',
+            profiles: { 'implementer-luna': 'codex/gpt-6-luna' },
+          },
+        }),
+      });
+      const id = (await json(res))['decisionId'];
+      const record = new ShadowLog(paths.logs)
+        .read()
+        .find((r) => r.kind === 'decision' && r.decisionId === id);
+      assert.ok(record?.kind === 'decision');
+      assert.equal(record.requestedModel, 'claude/claude-opus-5-5');
+      assert.equal(record.routedModel, 'codex/gpt-6-luna');
+    } finally {
+      await gw.close();
+    }
+  });
 });
 
 describe('gateway precedent', () => {

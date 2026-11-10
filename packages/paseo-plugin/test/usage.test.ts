@@ -104,6 +104,18 @@ describe('routing models', () => {
       routes: { 'route:fast': 'claude/haiku' },
     });
   });
+
+  it('sends Paseo profile models so the gateway can resolve profile presets', () => {
+    const profiles = [
+      { id: 'reviewer', provider: 'claude', model: 'claude-sonnet-5-5' },
+      { id: 'no-model', provider: 'codex' },
+    ];
+    assert.deepEqual(routingModels({ provider: 'claude', model: 'opus' }, {}, profiles), {
+      requested: 'claude/opus',
+      routes: {},
+      profiles: { reviewer: 'claude/claude-sonnet-5-5' },
+    });
+  });
 });
 
 describe('savings stats', () => {

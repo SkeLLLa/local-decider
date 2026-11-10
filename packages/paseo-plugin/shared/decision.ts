@@ -34,6 +34,8 @@ export interface DecisionModels {
   readonly requested?: string;
   /** Action (`route:fast`) → the model the harness switches to when it is enforced. */
   readonly routes?: Readonly<Record<string, string>>;
+  /** Paseo agent profile id → its `provider/model`, so profile presets resolve to a model. */
+  readonly profiles?: Readonly<Record<string, string>>;
 }
 
 /** `POST /v1/usage`: one agent turn's tokens, for the decision that applied to the agent. */

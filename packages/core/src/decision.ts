@@ -23,6 +23,8 @@ export interface DecisionModels {
   readonly requested?: string;
   /** Action (`route:fast`) → the model the harness switches to when it is enforced. */
   readonly routes?: Readonly<Record<string, string>>;
+  /** Harness agent profile id → its `provider/model`, so profile presets resolve to a model. */
+  readonly profiles?: Readonly<Record<string, string>>;
 }
 
 /** A routing preset resolved for one harness (`routing.presets.<harness>.<preset>`). */

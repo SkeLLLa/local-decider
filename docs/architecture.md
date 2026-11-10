@@ -98,8 +98,11 @@ never holds prompts, code or (unredacted) secrets. `local-decider stats` joins t
 and reports agreement, Brier score and reliability per confidence bucket, plus savings
 (`gateway/src/savings.ts`):
 
-- **Routing**: a decide request may carry `models: {requested, routes}`, the model the agent
-  uses unchanged and the model each route action switches to. With usage reported for the agent,
+- **Routing**: a decide request may carry `models: {requested, routes, profiles}`, the model the
+  agent uses unchanged, the model each route action switches to, and each harness agent
+  profile's model. The gateway fills missing routes from `config.yaml` presets, resolving a
+  `profile` preset through `profiles` (the Paseo plugin sends its agent profiles). With usage
+  reported for the agent,
   stats sum the tokens of tasks routed to another model: `potential` for shadow decisions (the
   task ran on the requested model), `realized` for enforced ones. The optional `pricing` table
   in `config.yaml` prices both sides; without it savings stay in tokens. Shadow figures are an

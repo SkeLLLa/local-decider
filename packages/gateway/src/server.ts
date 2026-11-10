@@ -123,19 +123,29 @@ function parseModels(value: unknown): DecisionModels | undefined {
     return undefined;
   }
   const requested = modelId(value['requested']);
-  const routes: Record<string, string> = {};
-  const rawRoutes = isRecord(value['routes']) ? value['routes'] : {};
-  for (const [action, model] of Object.entries(rawRoutes).slice(0, MAX_ROUTES)) {
-    const id = modelId(model);
-    if (id !== undefined && action.length <= 100) {
-      routes[action] = id;
-    }
-  }
-  const hasRoutes = Object.keys(routes).length > 0;
-  if (requested === undefined && !hasRoutes) {
+  const routes = modelMap(value['routes']);
+  const profiles = modelMap(value['profiles']);
+  if (requested === undefined && routes === undefined && profiles === undefined) {
     return undefined;
   }
-  return { ...(requested === undefined ? {} : { requested }), ...(hasRoutes ? { routes } : {}) };
+  return {
+    ...(requested === undefined ? {} : { requested }),
+    ...(routes === undefined ? {} : { routes }),
+    ...(profiles === undefined ? {} : { profiles }),
+  };
+}
+
+/** `key → provider/model` entries with valid model ids, or undefined when none. */
+function modelMap(value: unknown): Record<string, string> | undefined {
+  const out: Record<string, string> = {};
+  const raw = isRecord(value) ? value : {};
+  for (const [key, model] of Object.entries(raw).slice(0, MAX_ROUTES)) {
+    const id = modelId(model);
+    if (id !== undefined && key.length <= 100) {
+      out[key] = id;
+    }
+  }
+  return Object.keys(out).length > 0 ? out : undefined;
 }
 
 function parseSystemOne(body: unknown): SystemOneRequest {

@@ -36,19 +36,24 @@ function routeOf(
   };
 }
 
-/** Give a request without its own `models.routes` the configured ones, for savings stats. */
+/**
+ * Fill `models.routes` from the configured presets, for savings stats. A profile target resolves
+ * through the harness's `models.profiles`; routes the request sent itself win.
+ */
 export function withConfiguredRoutes(config: GatewayConfig, request: DecideRequest): DecideRequest {
-  if (request.models?.routes !== undefined) {
-    return request;
-  }
-  // A profile-only target names no model here; the harness can send that route itself.
-  const entries = Object.entries(targetsOf(config, request.harness)).flatMap(([preset, t]) =>
-    t.model === undefined ? [] : [[`${ROUTE_PREFIX}${preset}`, t.model] as const],
-  );
+  const profiles = request.models?.profiles ?? {};
+  const entries = Object.entries(targetsOf(config, request.harness)).flatMap(([preset, t]) => {
+    const model =
+      t.model ??
+      (t.profile !== undefined && Object.hasOwn(profiles, t.profile)
+        ? profiles[t.profile]
+        : undefined);
+    return model === undefined ? [] : [[`${ROUTE_PREFIX}${preset}`, model] as const];
+  });
   if (entries.length === 0) {
     return request;
   }
-  const routes = Object.fromEntries(entries);
+  const routes = { ...Object.fromEntries(entries), ...request.models?.routes };
   return { ...request, models: { ...request.models, routes } };
 }
 
