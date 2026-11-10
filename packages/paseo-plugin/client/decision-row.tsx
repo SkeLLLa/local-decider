@@ -1,11 +1,88 @@
 import type { PluginTimelineItemProps } from '@getpaseo/plugin/client';
-import { useMemo, type ReactNode } from 'react';
-import { Text, View } from 'react-native';
+import { useRpc } from '@getpaseo/plugin/client';
+import { useToast } from '@getpaseo/plugin/client/ui';
+import { useMemo, useState, type ReactNode } from 'react';
+import { Pressable, Text, View } from 'react-native';
 
 import { rowDetail, rowSummary, type DecisionRow } from '../shared/row.ts';
+import { feedbackRpc } from '../shared/rpc.ts';
+import { useDeciderValues } from './hooks.ts';
+import type { Theme } from './ui.tsx';
 
-export function DecisionRowView({ item, theme }: PluginTimelineItemProps<DecisionRow>): ReactNode {
+/**
+ * "Right answer?" chips: one per option of the primary question. Tapping one reports it to the
+ * gateway as a `user` outcome, the ground truth behind `local-decider stats`.
+ */
+function Feedback({
+  row,
+  agentId,
+  theme,
+}: {
+  row: DecisionRow;
+  agentId: string;
+  theme: Theme;
+}): ReactNode {
+  const send = useRpc(feedbackRpc);
+  const toast = useToast();
+  const [sent, setSent] = useState<string | null>(row.feedback);
+  const [busy, setBusy] = useState(false);
+  const chosen = row.feedback ?? sent;
+  const muted = { color: theme.colors.foregroundMuted, fontSize: 11 };
+  if (chosen !== null) {
+    return (
+      <Text style={muted}>
+        {chosen === row.answer ? '✓ You confirmed this answer' : `✗ You said: ${chosen}`}
+      </Text>
+    );
+  }
+  const report = (outcome: string): void => {
+    setBusy(true);
+    send({ agentId, row, outcome })
+      .then(
+        () => setSent(outcome),
+        (error: unknown) => toast.error(error instanceof Error ? error.message : String(error)),
+      )
+      .finally(() => setBusy(false));
+  };
+  return (
+    <View style={{ flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: 4 }}>
+      <Text style={muted}>Right answer?</Text>
+      {row.options.map((option) => {
+        const predicted = option === row.answer;
+        return (
+          <Pressable
+            key={option}
+            accessibilityRole="button"
+            accessibilityLabel={`The right answer was ${option}`}
+            accessibilityState={{ disabled: busy }}
+            disabled={busy}
+            onPress={() => report(option)}
+            style={{
+              paddingHorizontal: 6,
+              paddingVertical: 1,
+              borderRadius: 4,
+              borderWidth: 1,
+              borderColor: predicted ? theme.colors.accent : theme.colors.border,
+              opacity: busy ? 0.5 : 1,
+            }}
+          >
+            <Text style={{ ...muted, color: predicted ? theme.colors.foreground : muted.color }}>
+              {option}
+            </Text>
+          </Pressable>
+        );
+      })}
+    </View>
+  );
+}
+
+export function DecisionRowView({
+  item,
+  theme,
+  agentId,
+}: PluginTimelineItemProps<DecisionRow>): ReactNode {
   const row = item.data;
+  const values = useDeciderValues();
   const styles = useMemo(() => {
     const accent = row.attention
       ? theme.colors.statusWarning
@@ -27,6 +104,8 @@ export function DecisionRowView({ item, theme }: PluginTimelineItemProps<Decisio
       detail: { color: theme.colors.foregroundMuted, fontSize: 11 },
     };
   }, [row.attention, row.applied, theme]);
+  const details = values?.rows.details ?? true;
+  const feedback = (values?.rows.feedback ?? true) && row.options.length > 1 && row.error === null;
 
   return (
     <View
@@ -37,9 +116,12 @@ export function DecisionRowView({ item, theme }: PluginTimelineItemProps<Decisio
         {row.attention ? '⚑ ' : '◆ '}
         {rowSummary(row)}
       </Text>
-      <Text style={styles.detail} numberOfLines={1}>
-        {rowDetail(row)}
-      </Text>
+      {details ? (
+        <Text style={styles.detail} numberOfLines={1}>
+          {rowDetail(row)}
+        </Text>
+      ) : null}
+      {feedback ? <Feedback row={row} agentId={agentId} theme={theme} /> : null}
     </View>
   );
 }

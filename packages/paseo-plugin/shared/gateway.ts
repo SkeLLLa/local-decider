@@ -38,6 +38,14 @@ export interface Gateway {
   health(options?: CallOptions): Promise<GatewayHealth | null>;
   models(options?: CallOptions): Promise<unknown>;
   stats(options?: CallOptions): Promise<unknown>;
+  /**
+   * `POST /v1/engine`: switch the served model; device `auto` keeps the gateway's device. Unlike
+   * the rest, reports why it failed.
+   */
+  selectEngine(
+    selection: { model: string; device: string },
+    options?: CallOptions,
+  ): Promise<{ ok: true } | { ok: false; error: string }>;
 }
 
 const DEFAULT_TIMEOUT_MS = 2000;
@@ -78,12 +86,7 @@ export function createGateway(options: GatewayOptions = {}): Gateway | null {
   const doFetch = options.fetch ?? globalThis.fetch;
   const token = options.token;
 
-  async function request(
-    method: 'GET' | 'POST',
-    path: string,
-    body: unknown,
-    call: CallOptions | undefined,
-  ): Promise<unknown> {
+  function headersFor(body: unknown): Record<string, string> {
     const headers: Record<string, string> = { accept: 'application/json' };
     if (body !== undefined) {
       headers['content-type'] = 'application/json';
@@ -91,13 +94,31 @@ export function createGateway(options: GatewayOptions = {}): Gateway | null {
     if (token !== undefined && token !== '') {
       headers['authorization'] = `Bearer ${token}`;
     }
+    return headers;
+  }
+
+  async function send(
+    method: 'GET' | 'POST',
+    path: string,
+    body: unknown,
+    call: CallOptions | undefined,
+  ): Promise<Response> {
+    return doFetch(`${baseUrl}${path}`, {
+      method,
+      headers: headersFor(body),
+      signal: signalFor(timeoutMs, call),
+      ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+    });
+  }
+
+  async function request(
+    method: 'GET' | 'POST',
+    path: string,
+    body: unknown,
+    call: CallOptions | undefined,
+  ): Promise<unknown> {
     try {
-      const res = await doFetch(`${baseUrl}${path}`, {
-        method,
-        headers,
-        signal: signalFor(timeoutMs, call),
-        ...(body === undefined ? {} : { body: JSON.stringify(body) }),
-      });
+      const res = await send(method, path, body, call);
       if (!res.ok) {
         return null;
       }
@@ -123,5 +144,22 @@ export function createGateway(options: GatewayOptions = {}): Gateway | null {
     },
     models: async (call) => request('GET', '/models', undefined, call),
     stats: async (call) => request('GET', '/v1/stats', undefined, call),
+    async selectEngine(selection, call) {
+      try {
+        const payload = selection.device === 'auto' ? { model: selection.model } : { ...selection };
+        const res = await send('POST', '/v1/engine', payload, call);
+        if (res.ok) {
+          return { ok: true };
+        }
+        const body = (await res.json().catch(() => null)) as { error?: unknown } | null;
+        const reason = typeof body?.error === 'string' ? body.error.slice(0, 200) : '';
+        return {
+          ok: false,
+          error: `HTTP ${String(res.status)}${reason === '' ? '' : `: ${reason}`}`,
+        };
+      } catch (error) {
+        return { ok: false, error: error instanceof Error ? error.message : 'unreachable' };
+      }
+    },
   };
 }

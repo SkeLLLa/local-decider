@@ -3,12 +3,27 @@ import type { PluginServerContext, PluginSettingsState } from '@getpaseo/plugin/
 import { Background } from './server/background.ts';
 import type { HookDeps } from './server/deps.ts';
 import { createMcpHandler } from './server/mcp.ts';
+import { createModelKeeper, KEEP_MODEL_INTERVAL_MS } from './server/model.ts';
 import { createPermissionHandlers } from './server/permission.ts';
 import { createRoutingHandler } from './server/routing.ts';
-import { createStatusHandler, gatewayModels, manualDecide, statsText } from './server/rpc.ts';
+import {
+  createStatusHandler,
+  gatewayModels,
+  manualDecide,
+  recordFeedback,
+  selectModel,
+  statsText,
+} from './server/rpc.ts';
 import { createTurnHandler } from './server/turn.ts';
 import { createGateway, type Gateway } from './shared/gateway.ts';
-import { decideRpc, gatewayModelsRpc, statsRpc, statusRpc } from './shared/rpc.ts';
+import {
+  decideRpc,
+  feedbackRpc,
+  gatewayModelsRpc,
+  selectModelRpc,
+  statsRpc,
+  statusRpc,
+} from './shared/rpc.ts';
 import { deciderSettings, type DeciderSettings } from './shared/settings.ts';
 
 const TOKEN_ENV = 'LOCAL_DECIDER_TOKEN';
@@ -100,8 +115,15 @@ export default function contribute(server: PluginServerContext): () => void {
   server.handle(statsRpc, async () => statsText(deps));
   server.handle(gatewayModelsRpc, async () => gatewayModels(deps));
   server.handle(decideRpc, async (input, { paseo }) => manualDecide(deps, paseo, input));
+  server.handle(selectModelRpc, async (input) => selectModel(deps, input));
+  server.handle(feedbackRpc, async (input, { paseo }) => recordFeedback(deps, paseo, input));
+
+  const keepModel = createModelKeeper(deps);
+  const keeper = setInterval(() => void keepModel(), KEEP_MODEL_INTERVAL_MS);
+  keeper.unref();
 
   return () => {
+    clearInterval(keeper);
     background.stop();
     cleanup();
   };

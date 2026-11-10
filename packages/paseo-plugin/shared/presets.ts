@@ -1,5 +1,5 @@
 /** Routing presets (`route:fast|standard|deep`) → a Paseo provider/model/mode, and model lists. */
-import { ROUTING_PRESETS, STRANDS_MODELS, type RoutingPreset } from './constants.ts';
+import { ROUTING_PRESETS, type RoutingPreset } from './constants.ts';
 
 export interface PresetTarget {
   readonly provider: string;
@@ -120,51 +120,4 @@ export function withCurrent(options: readonly ModelOption[], current: string): M
     return [...options];
   }
   return [...options, { label: `${current} (not listed)`, value: current }];
-}
-
-function modelIdOf(entry: unknown): string | null {
-  if (typeof entry === 'string') {
-    return entry;
-  }
-  if (typeof entry === 'object' && entry !== null) {
-    const id = (entry as { id?: unknown; name?: unknown }).id ?? (entry as { name?: unknown }).name;
-    return typeof id === 'string' ? id : null;
-  }
-  return null;
-}
-
-/**
- * Model ids from the gateway's `GET /models`, tolerating `[...]` and `{models: [...]}` of strings
- * or `{id}` objects. Unknown shapes yield [].
- */
-export function gatewayModelIds(body: unknown): string[] {
-  const list = Array.isArray(body)
-    ? (body as unknown[])
-    : typeof body === 'object' &&
-        body !== null &&
-        Array.isArray((body as { models?: unknown }).models)
-      ? (body as { models: unknown[] }).models
-      : [];
-  const ids: string[] = [];
-  for (const entry of list.slice(0, 200)) {
-    const id = modelIdOf(entry);
-    if (id !== null && id.length > 0 && id.length <= 300 && !ids.includes(id)) {
-      ids.push(id);
-    }
-  }
-  return ids;
-}
-
-/** Known StrandsAgents models first, then gateway-discovered ones, then the saved value. */
-export function decisionModelOptions(
-  discovered: readonly string[],
-  current: string,
-): ModelOption[] {
-  const ids: string[] = [...STRANDS_MODELS];
-  for (const id of [...discovered, current]) {
-    if (id !== '' && !ids.includes(id)) {
-      ids.push(id);
-    }
-  }
-  return ids.map((id) => ({ label: id.replace(/^StrandsAgents\//, ''), value: id }));
 }

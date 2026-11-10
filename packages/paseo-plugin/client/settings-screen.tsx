@@ -1,5 +1,5 @@
 import type { PluginSurfaceProps } from '@getpaseo/plugin/client';
-import { usePaseo, useRpc, useSettings } from '@getpaseo/plugin/client';
+import { usePaseo, useSettings } from '@getpaseo/plugin/client';
 import {
   Loading,
   SettingsAction,
@@ -14,30 +14,20 @@ import { useState, type ReactNode } from 'react';
 import { Text, View } from 'react-native';
 
 import {
-  DEVICES,
-  ENGINES,
   HOOK_POLICIES,
   PLUGIN_MODES,
   ROUTING_PRESETS,
   type RoutingPreset,
 } from '../shared/constants.ts';
-import {
-  decisionModelOptions,
-  parsePresetModel,
-  presetModelOptions,
-  withCurrent,
-} from '../shared/presets.ts';
-import { gatewayModelsRpc } from '../shared/rpc.ts';
+import { parsePresetModel, presetModelOptions, withCurrent } from '../shared/presets.ts';
 import { deciderSettings, type DeciderSettings } from '../shared/settings.ts';
 import { normaliseBaseUrl } from '../shared/url.ts';
+import { choices, type Save, type SectionProps } from './settings-common.ts';
+import { RowsSection, SidebarSection } from './settings-display.tsx';
+import { ModelSection, StatusSection } from './settings-model.tsx';
 import type { Theme } from './ui.tsx';
 
-type Save = (next: DeciderSettings) => void;
-
 const PROVIDER_MODELS_KEY = ['local-decider', 'provider-models'] as const;
-
-const options = <V extends string>(values: readonly V[]): { label: string; value: V }[] =>
-  values.map((value) => ({ label: value, value }));
 
 /** Models of every available provider, for the routing preset selects. */
 function useProviderModels(): ReturnType<typeof useQuery<Awaited<ReturnType<typeof loadModels>>>> {
@@ -62,16 +52,9 @@ async function loadModels(paseo: Paseo): Promise<ProviderModels[]> {
   return results.filter((r) => r !== null);
 }
 
-function GatewaySection({ values, save }: { values: DeciderSettings; save: Save }): ReactNode {
+function GatewaySection({ values, save }: SectionProps): ReactNode {
   const [draft, setDraft] = useState(values.gatewayUrl);
   const normalised = normaliseBaseUrl(draft);
-  const gatewayModels = useRpc(gatewayModelsRpc);
-  const discovered = useQuery({
-    queryKey: ['local-decider', 'gateway-models', values.gatewayUrl],
-    queryFn: async () => gatewayModels({}),
-    retry: false,
-    staleTime: 60_000,
-  });
   return (
     <SettingsSection title="Gateway">
       <SettingsCard>
@@ -93,32 +76,12 @@ function GatewaySection({ values, save }: { values: DeciderSettings; save: Save 
             }
           }}
         />
-        <SettingsSelect
-          label="Engine"
-          hint="Preferred engine. The gateway's config.yaml decides what runs; Status shows the live engine."
-          value={values.engine}
-          options={options(ENGINES)}
-          onValueChange={(engine) => save({ ...values, engine })}
-        />
-        <SettingsSelect
-          label="Decision model"
-          hint="StrandsAgents models, plus any the gateway lists at GET /models."
-          value={values.model}
-          options={decisionModelOptions(discovered.data?.models ?? [], values.model)}
-          onValueChange={(model) => save({ ...values, model })}
-        />
-        <SettingsSelect
-          label="Device"
-          value={values.device}
-          options={options(DEVICES)}
-          onValueChange={(device) => save({ ...values, device })}
-        />
       </SettingsCard>
     </SettingsSection>
   );
 }
 
-function PolicySection({ values, save }: { values: DeciderSettings; save: Save }): ReactNode {
+function PolicySection({ values, save }: SectionProps): ReactNode {
   return (
     <SettingsSection
       title="Policies"
@@ -130,7 +93,11 @@ function PolicySection({ values, save }: { values: DeciderSettings; save: Save }
             key={policy}
             label={policy}
             value={values.modes[policy]}
-            options={options(PLUGIN_MODES)}
+            options={choices(PLUGIN_MODES, {
+              off: 'Off',
+              shadow: 'Shadow (record only)',
+              act: 'Act (when the gateway does)',
+            })}
             onValueChange={(mode) =>
               save({ ...values, modes: { ...values.modes, [policy]: mode } })
             }
@@ -197,7 +164,7 @@ function PresetRows({
   );
 }
 
-function RoutingSection({ values, save }: { values: DeciderSettings; save: Save }): ReactNode {
+function RoutingSection({ values, save }: SectionProps): ReactNode {
   const paseo = usePaseo();
   const queryClient = useQueryClient();
   const models = useProviderModels();
@@ -277,9 +244,23 @@ export function SettingsScreen({ theme }: PluginSurfaceProps): ReactNode {
   return (
     <View style={{ gap: 16 }}>
       {settings.saveError === null ? null : <Message theme={theme} text={settings.saveError} />}
+      <StatusSection />
       <GatewaySection values={values} save={save} />
+      <ModelSection values={values} save={save} />
       <PolicySection values={values} save={save} />
+      <RowsSection values={values} save={save} />
+      <SidebarSection values={values} save={save} />
       <RoutingSection values={values} save={save} />
+      <SettingsSection title="Reset">
+        <SettingsCard>
+          <SettingsAction
+            label="Restore defaults"
+            hint="Every setting on this page, on this host. The gateway keeps its own config.yaml and logs."
+            actionLabel="Reset"
+            onPress={() => void settings.reset()}
+          />
+        </SettingsCard>
+      </SettingsSection>
     </View>
   );
 }

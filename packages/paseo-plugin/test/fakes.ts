@@ -8,9 +8,9 @@ import type { DeciderSettings } from '../shared/settings.ts';
 export function settings(overrides: Partial<DeciderSettings> = {}): DeciderSettings {
   return {
     gatewayUrl: 'http://127.0.0.1:8765',
-    engine: 'strands-decider',
-    model: 'StrandsAgents/strands-decider-2B-qwen3.5-v1-2610',
+    model: '',
     device: 'auto',
+    keepModel: false,
     modes: { 'turn-outcome': 'shadow', 'permission': 'shadow', 'routing': 'shadow' },
     presets: {
       fast: { model: '', modeId: '' },
@@ -18,6 +18,8 @@ export function settings(overrides: Partial<DeciderSettings> = {}): DeciderSetti
       deep: { model: '', modeId: '' },
     },
     injectMcp: false,
+    sidebar: { position: 'footer', label: 'full', press: 'popover' },
+    rows: { show: 'all', details: true, feedback: true },
     ...overrides,
   };
 }
@@ -53,6 +55,7 @@ export interface FakeGateway extends Gateway {
     sessionId?: string;
   }[];
   readonly outcomes: { decisionId: string; outcome: string; source: string }[];
+  readonly selections: { model: string; device: string }[];
 }
 
 export function fakeGateway(
@@ -60,10 +63,12 @@ export function fakeGateway(
 ): FakeGateway {
   const calls: FakeGateway['calls'] = [];
   const outcomes: FakeGateway['outcomes'] = [];
+  const selections: FakeGateway['selections'] = [];
   return {
     baseUrl: 'http://127.0.0.1:8765',
     calls,
     outcomes,
+    selections,
     async decide(policy, request) {
       calls.push({
         policy,
@@ -79,6 +84,10 @@ export function fakeGateway(
     health: async () => ({ status: 'ok', engine: 'strands-decider', model: 'm', p50Ms: 100 }),
     models: async () => [],
     stats: async () => ({}),
+    async selectEngine(selection) {
+      selections.push(selection);
+      return { ok: true };
+    },
   };
 }
 

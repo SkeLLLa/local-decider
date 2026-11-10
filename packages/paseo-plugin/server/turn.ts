@@ -3,7 +3,7 @@ import type { PluginHookAgent, PluginTurnOutcome } from '@getpaseo/plugin/server
 
 import { ROW_KIND, ROW_VERSION } from '../shared/constants.ts';
 import type { DecideResponse } from '../shared/decision.ts';
-import { rowId, toRowData } from '../shared/row.ts';
+import { rowVisible, toRowData } from '../shared/row.ts';
 import { Background, detach } from './background.ts';
 import type { HookDeps, PaseoLike } from './deps.ts';
 import { buildTurnInput } from './history.ts';
@@ -99,12 +99,16 @@ async function handleTurn(
   const enforced = pluginEnforces(res, mode);
   const data = toRowData(res, {
     source: 'turn',
+    key: turn,
     enforced,
     ...(enforced && res.action === 'notify' ? { note: noteFor(res) } : {}),
   });
+  if (!rowVisible(data, settings.rows.show)) {
+    return;
+  }
   await agent.timeline.append({
     type: 'plugin',
-    id: rowId('turn', turn),
+    id: data.rowId,
     kind: ROW_KIND,
     version: ROW_VERSION,
     data: { ...data },

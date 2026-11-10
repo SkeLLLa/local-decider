@@ -146,3 +146,32 @@ describe('createGateway (fail open)', () => {
     assert.equal(await gw?.stats(), null);
   });
 });
+
+function recording(
+  status: number,
+  body: unknown,
+): { gateway: ReturnType<typeof createGateway>; sent: unknown[] } {
+  const sent: unknown[] = [];
+  const fetch = (async (_url: string, init: RequestInit) => {
+    sent.push(JSON.parse(init.body as string));
+    return new Response(JSON.stringify(body), { status });
+  }) as typeof globalThis.fetch;
+  return { gateway: createGateway({ fetch }), sent };
+}
+
+describe('createGateway.selectEngine', () => {
+  it('omits device auto so the gateway keeps its own', async () => {
+    const { gateway, sent } = recording(200, {});
+    assert.deepEqual(await gateway?.selectEngine({ model: 'm', device: 'auto' }), { ok: true });
+    await gateway?.selectEngine({ model: 'm', device: 'cpu' });
+    assert.deepEqual(sent, [{ model: 'm' }, { model: 'm', device: 'cpu' }]);
+  });
+
+  it('reports the gateway error', async () => {
+    const { gateway } = recording(400, { error: 'unknown model "x"' });
+    assert.deepEqual(await gateway?.selectEngine({ model: 'x', device: 'auto' }), {
+      ok: false,
+      error: 'HTTP 400: unknown model "x"',
+    });
+  });
+});

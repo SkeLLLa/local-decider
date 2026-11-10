@@ -3,8 +3,6 @@ import { describe, it } from 'node:test';
 
 import {
   applyPreset,
-  decisionModelOptions,
-  gatewayModelIds,
   parsePresetModel,
   presetFromAction,
   presetModelOptions,
@@ -99,23 +97,5 @@ describe('presets', () => {
     ]);
     assert.equal(withCurrent(options, 'gone/model').at(-1)?.value, 'gone/model');
     assert.equal(withCurrent(options, 'claude/haiku').length, 2);
-  });
-
-  it('reads gateway model lists of several shapes', () => {
-    assert.deepEqual(gatewayModelIds(['a', 'b', 'a']), ['a', 'b']);
-    assert.deepEqual(gatewayModelIds({ models: [{ id: 'a' }, { name: 'b' }, 3, null] }), [
-      'a',
-      'b',
-    ]);
-    assert.deepEqual(gatewayModelIds(null), []);
-    assert.deepEqual(gatewayModelIds({ nope: true }), []);
-  });
-
-  it('lists the StrandsAgents models first, then discovered and saved ones', () => {
-    const options = decisionModelOptions(['StrandsAgents/new-model'], 'custom/x');
-    assert.equal(options[0]?.value, 'StrandsAgents/strands-decider-2B-qwen3.5-v1-2610');
-    assert.equal(options.length, 7);
-    assert.equal(options.at(-1)?.value, 'custom/x');
-    assert.equal(options.at(-2)?.label, 'new-model');
   });
 });

@@ -377,6 +377,8 @@ describe('rpc handlers', () => {
       up: true,
       status: 'ok',
       engine: null,
+      engineState: null,
+      detail: null,
       model: 'm',
       p50Ms: 5,
       gatewayUrl: 'http://127.0.0.1:8765',

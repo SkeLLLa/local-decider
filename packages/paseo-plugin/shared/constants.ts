@@ -12,17 +12,29 @@ export const HOOK_POLICIES = ['turn-outcome', 'permission', 'routing'] as const;
 
 export const PLUGIN_MODES = ['off', 'shadow', 'act'] as const;
 
-export const ENGINES = ['strands-decider', 'systemone-remote', 'llm-logprobs'] as const;
 export const DEVICES = ['auto', 'cpu', 'mlx', 'mps', 'cuda'] as const;
+export type Device = (typeof DEVICES)[number];
 
+/** Fallback model list (the gateway's `GET /models` wins), with approximate memory needs. */
 export const STRANDS_MODELS = [
-  'StrandsAgents/strands-decider-2B-qwen3.5-v1-2610',
-  'StrandsAgents/strands-decider-2B-hobson-v21',
-  'StrandsAgents/strands-decider-E2B-gemma4-v1-2610',
-  'StrandsAgents/strands-decider-E4B-gemma4-v1-2610',
-  'StrandsAgents/strands-decider-12B-gemma4-v1-2610',
+  { id: 'StrandsAgents/strands-decider-2B-qwen3.5-v1-2610', memoryGb: 8 },
+  { id: 'StrandsAgents/strands-decider-2B-hobson-v21', memoryGb: 8 },
+  { id: 'StrandsAgents/strands-decider-E2B-gemma4-v1-2610', memoryGb: 19 },
+  { id: 'StrandsAgents/strands-decider-E4B-gemma4-v1-2610', memoryGb: 30 },
+  { id: 'StrandsAgents/strands-decider-12B-gemma4-v1-2610', memoryGb: 46 },
 ] as const;
-export const DEFAULT_MODEL = STRANDS_MODELS[0];
+
+/** Where the status item sits in the sidebar, or hidden. */
+export const SIDEBAR_POSITIONS = ['footer', 'header', 'hidden'] as const;
+export type SidebarPosition = (typeof SIDEBAR_POSITIONS)[number];
+/** What the status item's label shows next to the health dot. */
+export const SIDEBAR_LABELS = ['full', 'model', 'latency', 'minimal'] as const;
+export type SidebarLabel = (typeof SIDEBAR_LABELS)[number];
+export const SIDEBAR_PRESS = ['popover', 'screen'] as const;
+
+/** Which decision rows the daemon appends to agent chats. `/decide` results always show. */
+export const ROW_VISIBILITY = ['all', 'notable', 'off'] as const;
+export type RowVisibility = (typeof ROW_VISIBILITY)[number];
 
 export const ROUTING_PRESETS = ['fast', 'standard', 'deep'] as const;
 export type RoutingPreset = (typeof ROUTING_PRESETS)[number];

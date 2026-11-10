@@ -11,7 +11,7 @@ import type {
 
 import { ROW_KIND, ROW_VERSION } from '../shared/constants.ts';
 import type { Gateway } from '../shared/gateway.ts';
-import { rowId, toRowData } from '../shared/row.ts';
+import { rowVisible, toRowData } from '../shared/row.ts';
 import { Background, detach } from './background.ts';
 import { errorText, type HookDeps } from './deps.ts';
 import { buildPermissionInput, transcript, mergeAssistantChunks } from './history.ts';
@@ -115,13 +115,17 @@ async function handleRequest(
   }
   const data = toRowData(res, {
     source: 'permission',
+    key: event.request.id,
     enforced,
     applied: entry.autoAllowed,
     note: `${event.request.name}${entry.autoAllowed ? ' auto-allowed' : ''}`,
   });
+  if (!rowVisible(data, settings.rows.show)) {
+    return;
+  }
   await agent.timeline.append({
     type: 'plugin',
-    id: rowId('permission', event.request.id),
+    id: data.rowId,
     kind: ROW_KIND,
     version: ROW_VERSION,
     data: { ...data },
