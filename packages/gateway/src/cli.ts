@@ -23,7 +23,7 @@ const USAGE = `local-decider — local decision models for coding-agent harnesse
 
 Usage:
   local-decider gateway run [--host H] [--port N]   run in the foreground
-  local-decider gateway start|stop|status|uninstall user service (systemd / launchd)
+  local-decider gateway start|restart|stop|status|uninstall  user service (start is a no-op if running)
   local-decider engine install [--flavor cpu|mlx|cuda] [--model ID] [--no-download]
   local-decider decide <policy> [--input JSON] [key=value ...]
   local-decider stats [--json]                      agreement and calibration from the shadow log
@@ -80,8 +80,8 @@ async function gatewayRun(ctx: Context): Promise<void> {
 
 async function gatewayService(ctx: Context, action: string): Promise<void> {
   const manager = detectManager();
-  if (action === 'start') {
-    console.log(startService(manager, ctx.paths));
+  if (action === 'start' || action === 'restart') {
+    console.log(startService(manager, ctx.paths, action === 'restart'));
   } else if (action === 'stop') {
     console.log(stopService(manager, ctx.paths));
   } else if (action === 'uninstall') {
@@ -217,7 +217,13 @@ async function dispatch(command: string | undefined, ctx: Context): Promise<void
     if (action === 'run') {
       return gatewayRun({ ...ctx, args: rest });
     }
-    if (action === 'start' || action === 'stop' || action === 'status' || action === 'uninstall') {
+    if (
+      action === 'start' ||
+      action === 'restart' ||
+      action === 'stop' ||
+      action === 'status' ||
+      action === 'uninstall'
+    ) {
       return gatewayService(ctx, action);
     }
     throw new UsageError();

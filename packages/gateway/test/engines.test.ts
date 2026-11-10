@@ -126,6 +126,13 @@ describe('StrandsDeciderEngine', () => {
       ],
     );
     assert.ok(!serveArgs(strandsConfig(), 1).includes('--device'));
+    assert.ok(
+      serveArgs(strandsConfig({ device: 'cpu' }), 1).includes('--no-warmup'),
+      'no warmup on CPU',
+    );
+    assert.ok(!serveArgs(strandsConfig({ device: 'mlx' }), 1).includes('--no-warmup'));
+    const optIn = serveArgs(strandsConfig({ device: 'cpu', extraArgs: ['--warmup'] }), 1);
+    assert.ok(optIn.includes('--warmup') && !optIn.includes('--no-warmup'));
     assert.throws(() => strandsConfig({ extraArgs: ['; rm -rf /'] }), /invalid config/);
   });
 

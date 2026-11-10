@@ -23,7 +23,16 @@ export function serveArgs(config: StrandsEngineConfig, port: number): string[] {
   if (config.device !== 'auto') {
     args.push('--device', config.device);
   }
-  args.push('--max-batch', String(config.maxBatch), ...config.extraArgs);
+  args.push('--max-batch', String(config.maxBatch));
+  // Warmup compiles kernel shapes; on CPU there is nothing to compile and it adds ~27 s to every
+  // start (ready in 4.6 s without it, first request no slower). `--warmup` in extraArgs opts back in.
+  if (
+    config.device === 'cpu' &&
+    !config.extraArgs.some((a) => a === '--warmup' || a === '--no-warmup')
+  ) {
+    args.push('--no-warmup');
+  }
+  args.push(...config.extraArgs);
   return args;
 }
 

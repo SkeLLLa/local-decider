@@ -160,25 +160,59 @@ function stopPidfile(paths: Paths): string {
   return `stopped (pid ${String(pid)})`;
 }
 
-/** Write (or refresh) the unit/plist and start it. */
-export function startService(manager: ServiceManager, paths: Paths): string {
+/** Write `content` to `file` only if it differs; true when it changed. */
+function writeIfChanged(file: string, content: string): boolean {
+  if (existsSync(file) && readFileSync(file, 'utf8') === content) {
+    return false;
+  }
+  writeFileSync(file, content);
+  return true;
+}
+
+function startSystemd(command: readonly string[], paths: Paths, restart: boolean): string {
+  mkdirSync(join(homedir(), '.config', 'systemd', 'user'), { recursive: true });
+  const changed = writeIfChanged(unitPath(), systemdUnit(command, paths));
+  if (changed) {
+    run('systemctl', ['--user', 'daemon-reload']);
+  }
+  const active = tryRun('systemctl', ['--user', 'is-active', SERVICE_NAME]) === 'active';
+  run('systemctl', ['--user', 'enable', SERVICE_NAME]);
+  if (active && !changed && !restart) {
+    return `already running (${unitPath()} unchanged); use \`gateway restart\` to reload`;
+  }
+  run('systemctl', ['--user', active ? 'restart' : 'start', SERVICE_NAME]);
+  return `systemd user unit ${unitPath()} ${active ? 'restarted' : 'started'}`;
+}
+
+function startLaunchd(command: readonly string[], paths: Paths, restart: boolean): string {
+  const domain = `gui/${String(userInfo().uid)}`;
+  mkdirSync(join(homedir(), 'Library', 'LaunchAgents'), { recursive: true });
+  const changed = writeIfChanged(plistPath(), launchdPlist(command, paths));
+  const loaded = tryRun('launchctl', ['print', `${domain}/${LAUNCHD_LABEL}`]) !== undefined;
+  if (loaded && !changed && !restart) {
+    return `already loaded (${plistPath()} unchanged); use \`gateway restart\` to reload`;
+  }
+  tryRun('launchctl', ['bootout', `${domain}/${LAUNCHD_LABEL}`]);
+  run('launchctl', ['bootstrap', domain, plistPath()]);
+  return `launchd agent ${plistPath()} loaded`;
+}
+
+/**
+ * Write (or refresh) the unit/plist and make sure it runs. Idempotent: a running service with an
+ * unchanged unit is left alone, because every restart reloads the model and drops decisions
+ * meanwhile. `restart` forces one (e.g. after rebuilding the gateway).
+ */
+export function startService(manager: ServiceManager, paths: Paths, restart = false): string {
   const command = gatewayCommand();
   mkdirSync(paths.logs, { recursive: true });
   if (manager === 'systemd') {
-    mkdirSync(join(homedir(), '.config', 'systemd', 'user'), { recursive: true });
-    writeFileSync(unitPath(), systemdUnit(command, paths));
-    run('systemctl', ['--user', 'daemon-reload']);
-    run('systemctl', ['--user', 'enable', '--now', SERVICE_NAME]);
-    run('systemctl', ['--user', 'restart', SERVICE_NAME]);
-    return `systemd user unit ${unitPath()} started`;
+    return startSystemd(command, paths, restart);
   }
   if (manager === 'launchd') {
-    const domain = `gui/${String(userInfo().uid)}`;
-    mkdirSync(join(homedir(), 'Library', 'LaunchAgents'), { recursive: true });
-    writeFileSync(plistPath(), launchdPlist(command, paths));
-    tryRun('launchctl', ['bootout', `${domain}/${LAUNCHD_LABEL}`]);
-    run('launchctl', ['bootstrap', domain, plistPath()]);
-    return `launchd agent ${plistPath()} loaded`;
+    return startLaunchd(command, paths, restart);
+  }
+  if (restart) {
+    stopPidfile(paths);
   }
   return startPidfile(paths);
 }
