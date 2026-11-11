@@ -117,3 +117,13 @@ describe('engine registry', () => {
     );
   });
 });
+
+describe('Strands E2B measurements', () => {
+  it('records the MLX latency and GPU memory measured on the M5 Pro', () => {
+    const e2b = allModels().find(
+      (m) => m.id === 'StrandsAgents/strands-decider-E2B-gemma4-v1-2610',
+    );
+    assert.equal(e2b?.gpuMemoryGb, 10);
+    assert.match(e2b?.latencyHint ?? '', /~250 ms MLX \(M5 Pro, warm p50\)/);
+  });
+});

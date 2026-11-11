@@ -94,7 +94,7 @@ export type InstallPlan =
 function refusal(engine: string): never {
   if (engine === 'lmstudio') {
     throw new EngineInstallUsageError(
-      "nothing to install for lmstudio: start LM Studio's server (lms server start) and load a model",
+      'nothing to install for lmstudio: get LM Studio from https://lmstudio.ai/download, start its server (lms server start) and load a model',
     );
   }
   if (isOpenAILike(engine)) {

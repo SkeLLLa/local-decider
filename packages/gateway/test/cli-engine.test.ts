@@ -89,7 +89,7 @@ describe('engine install planning', () => {
     );
     assert.throws(
       () => planInstall([], linux, 'lmstudio'),
-      /nothing to install for lmstudio: start LM Studio's server \(lms server start\) and load a model/,
+      /nothing to install for lmstudio: get LM Studio from https:\/\/lmstudio\.ai\/download.*lms server start/,
     );
     assert.throws(
       () => planInstall(['--flavor', 'metal'], linux, 'strands-decider'),

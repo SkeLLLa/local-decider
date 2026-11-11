@@ -4,6 +4,8 @@ import { describe, it } from 'node:test';
 import {
   isOpenAILike,
   ModelDiscovery,
+  nativeModelsUrl,
+  parseNativeModels,
   parseModelIds,
   type DiscoveryEndpoint,
 } from '../src/engine-discovery.ts';
@@ -99,5 +101,112 @@ describe('isOpenAILike', () => {
   it('names the OpenAI-style engines only', () => {
     assert.ok(isOpenAILike('openai-compatible'));
     assert.ok(!isOpenAILike('fastflowlm'));
+  });
+});
+
+const NATIVE = {
+  data: [
+    { id: 'idle-llm', type: 'llm', state: 'not-loaded', compatibility_type: 'gguf' },
+    { id: 'embed', type: 'embeddings', state: 'loaded', compatibility_type: 'gguf' },
+    { id: 'hot-vlm', type: 'vlm', state: 'loaded', compatibility_type: 'mlx', runtime: 'mlx-llm' },
+    { id: 'hot-vlm', type: 'llm', state: 'not-loaded' },
+    { id: '-bad', type: 'llm', state: 'loaded' },
+    { id: 'hot-llm', type: 'llm', state: 'loaded' },
+  ],
+};
+
+function nativeFetch(
+  native: unknown,
+  calls: string[] = [],
+  fallback: readonly string[] = [],
+): typeof fetch {
+  return (input) => {
+    const url = input instanceof Request ? input.url : input.toString();
+    calls.push(url);
+    if (url.endsWith('/api/v0/models')) {
+      return Promise.resolve(
+        native === undefined ? new Response('x', { status: 404 }) : Response.json(native),
+      );
+    }
+    return Promise.resolve(Response.json({ data: fallback.map((id) => ({ id })) }));
+  };
+}
+
+describe('LM Studio native discovery', () => {
+  it('derives the native url by stripping /v1', () => {
+    assert.equal(nativeModelsUrl('http://h:1234/v1'), 'http://h:1234/api/v0/models');
+    assert.equal(nativeModelsUrl('http://h:1234/v1/'), 'http://h:1234/api/v0/models');
+    assert.equal(nativeModelsUrl('https://h/x/v1'), 'https://h/x/api/v0/models');
+  });
+
+  it('parses types, loaded state, format and runtime, deduping and validating ids', () => {
+    const parsed = parseNativeModels(NATIVE);
+    assert.deepEqual(
+      parsed.map((m) => [m.id, m.usable, m.loaded, m.format, m.runtime]),
+      [
+        ['idle-llm', true, false, 'GGUF', undefined],
+        ['embed', false, true, 'GGUF', undefined],
+        ['hot-vlm', true, true, 'MLX', 'mlx-llm'],
+        ['hot-llm', true, true, undefined, undefined],
+      ],
+    );
+  });
+
+  it('lists loaded llm/vlm first, stably, without embedding models, with details', async () => {
+    const calls: string[] = [];
+    const discovery = new ModelDiscovery({}, nativeFetch(NATIVE, calls));
+    const ep = endpoint('http://h:1234/v1', 'idle-llm');
+    await discovery.refresh('lmstudio', ep);
+    assert.deepEqual(calls, ['http://h:1234/api/v0/models']);
+    assert.deepEqual(discovery.models('lmstudio', ep), ['hot-vlm', 'hot-llm', 'idle-llm']);
+    assert.equal(discovery.detail('lmstudio', ep, 'hot-vlm'), 'MLX · mlx-llm');
+    assert.equal(discovery.detail('lmstudio', ep, 'idle-llm'), 'GGUF');
+    assert.equal(discovery.detail('lmstudio', ep, 'hot-llm'), undefined);
+  });
+
+  it('adds an absent configured model but never an embedding one', async () => {
+    const discovery = new ModelDiscovery({}, nativeFetch(NATIVE));
+    const absent = endpoint('http://h/v1', 'cfg');
+    await discovery.refresh('lmstudio', absent);
+    assert.deepEqual(discovery.models('lmstudio', absent), [
+      'cfg',
+      'hot-vlm',
+      'hot-llm',
+      'idle-llm',
+    ]);
+    const embed = endpoint('http://h/v1', 'embed');
+    await discovery.refresh('lmstudio', embed);
+    assert.ok(!discovery.models('lmstudio', embed).includes('embed'));
+  });
+
+  it('falls back to /v1/models, then to the configured model', async () => {
+    const calls: string[] = [];
+    const discovery = new ModelDiscovery({}, nativeFetch(undefined, calls, ['a', 'm0']));
+    const ep = endpoint('http://h/v1');
+    await discovery.refresh('lmstudio', ep);
+    assert.deepEqual(calls, ['http://h/api/v0/models', 'http://h/v1/models']);
+    assert.deepEqual(discovery.models('lmstudio', ep), ['m0', 'a']);
+    const down = new ModelDiscovery({}, () => Promise.reject(new Error('down')));
+    await down.refresh('lmstudio', ep);
+    assert.deepEqual(down.models('lmstudio', ep), ['m0']);
+  });
+
+  it('keeps the token rule: only over https or loopback', async () => {
+    const auths: (string | null)[] = [];
+    const doFetch: typeof fetch = (_url, init) => {
+      auths.push(new Headers(init?.headers).get('authorization'));
+      return Promise.resolve(Response.json({ data: [] }));
+    };
+    const discovery = new ModelDiscovery({ TOK: 's' }, doFetch);
+    await discovery.refresh('lmstudio', endpoint('http://127.0.0.1:1234/v1', 'm', 'TOK'));
+    await discovery.refresh('lmstudio', endpoint('http://example.com/v1', 'm', 'TOK'));
+    assert.deepEqual(auths, ['Bearer s', null]);
+  });
+
+  it('leaves openai-compatible on /models only', async () => {
+    const calls: string[] = [];
+    const discovery = new ModelDiscovery({}, nativeFetch(NATIVE, calls, ['x']));
+    await discovery.refresh('openai-compatible', endpoint('http://h/v1'));
+    assert.deepEqual(calls, ['http://h/v1/models']);
   });
 });

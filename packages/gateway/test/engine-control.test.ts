@@ -978,3 +978,37 @@ describe('control routes', () => {
     }
   });
 });
+
+describe('OpenAI-like persisted selection', () => {
+  it('keeps a discovered model chosen earlier, and labels models with format and runtime', async () => {
+    const paths = tempPaths();
+    const store = new MemoryConfigStore(
+      parseConfig({
+        engine: { type: 'lmstudio', model: 'configured' },
+        selection: { engine: 'lmstudio', model: 'discovered-only' },
+      }),
+    );
+    const control = new EngineControl({
+      store,
+      paths,
+      env: { PATH: '' },
+      totalMemory: 1e12,
+      installed: async () => new Map(),
+      create: (c) => new ModelEngine(c),
+      fetch: () =>
+        Promise.resolve(
+          Response.json({
+            data: [
+              { id: 'discovered-only', type: 'llm', state: 'loaded', compatibility_type: 'mlx' },
+            ],
+          }),
+        ),
+    });
+    assert.equal(control.current()?.model, 'discovered-only');
+    const status = (await control.status()) as { models: { id: string; label: string }[] };
+    assert.equal(
+      status.models.find((m) => m.id === 'discovered-only')?.label,
+      'discovered-only (MLX)',
+    );
+  });
+});

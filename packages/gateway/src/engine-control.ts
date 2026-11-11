@@ -693,7 +693,9 @@ export class EngineControl {
     ) {
       return fromConfig;
     }
-    if (!this.allowedModels(savedEngine).includes(saved.model)) {
+    // A discovered model is not known before discovery runs: trust the saved choice for
+    // OpenAI-like engines; a model the server lacks then fails on use, with the server's error.
+    if (!isOpenAILike(savedEngine) && !this.allowedModels(savedEngine).includes(saved.model)) {
       return fromConfig;
     }
     const device = (DEVICES as readonly string[]).includes(saved.device ?? '')
@@ -731,14 +733,17 @@ export class EngineControl {
       const found = this.#discovery.models(id, endpoint);
       const ids = found.length > 0 ? found : [endpoint.model];
       models.push(
-        ...ids.map((model) => ({
-          id: model,
-          engine: id,
-          label: model,
-          downloadGb: null,
-          memoryGb: null,
-          latencyHint: null,
-        })),
+        ...ids.map((model) => {
+          const detail = this.#discovery.detail(id, endpoint, model);
+          return {
+            id: model,
+            engine: id,
+            label: detail === undefined ? model : `${model} (${detail})`,
+            downloadGb: null,
+            memoryGb: null,
+            latencyHint: null,
+          };
+        }),
       );
     }
     return models;
