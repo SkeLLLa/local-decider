@@ -68,7 +68,11 @@ run = "zizmor --offline .github/workflows"
 
 [tasks."lint:shell"]
 description = "shellcheck the repository's shell scripts"
-run = "shellcheck -S info scripts/*.sh"
+run = "shellcheck -S info scripts/*.sh plugins/local-decider/hooks/*.sh plugins/local-decider/tests/*.sh"
+
+[tasks."test:shim"]
+description = "The plugin's hook shim finds node on a bare PATH and fails open without it"
+run = "sh plugins/local-decider/tests/run-hook.test.sh"
 
 [tasks."lint:complexity"]
 description = "cccc: cognitive and cyclomatic complexity ceilings (cccc.toml)"
@@ -88,6 +92,7 @@ depends = [
   "lint:pins",
   "lint:zizmor",
   "lint:shell",
+  "test:shim",
   "lint:complexity",
   "lint:fallow",
 ]

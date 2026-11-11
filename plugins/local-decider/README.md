@@ -6,7 +6,11 @@ directory serves both harnesses ([ADR-0004](../../docs/adr/0004-marketplace-layo
 
 ## Requirements
 
-- Node.js 20 or newer on `PATH` for the hook processes.
+- Node.js 20 or newer for the hook processes. The hooks start through `hooks/run-hook.sh`, which
+  uses `node` from `PATH`, then `~/.local/share/mise/shims/node`, `/opt/homebrew/bin/node` and
+  `/usr/local/bin/node`. On macOS a harness started from the Dock or Spotlight has a bare `PATH`,
+  so a Homebrew or mise node is still found. With no node at all the hook exits 0 silently (fail
+  open).
 - For the auto-mode mod: Claude Code 2.1.304 or newer.
 - A running `local-decider` gateway, by default at `http://127.0.0.1:8765`
   ([install](../../docs/install.md)). Without it the hooks run only the deterministic guard.
