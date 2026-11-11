@@ -157,6 +157,16 @@
               "type": "string",
               "enum": ["chat", "completions"]
             },
+            "maxTokens": {
+              "default": 1,
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 32
+            },
+            "promptSuffix": {
+              "type": "string",
+              "maxLength": 64
+            },
             "tokenEnv": {
               "type": "string",
               "pattern": "^[A-Z_][A-Z0-9_]*$"

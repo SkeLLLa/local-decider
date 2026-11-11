@@ -112,6 +112,7 @@ describe('OpenAI-compatible engine', () => {
   it('uses the planned defaults and stays out of the selectable settings list', () => {
     const parsed = config('http://127.0.0.1:1234/v1');
     assert.equal(parsed.api, 'chat');
+    assert.equal(parsed.maxTokens, 1);
     assert.equal(parsed.topLogprobs, 20);
     assert.equal(parsed.maxOptions, 10);
     assert.equal(parsed.minCoverage, 0.5);
@@ -134,14 +135,17 @@ describe('OpenAI-compatible engine', () => {
         });
       },
       async (url) => {
-        const engine = new OpenAICompatibleEngine(config(url));
+        const engine = new OpenAICompatibleEngine(
+          config(url, { maxTokens: 8, promptSuffix: '/no_think' }),
+        );
         await engine.start();
         assert.deepEqual(paths, ['/v1/models', '/v1/chat/completions']);
         assert.equal(engine.health().state, 'ready');
         assert.equal(bodies[0]?.['model'], 'test-model');
-        assert.equal(bodies[0]?.['max_tokens'], 1);
+        assert.equal(bodies[0]?.['max_tokens'], 8);
         assert.equal(bodies[0]?.['logprobs'], true);
         assert.equal(bodies[0]?.['top_logprobs'], 20);
+        assert.match(chatUser(bodies[0] ?? {}), /\/no_think$/);
       },
     );
   });
@@ -231,7 +235,9 @@ describe('OpenAI-compatible engine', () => {
         });
       },
       async (url) => {
-        const engine = new OpenAICompatibleEngine(config(url, { api: 'completions' }));
+        const engine = new OpenAICompatibleEngine(
+          config(url, { api: 'completions', maxTokens: 8, promptSuffix: '/no_think' }),
+        );
         await engine.start();
         const result = await engine.decide(
           {
@@ -242,7 +248,8 @@ describe('OpenAI-compatible engine', () => {
         );
         assert.deepEqual(result.answers['ready'], { type: 'noul', noul: 0.8 });
         assert.equal(typeof body?.['prompt'], 'string');
-        assert.match(String(body?.['prompt']), /Answer:$/);
+        assert.match(String(body?.['prompt']), /Answer:\n\/no_think$/);
+        assert.equal(body?.['max_tokens'], 8);
         assert.equal(body?.['logprobs'], 20);
         assert.equal(body?.['messages'], undefined);
       },

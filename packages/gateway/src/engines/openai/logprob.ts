@@ -120,13 +120,47 @@ function parseCompletionMap(value: unknown): TopLogprob[] {
     .map(([token, logprob]) => ({ token, logprob }));
 }
 
-function parseLogprobs(logprobs: Record<string, unknown>): TopLogprob[] {
-  const content = asRecord(first(logprobs['content']));
-  if (content !== undefined) {
-    return parseEntryArray(content['top_logprobs']);
+function parseCompletionPosition(value: unknown): TopLogprob[] {
+  return Array.isArray(value) ? parseEntryArray(value) : parseCompletionMap(value);
+}
+
+function usableSampledToken(value: unknown): boolean {
+  if (typeof value !== 'string') {
+    return false;
   }
-  const position = first(logprobs['top_logprobs']);
-  return Array.isArray(position) ? parseEntryArray(position) : parseCompletionMap(position);
+  const token = value.trim();
+  return token !== '' && !/^<\/?think>$/i.test(token);
+}
+
+function parseChatPositions(value: unknown): TopLogprob[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  if (value.length === 1) {
+    return parseEntryArray(asRecord(value[0])?.['top_logprobs']);
+  }
+  const position = value.find((item) => usableSampledToken(asRecord(item)?.['token']));
+  return parseEntryArray(asRecord(position)?.['top_logprobs']);
+}
+
+function parseCompletionPositions(logprobs: Record<string, unknown>): TopLogprob[] {
+  const positions = logprobs['top_logprobs'];
+  if (!Array.isArray(positions) || positions.length <= 1) {
+    return parseCompletionPosition(first(positions));
+  }
+  const tokens = logprobs['tokens'];
+  if (!Array.isArray(tokens)) {
+    return [];
+  }
+  const index = tokens.findIndex((token) => usableSampledToken(token));
+  return index < 0 ? [] : parseCompletionPosition(positions[index]);
+}
+
+function parseLogprobs(logprobs: Record<string, unknown>): TopLogprob[] {
+  if (Array.isArray(logprobs['content'])) {
+    return parseChatPositions(logprobs['content']);
+  }
+  return parseCompletionPositions(logprobs);
 }
 
 /** Read top-token probabilities from chat-completions or legacy completions responses. */

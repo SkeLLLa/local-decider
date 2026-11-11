@@ -37,6 +37,8 @@ const openaiCompatibleSchema = z.strictObject({
     .max(300)
     .regex(/^[^-\s][^\s]*$/),
   api: z.enum(['chat', 'completions']).default('chat'),
+  maxTokens: z.number().int().min(1).max(32).default(1),
+  promptSuffix: z.string().max(64).optional(),
   tokenEnv: z
     .string()
     .regex(/^[A-Z_][A-Z0-9_]*$/)
@@ -62,11 +64,15 @@ function record(value: unknown): Record<string, unknown> | undefined {
     : undefined;
 }
 
+function withSuffix(text: string, suffix: string | undefined): string {
+  return suffix === undefined || suffix === '' ? text : `${text}\n${suffix}`;
+}
+
 function requestBody(config: OpenAICompatibleEngineConfig, prompt: RenderedPrompt): unknown {
   const common = {
     ...config.extraBody,
     model: config.model,
-    max_tokens: 1,
+    max_tokens: config.maxTokens,
     temperature: 1,
     top_p: 1,
     stream: false,
@@ -76,12 +82,16 @@ function requestBody(config: OpenAICompatibleEngineConfig, prompt: RenderedPromp
         ...common,
         messages: [
           { role: 'system', content: prompt.system },
-          { role: 'user', content: prompt.user },
+          { role: 'user', content: withSuffix(prompt.user, config.promptSuffix) },
         ],
         logprobs: true,
         top_logprobs: config.topLogprobs,
       }
-    : { ...common, prompt: prompt.prompt, logprobs: config.topLogprobs };
+    : {
+        ...common,
+        prompt: withSuffix(prompt.prompt, config.promptSuffix),
+        logprobs: config.topLogprobs,
+      };
 }
 
 function stateText(state: SystemOneRequest['state'], maxChars: number): string {

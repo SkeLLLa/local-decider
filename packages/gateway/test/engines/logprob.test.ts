@@ -161,4 +161,61 @@ describe('OpenAI-compatible logprob mapping', () => {
     ]);
     assert.deepEqual(parseTopLogprobs({ choices: [{ logprobs: null }] }), []);
   });
+
+  it('uses the first answer position after thinking and whitespace in both response shapes', () => {
+    const entries = [
+      { token: 'A', logprob: -0.1 },
+      { token: 'B', logprob: -2 },
+    ];
+    const chat = parseTopLogprobs({
+      choices: [
+        {
+          logprobs: {
+            content: [
+              { token: '<think>', top_logprobs: [{ token: '<think>', logprob: -0.01 }] },
+              { token: '</think>', top_logprobs: [{ token: '</think>', logprob: -0.02 }] },
+              { token: '\n\n', top_logprobs: [{ token: '\n', logprob: -0.03 }] },
+              { token: 'A', top_logprobs: entries },
+            ],
+          },
+        },
+      ],
+    });
+    assert.deepEqual(chat, entries);
+
+    const completions = parseTopLogprobs({
+      choices: [
+        {
+          logprobs: {
+            tokens: ['<think>', '</think>', '\n\n', 'A'],
+            top_logprobs: [
+              { '<think>': -0.01 },
+              { '</think>': -0.02 },
+              { '\n': -0.03 },
+              { A: -0.1, B: -2 },
+            ],
+          },
+        },
+      ],
+    });
+    assert.deepEqual(completions, [
+      { token: 'A', logprob: -0.1 },
+      { token: 'B', logprob: -2 },
+    ]);
+  });
+
+  it('keeps the first-position behavior for a single generated token', () => {
+    assert.deepEqual(
+      parseTopLogprobs({
+        choices: [
+          {
+            logprobs: {
+              content: [{ token: '<think>', top_logprobs: [{ token: 'A', logprob: -0.1 }] }],
+            },
+          },
+        ],
+      }),
+      [{ token: 'A', logprob: -0.1 }],
+    );
+  });
 });
