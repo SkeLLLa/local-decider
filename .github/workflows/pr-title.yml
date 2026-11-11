@@ -1,0 +1,33 @@
+name: PR title
+
+# PRs are squash-merged with the PR title as the commit subject, so the title is what lands on
+# master and what release-please reads. The "Conventional commits" ruleset rejects a bad subject
+# at merge time; this check reports it on the PR as soon as it is opened or retitled. Its own
+# workflow so that editing a title does not re-run CI.
+on:
+  pull_request:
+    types: [opened, edited, synchronize, reopened]
+
+permissions: {}
+
+concurrency:
+  group: pr-title-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  title:
+    name: Conventional PR title
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions: {}
+    steps:
+      # Same pattern as the "Conventional commits" ruleset on master.
+      - name: Check the title
+        env:
+          TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          pattern='^(build|chore|ci|docs|feat|fix|perf|refactor|revert|style|test)(\([a-z0-9./_-]+\))?!?: [^[:space:]]'
+          if ! printf '%s\n' "$TITLE" | grep -Eq "$pattern"; then
+            echo "::error::PR title is not a Conventional Commit: <type>(<scope>)!: <description>"
+            exit 1
+          fi
