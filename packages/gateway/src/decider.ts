@@ -33,7 +33,7 @@ import type { Engine } from './engines/types.ts';
 import type { LoadedPolicy } from './policies.ts';
 import { PrecedentStore } from './precedent.ts';
 import { LatencyWindow, SerialQueue, type Priority } from './queue.ts';
-import type { ShadowLog } from './shadow.ts';
+import type { LogStore } from './shadow.ts';
 
 const CACHE_MAX = 500;
 /** Decisions waiting for the engine before new ones are refused (fail open, logged). */
@@ -46,7 +46,7 @@ export class UnknownPolicyError extends Error {
 export interface DeciderOptions {
   readonly engine: Engine;
   readonly policies: ReadonlyMap<string, LoadedPolicy>;
-  readonly log: ShadowLog;
+  readonly log: LogStore;
   readonly decisionTimeoutMs: number;
   readonly now?: () => Date;
 }
@@ -85,7 +85,7 @@ export class Decider {
   readonly #variants = new Map<string, string>();
   /** Policy id → rule threshold overrides by `<question>.<answer>`, for that policy's own rules. */
   readonly #thresholds = new Map<string, Readonly<Record<string, number>>>();
-  readonly #log: ShadowLog;
+  readonly #log: LogStore;
   readonly #timeoutMs: number;
   readonly #now: () => Date;
   readonly #queue = new SerialQueue();
@@ -215,12 +215,13 @@ export class Decider {
         this.#variants.delete(id);
       }
     }
-    this.#precedent.rebuild(this.#log.readRecent(90, this.#now().getTime()));
+    this.#precedent.rebuild(this.#recentPrecedentRecords());
   }
 
   /** Rebuild precedent once from the append-only decision log during startup. */
-  rebuildPrecedent(records: readonly LogRecord[]): void {
-    this.#precedent.rebuild(records);
+  /** Rebuild from the selected backend, allowing SQLite to query only verified outcomes. */
+  rebuildPrecedent(records?: readonly LogRecord[]): void {
+    this.#precedent.rebuild(records ?? this.#recentPrecedentRecords());
   }
 
   /** Add a reported outcome to recent precedent evidence. */
@@ -234,6 +235,16 @@ export class Decider {
       return false;
     }
     return variant === id || this.#policies.get(variant)?.policy.variantOf === id;
+  }
+
+  #recentPrecedentRecords(): LogRecord[] {
+    const log = this.#log as LogStore & {
+      readVerifiedPrecedent?: (days: number, now?: number) => LogRecord[];
+    };
+    return (
+      log.readVerifiedPrecedent?.(90, this.#now().getTime()) ??
+      this.#log.readRecent(90, this.#now().getTime())
+    );
   }
 
   /**

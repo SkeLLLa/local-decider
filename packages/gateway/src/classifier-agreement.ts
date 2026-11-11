@@ -1,6 +1,6 @@
 import type { OutcomeRecord, ShadowRecord } from '@local-decider/core';
 
-import { percentile, wilsonLower } from './numbers.ts';
+import { percentile, sortedLatencies, wilsonLower } from './numbers.ts';
 
 const MAX_DISAGREEMENTS = 20;
 
@@ -70,10 +70,7 @@ export function classifierAgreement(
   const bothAllowed = wouldAllow.filter((p) => p.verdict === 'allow').length;
   const allowed = pairs.filter((p) => p.verdict === 'allow');
   const asked = allowed.filter((p) => p.decision.action === 'ask').length;
-  const latencies = scoped
-    .filter((d) => d.error === undefined)
-    .map((d) => d.latencyMs)
-    .toSorted((a, b) => a - b);
+  const latencies = sortedLatencies(scoped);
   const p50 = percentile(latencies, 50);
   const p95 = percentile(latencies, 95);
   return {

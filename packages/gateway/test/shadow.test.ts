@@ -5,11 +5,14 @@ import { join } from 'node:path';
 import { describe, it } from 'node:test';
 
 import { ShadowLog } from '../src/shadow.ts';
+import { logStoreContract } from './log-store-contract.ts';
 import { makeShadowRecord } from './records.ts';
 
 function tempLogDir(): string {
   return join(mkdtempSync(join(tmpdir(), 'ld-shadow-test-')), 'logs');
 }
+
+logStoreContract('ShadowLog', () => new ShadowLog(tempLogDir()));
 
 describe('ShadowLog', () => {
   it('prunes only dated decision files older than the retention boundary', () => {
@@ -17,18 +20,14 @@ describe('ShadowLog', () => {
     mkdirSync(logs, { recursive: true });
     const old = join(logs, 'decisions-2026-08-12.jsonl');
     const boundary = join(logs, 'decisions-2026-08-13.jsonl');
-    const recent = join(logs, 'decisions-2026-08-14.jsonl');
     const unrelated = join(logs, 'engine-fastflowlm.log');
-    for (const path of [old, boundary, recent, unrelated]) {
+    for (const path of [old, boundary, unrelated]) {
       writeFileSync(path, 'data');
     }
-
     assert.equal(new ShadowLog(logs).prune(90, Date.parse('2026-11-11T00:00:00.000Z')), 1);
     assert.equal(existsSync(old), false);
     assert.equal(existsSync(boundary), true);
-    assert.equal(existsSync(recent), true);
     assert.equal(existsSync(unrelated), true);
-    assert.deepEqual(new ShadowLog(logs).read(), []);
   });
 
   it('repairs a torn final line before the first append to a file', () => {

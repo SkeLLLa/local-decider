@@ -10,7 +10,7 @@ import type {
 } from '@local-decider/core';
 
 import { classifierAgreement, type ClassifierAgreement } from './classifier-agreement.ts';
-import { percentile, wilsonUpper } from './numbers.ts';
+import { percentile, sortedLatencies, wilsonUpper } from './numbers.ts';
 import type { LoadedPolicy } from './policies.ts';
 import {
   computePromptTime,
@@ -230,10 +230,7 @@ function policyStats(
 ): PolicyStats {
   const { outcomes } = joined;
   const hints = calibrationHints(policyDefinition, decisions, outcomes);
-  const latencies = decisions
-    .filter((d) => d.error === undefined)
-    .map((d) => d.latencyMs)
-    .toSorted((a, b) => a - b);
+  const latencies = sortedLatencies(decisions);
   const labelled: Labelled[] = [];
   for (const d of decisions) {
     const outcome = outcomes.get(d.decisionId);

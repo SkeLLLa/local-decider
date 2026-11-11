@@ -20,3 +20,12 @@ export function percentile(sorted: readonly number[], p: number): number | undef
   }
   return sorted[Math.min(sorted.length - 1, Math.max(0, Math.ceil((p / 100) * sorted.length) - 1))];
 }
+import type { ShadowRecord } from '@local-decider/core';
+
+/** Sorted latencies for records without an engine error. */
+export function sortedLatencies(decisions: readonly ShadowRecord[]): number[] {
+  return decisions
+    .filter((decision) => decision.error === undefined)
+    .map((decision) => decision.latencyMs)
+    .toSorted((a, b) => a - b);
+}

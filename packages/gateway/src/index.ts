@@ -16,4 +16,6 @@ export { loadPolicies, type LoadedPolicy } from './policies.ts';
 export { startGateway, type Gateway, type StartOptions } from './runtime.ts';
 export { createGatewayServer } from './server.ts';
 export { ShadowLog } from './shadow.ts';
+export type { LogStore } from './shadow.ts';
+export { openLogStore, SqliteLog } from './sqlite-log.ts';
 export { computeStats, formatStats, type PolicyStats } from './stats.ts';

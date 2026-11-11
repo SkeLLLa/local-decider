@@ -12,6 +12,7 @@ import { parseArgs } from 'node:util';
 
 import { authoringPrompt } from './authoring.ts';
 import { bench } from './bench.ts';
+import { logsCommand } from './cli-logs.ts';
 import {
   configCommand,
   routingCommand,
@@ -35,7 +36,8 @@ import {
   stopService,
   uninstallService,
 } from './service.ts';
-import { ShadowLog } from './shadow.ts';
+import type { LogStore } from './shadow.ts';
+import { openLogStore } from './sqlite-log.ts';
 import { computeStats, formatStats } from './stats.ts';
 
 const USAGE = `local-decider — local decision models for coding-agent harnesses
@@ -47,6 +49,7 @@ Usage:
   local-decider engine install --engine fastflowlm [--model d3:nano]  AMD NPU (Linux)
   local-decider decide <policy> [--input JSON] [key=value ...]
   local-decider stats [--json] [--scope claude-auto]  agreement and calibration from the shadow log
+  local-decider logs backup <file> | export [--since YYYY-MM-DD] <dir> | import <dir>
   local-decider policies [check <file>]             list policies, or validate a policy file
   local-decider policies eval <policy> <file>       report decisions on JSONL fixtures
   local-decider policies use <policy> <variant>     answer <policy> with one of its variants
@@ -218,13 +221,26 @@ async function stats(ctx: Context): Promise<void> {
   if (values.scope !== undefined && !(SCOPES as readonly string[]).includes(values.scope)) {
     throw new SettingsUsageError(`scope must be one of ${SCOPES.join(', ')}`);
   }
-  const result = computeStats(
-    new ShadowLog(ctx.paths.logs).read(),
-    ctx.config.pricing,
-    loadPolicies(ctx.config, policyDirs(ctx.config, ctx.paths)),
-    values.scope === undefined ? {} : { scope: values.scope as Scope },
-  );
-  console.log(values.json === true ? JSON.stringify(result, null, 2) : formatStats(result));
+  const log = await openLogStore(ctx.paths, ctx.config.logs.store, {
+    readOnly: true,
+    autoImport: false,
+  });
+  try {
+    const result = computeStats(
+      log.read(),
+      ctx.config.pricing,
+      loadPolicies(ctx.config, policyDirs(ctx.config, ctx.paths)),
+      values.scope === undefined ? {} : { scope: values.scope as Scope },
+    );
+    console.log(values.json === true ? JSON.stringify(result, null, 2) : formatStats(result));
+  } finally {
+    closeLogStore(log);
+  }
+}
+
+function closeLogStore(log: LogStore): void {
+  const closable = log as LogStore & { close?: () => void };
+  closable.close?.();
 }
 
 function checkPolicy(file: string): void {
@@ -383,6 +399,7 @@ async function dispatch(command: string | undefined, ctx: Context): Promise<void
     engine,
     decide,
     stats,
+    logs: (c) => logsCommand(c.paths, c.config, c.args),
     policies,
     bench: benchCmd,
     mcp,

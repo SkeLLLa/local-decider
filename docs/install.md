@@ -156,7 +156,7 @@ validate edits.
 host: 127.0.0.1          # anything else requires LOCAL_DECIDER_TOKEN (>= 16 chars)
 port: 8765
 decisionTimeoutMs: 30000 # per decision, queue wait included
-logs: { retainDays: 365 }
+logs: { store: jsonl, retainDays: 365 } # store: jsonl (default) | sqlite
 engine:
   type: strands-decider  # or fastflowlm, or systemone-remote with url and tokenEnv
   model: StrandsAgents/strands-decider-2B-qwen3.5-v1-2610
@@ -181,6 +181,24 @@ pricing:                 # optional, USD per million tokens; never fetched, copy
 ```
 
 See [policies.md](policies.md) for thresholds, variants and routing presets.
+
+### Log storage and portability
+
+JSONL remains the default. To opt in to SQLite, set `logs.store: sqlite`; the gateway creates
+`~/.local/share/local-decider/decider.db` and imports existing daily JSONL files once. The
+database and data directory use file modes 0600 and 0700. SQLite is hash-only like JSONL and does
+not encrypt data at rest.
+
+```sh
+local-decider logs backup ~/local-decider-backup.db
+local-decider logs export ~/local-decider-export
+local-decider logs export --since 2026-01-01 ~/local-decider-export
+local-decider logs import ~/old-local-decider-logs
+```
+
+`backup` writes a consistent SQLite snapshot. `export` writes daily `decisions-YYYY-MM-DD.jsonl`
+files. `import` is idempotent and leaves the source files in place. These commands require
+`logs.store: sqlite`.
 
 ### Remote gateway
 

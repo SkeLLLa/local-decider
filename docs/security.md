@@ -42,7 +42,7 @@ flowchart LR
 | Untrusted input is data | Input is only rendered into the model's state. It is never executed or used as a path, URL, engine argument or a policy id outside the loaded set. Engine argv comes from validated config. |
 | Redaction | Keys, tokens, JWTs, private keys, URL credentials and `password=`-style assignments are redacted before the engine sees the state (`core/redact.ts`). |
 | No text in logs | The shadow log stores an input hash, answers and actions, never state text. Engine stdout/stderr lines containing `"state"` or `"questions"`, and lines over 500 characters, are dropped before logging. |
-| Bounded log storage | Engine logs rotate at 10 MiB with one previous file retained. Decision logs are pruned according to `logs.retainDays` (90–3650 days, default 365). |
+| Bounded log storage | Engine logs rotate at 10 MiB with one previous file retained. Decision logs are pruned according to `logs.retainDays` (90–3650 days, default 365). SQLite files use mode 0600 inside the mode 0700 data directory. |
 | Bounded work | Request bodies are capped at 256 KiB, engine responses at 1 MiB, the queue at 8 waiting decisions, and each decision has a deadline. Unparsable request targets get 400. |
 | Fail open | Adapters act only on `enforced` decisions. Any error, timeout or unreachable gateway means the harness default. Policies ship in `shadow`. |
 | Limited actions | Auto-allow needs p(allow) ≥ 0.95 (floor 0.5 for overrides). `command-risk` can only ask or deny. Permission hooks never deny from the model. |
@@ -63,6 +63,15 @@ calibration hints.
 The token does not stop an agent running as the same user without a sandbox from reading the file
 and forging a verified report. Claude Code and Codex sandboxes block reads outside the workspace,
 including this config path.
+
+## Decision log storage
+
+The JSONL backend is the default. The opt-in SQLite backend stores the same hashes, answers,
+actions, outcome labels and numeric usage data. It stores no state, subject or prompt text. The
+database is `~/.local/share/local-decider/decider.db`, mode 0600, in a mode 0700 data directory.
+SQLite does not encrypt data at rest; access is controlled by the operating system file
+permissions. WAL mode permits read-only stats and backup handles while the gateway writes. JSONL
+exports and backups contain the same sensitive metadata and should be protected accordingly.
 
 ## What it does not protect against
 

@@ -303,9 +303,10 @@
     },
     "logs": {
       "default": {
-        "retainDays": 365
+        "retainDays": 365,
+        "store": "jsonl"
       },
-      "description": "Retention for daily decision log files.",
+      "description": "Decision log storage and retention.",
       "type": "object",
       "properties": {
         "retainDays": {
@@ -313,6 +314,11 @@
           "type": "integer",
           "minimum": 90,
           "maximum": 3650
+        },
+        "store": {
+          "default": "jsonl",
+          "type": "string",
+          "enum": ["jsonl", "sqlite"]
         }
       },
       "additionalProperties": false

@@ -32,14 +32,14 @@ import { KNOWN_MODELS, modelFits } from './models.ts';
 import { withConfiguredRoutes, withRoute } from './routing.ts';
 import type { Pricing } from './savings.ts';
 import { settingsHandler } from './settings-routes.ts';
-import type { ShadowLog } from './shadow.ts';
+import type { LogStore } from './shadow.ts';
 import { computeStats } from './stats.ts';
 
 const MAX_BODY_BYTES = 256 * 1024;
 
 export interface ServerOptions {
   readonly decider: Decider;
-  readonly log: ShadowLog;
+  readonly log: LogStore;
   /** Required bearer token, or undefined for loopback-only no-auth mode. */
   readonly token?: string | undefined;
   /** Private token for authenticating outcome reports from Paseo. */

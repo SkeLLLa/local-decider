@@ -222,9 +222,10 @@ export const configSchema = z
     logs: z
       .strictObject({
         retainDays: z.number().int().min(90).max(3650).default(365),
+        store: z.enum(['jsonl', 'sqlite']).default('jsonl'),
       })
-      .default({ retainDays: 365 })
-      .describe('Retention for daily decision log files.'),
+      .default({ retainDays: 365, store: 'jsonl' })
+      .describe('Decision log storage and retention.'),
     tools: z
       .strictObject({
         flm: z.string().min(1).optional(),

@@ -16,11 +16,12 @@ describe('config', () => {
     assert.equal(config.port, 8765);
     assert.equal(config.engine.type, 'strands-decider');
     assert.equal(config.engine.model, DEFAULT_MODEL);
-    assert.deepEqual(config.logs, { retainDays: 365 });
+    assert.deepEqual(config.logs, { retainDays: 365, store: 'jsonl' });
   });
 
   it('validates the decision log retention window', () => {
     assert.equal(parseConfig({ logs: { retainDays: 90 } }).logs.retainDays, 90);
+    assert.equal(parseConfig({ logs: { store: 'sqlite' } }).logs.store, 'sqlite');
     assert.throws(() => parseConfig({ logs: { retainDays: 89 } }), /invalid config/);
     assert.throws(() => parseConfig({ logs: { retainDays: 3651 } }), /invalid config/);
   });

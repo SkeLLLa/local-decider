@@ -11,8 +11,9 @@ import type { Paths } from './paths.ts';
 import { loadPolicies, policyDirs, type LoadedPolicy } from './policies.ts';
 import { ensureReportToken } from './report-token.ts';
 import { writeSchemas } from './schemas.ts';
-import { createGatewayServer } from './server.ts';
-import { ShadowLog } from './shadow.ts';
+import { createGatewayServer, type ServerOptions } from './server.ts';
+import type { LogStore } from './shadow.ts';
+import { openLogStore } from './sqlite-log.ts';
 
 export interface Gateway {
   readonly server: Server;
@@ -35,6 +36,8 @@ export interface StartOptions {
   /** Injected in tests: a prepared engine control (with fakes). */
   readonly engineControl?: EngineControl;
   readonly policies?: ReadonlyMap<string, LoadedPolicy>;
+  /** Injected storage; otherwise selected from `config.logs.store`. */
+  readonly logStore?: LogStore;
 }
 
 /**
@@ -56,18 +59,19 @@ export async function startGateway(options: StartOptions): Promise<Gateway> {
       ? new EngineControl({ store, paths, env, pathsEditable: !hasToken })
       : undefined);
   const engine = options.engine ?? (engineControl as EngineControl).engine;
-  const log = new ShadowLog(paths.logs);
   const reportToken = ensureReportToken(paths);
+  const policies = options.policies ?? loadPolicies(config, policyDirs(config, paths));
+  const log = options.logStore ?? (await openLogStore(paths, config.logs.store));
   pruneLogs(log, config.logs.retainDays, report);
   const decider = new Decider({
     engine,
-    policies: options.policies ?? loadPolicies(config, policyDirs(config, paths)),
+    policies,
     log,
     decisionTimeoutMs: config.decisionTimeoutMs,
   });
-  decider.rebuildPrecedent(log.readRecent(90));
+  decider.rebuildPrecedent();
   engineControl?.bind(decider);
-  const server = createGatewayServer({
+  const server = await listenGatewayServer(log, config.host, config.port, {
     decider,
     log,
     token: hasToken ? token : undefined,
@@ -75,10 +79,6 @@ export async function startGateway(options: StartOptions): Promise<Gateway> {
     engineControl,
     pricing: config.pricing,
     settings: () => engineControl?.settings ?? store.current,
-  });
-  await new Promise<void>((resolve, reject) => {
-    server.once('error', reject);
-    server.listen(config.port, config.host, () => resolve());
   });
   void engine.start();
   const unwatch =
@@ -97,13 +97,14 @@ export async function startGateway(options: StartOptions): Promise<Gateway> {
       stopPruning();
       await engineControl?.idle();
       await decider.engine.stop();
+      closeLogStore(log);
       server.closeAllConnections();
       await new Promise<void>((resolve) => server.close(() => resolve()));
     },
   };
 }
 
-function pruneLogs(log: ShadowLog, retainDays: number, report: (line: string) => void): void {
+function pruneLogs(log: LogStore, retainDays: number, report: (line: string) => void): void {
   try {
     log.prune(retainDays);
   } catch (error) {
@@ -112,7 +113,7 @@ function pruneLogs(log: ShadowLog, retainDays: number, report: (line: string) =>
 }
 
 function scheduleLogPruning(
-  log: ShadowLog,
+  log: LogStore,
   store: ConfigStore,
   report: (line: string) => void,
 ): () => void {
@@ -122,6 +123,31 @@ function scheduleLogPruning(
   );
   interval.unref();
   return () => clearInterval(interval);
+}
+
+function closeLogStore(log: LogStore): void {
+  if ('close' in log && typeof log.close === 'function') {
+    log.close();
+  }
+}
+
+async function listenGatewayServer(
+  log: LogStore,
+  host: string,
+  port: number,
+  options: ServerOptions,
+): Promise<Server> {
+  try {
+    const server = createGatewayServer(options);
+    await new Promise<void>((resolve, reject) => {
+      server.once('error', reject);
+      server.listen(port, host, resolve);
+    });
+    return server;
+  } catch (error) {
+    closeLogStore(log);
+    throw error;
+  }
 }
 
 function NOOP(): void {}
