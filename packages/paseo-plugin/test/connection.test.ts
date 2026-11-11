@@ -146,7 +146,7 @@ describe('engines with and without connection settings', () => {
     const e = c.engines[0]!;
     assert.equal(e.connectable, true);
     assert.equal(e.connection, null);
-    assert.match(engineHint(e), /Not configured\. Enter your server's API base URL/);
+    assert.match(engineHint(e), /Not configured yet\. Enter your server's URL below/);
     assert.doesNotMatch(engineHint(e), /Not installed/);
     assert.equal(engineOptions(c.engines)[0]?.label, 'LM Studio (not configured)');
   });

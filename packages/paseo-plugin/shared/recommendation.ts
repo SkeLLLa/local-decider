@@ -18,6 +18,8 @@ export interface RankedCandidate {
   readonly device: string | null;
   /** `NPU`, `CUDA`, `MLX`, `MPS` or `CPU`; null when the gateway names none. */
   readonly backend: string | null;
+  /** Why the gateway ranks it this way; null on gateways that send no code. */
+  readonly code: CandidateCode | null;
   /** May be chosen automatically. */
   readonly eligible: boolean;
   /** False when the engine can never run on this host. Older gateways omit it: assume true. */
@@ -38,11 +40,35 @@ export interface Recommendation {
 
 export interface Fallback {
   readonly reason: string;
+  /** The engine and device that failed; null on gateways that do not say. */
+  readonly engine: string | null;
+  readonly device: string | null;
   /** ISO time the failed engine may be retried; null when unknown. */
   readonly retryAt: string | null;
 }
 
 export type SelectionMode = 'auto' | 'manual';
+
+export type CandidateCode =
+  | 'available'
+  | 'no-hardware'
+  | 'not-confirmed'
+  | 'unsupported-platform'
+  | 'no-memory'
+  | 'uncalibrated';
+
+const CODES: readonly string[] = [
+  'available',
+  'no-hardware',
+  'not-confirmed',
+  'unsupported-platform',
+  'no-memory',
+  'uncalibrated',
+];
+
+function parseCode(value: unknown): CandidateCode | null {
+  return typeof value === 'string' && CODES.includes(value) ? (value as CandidateCode) : null;
+}
 
 type Fields = Record<string, unknown>;
 
@@ -86,6 +112,7 @@ function parseCandidate(value: unknown): RankedCandidate | null {
     model: target.model,
     device: target.device,
     backend: text(v['backend']),
+    code: parseCode(v['code']),
     eligible: v['eligible'] === true,
     supported: v['supported'] !== false,
     ready: v['ready'] === true,
@@ -122,55 +149,239 @@ export function parseSelectionMode(value: unknown): SelectionMode | null {
 export function parseFallback(value: unknown): Fallback | null {
   const v = fields(value);
   const reason = text(v?.['reason']);
-  return v === null || reason === null ? null : { reason, retryAt: text(v['retryAt']) };
+  return v === null || reason === null
+    ? null
+    : {
+        reason,
+        engine: text(v['engine']),
+        device: text(v['device']),
+        retryAt: text(v['retryAt']),
+      };
 }
 
 const BACKEND_NAMES: Record<string, string> = {
   NPU: 'AMD NPU',
-  CUDA: 'NVIDIA CUDA',
-  MLX: 'Apple MLX',
-  MPS: 'Apple MPS',
+  CUDA: 'NVIDIA GPU (CUDA)',
+  MLX: 'Apple GPU (MLX)',
+  MPS: 'Apple GPU (PyTorch MPS)',
   CPU: 'CPU',
 };
 
-type EngineLabels = ReadonlyMap<string, string>;
-
-/** `Strands Decider · Apple MLX`; an engine without a backend shows its model instead. */
-function describe(
-  c: { engine: string; model: string; backend: string | null },
-  labels: EngineLabels,
-): string {
-  const engine = labels.get(c.engine) ?? c.engine;
-  return `${engine} · ${c.backend === null ? c.model : (BACKEND_NAMES[c.backend] ?? c.backend)}`;
+/** `Apple GPU (MLX)` for `MLX`; an unknown backend is shown as the gateway sent it. */
+export function backendName(backend: string): string {
+  return BACKEND_NAMES[backend] ?? backend;
 }
 
-export interface CandidateView {
-  readonly key: string;
-  readonly label: string;
-  readonly status: 'Ready' | 'Not installed' | 'Not eligible';
-  readonly eligible: boolean;
-  readonly reason: string;
-}
+const DEVICE_BACKENDS: Record<string, string> = {
+  mlx: 'MLX',
+  mps: 'MPS',
+  cuda: 'CUDA',
+  cpu: 'CPU',
+};
 
-export interface Summary {
-  /** `Recommended`, `Automatic would pick`, or `Automatic selection`. */
-  readonly label: string;
-  /** Short: engine and backend. */
-  readonly value: string;
-  readonly reason: string;
-}
-
-export interface RecommendationView {
-  readonly summary: Summary;
-  /** Candidates that can run on this host: eligible first. */
-  readonly candidates: readonly CandidateView[];
-}
-
-function statusOf(c: RankedCandidate): CandidateView['status'] {
-  if (!c.eligible) {
-    return 'Not eligible';
+/** The backend an engine runs on, from the device it was started with. */
+function backendOf(engine: string | null, device: string | null): string | null {
+  if (engine === 'fastflowlm') {
+    return 'NPU';
   }
-  return c.ready ? 'Ready' : 'Not installed';
+  return device === null ? null : (DEVICE_BACKENDS[device] ?? null);
+}
+
+/** Display names the gateway sends in the engine catalog. */
+export interface Names {
+  readonly engines: ReadonlyMap<string, string>;
+  readonly models: ReadonlyMap<string, { label: string; latencyHint: string | null }>;
+}
+
+export function namesOf(catalog: {
+  engines: readonly { id: string; label: string }[];
+  models: readonly { engine: string; id: string; label: string; latencyHint: string | null }[];
+}): Names {
+  return {
+    engines: new Map(catalog.engines.map((e) => [e.id, e.label])),
+    models: new Map(
+      catalog.models.map((m) => [
+        `${m.engine}|${m.id}`,
+        { label: m.label, latencyHint: m.latencyHint },
+      ]),
+    ),
+  };
+}
+
+/** What the gateway reports as running; `ActiveEngine` fits it. */
+export interface ActiveInfo {
+  readonly engine: string | null;
+  readonly model: string | null;
+  readonly device: string | null;
+  readonly resolvedDevice: string | null;
+  readonly backend: string | null;
+  readonly state: string | null;
+  readonly selectionMode: SelectionMode | null;
+  readonly fallback: Fallback | null;
+}
+
+function runningBackend(active: ActiveInfo): string | null {
+  return (
+    active.backend ??
+    backendOf(active.engine, active.resolvedDevice) ??
+    backendOf(active.engine, active.device)
+  );
+}
+
+/** `Strands Decider · Apple GPU (MLX)`; an engine on no known backend shows its label alone. */
+function fullName(engine: string, backend: string | null, names: Names): string {
+  const label = names.engines.get(engine) ?? engine;
+  return backend === null ? label : `${label} · ${backendName(backend)}`;
+}
+
+/** `Apple GPU (MLX)`; the engine's label when it has no backend of its own. */
+function shortName(engine: string, backend: string | null, names: Names): string {
+  return backend === null ? (names.engines.get(engine) ?? engine) : backendName(backend);
+}
+
+const STATES: Record<string, { text: string; tone: 'success' | 'error' | 'info' }> = {
+  ready: { text: 'Ready', tone: 'success' },
+  starting: { text: 'Loading', tone: 'info' },
+  stopped: { text: 'Stopped', tone: 'info' },
+  failed: { text: 'Failed', tone: 'error' },
+};
+
+const MAX_LATENCY_HINT = 40;
+
+export interface RunningView {
+  readonly value: string;
+  readonly hint: string;
+  readonly state: { readonly text: string; readonly tone: 'success' | 'error' | 'info' } | null;
+}
+
+/** The running engine as a name, a state badge and `strands-decider 2B · ~66 ms`. */
+export function runningView(active: ActiveInfo | null, names: Names): RunningView | null {
+  if (active?.engine == null) {
+    return null;
+  }
+  const model = names.models.get(`${active.engine}|${active.model ?? ''}`);
+  const latency =
+    model?.latencyHint != null && model.latencyHint.length <= MAX_LATENCY_HINT
+      ? model.latencyHint
+      : null;
+  return {
+    value: fullName(active.engine, runningBackend(active), names),
+    hint: [model?.label ?? null, latency].filter((p) => p !== null).join(' · '),
+    state: STATES[active.state ?? ''] ?? null,
+  };
+}
+
+/** The Engine select's value for automatic selection; never sent as an engine id. */
+export const AUTO_ENGINE = '__auto__';
+export const AUTO_OPTION_LABEL = 'Automatic — best for this Mac';
+
+/** Hint when Automatic is selected and the gateway already runs in automatic mode. */
+export function autoHint(active: ActiveInfo | null, names: Names): string {
+  const running = runningView(active, names);
+  const now = running === null ? '' : `Now using ${running.value}. `;
+  return `${now}Falls back to the next engine if it fails.`;
+}
+
+/** Hint when Automatic is selected but the gateway is in manual mode. */
+export const USE_AUTO_HINT =
+  'Picks the fastest engine this Mac supports and falls back if it fails.';
+
+/** Hint on a specific engine while the gateway is in automatic mode. */
+export const LEAVES_AUTO_HINT = 'Picking an engine turns off automatic selection.';
+
+export type Suggestion =
+  | {
+      readonly kind: 'switch';
+      readonly hint: string;
+      readonly target: { engine: string; model: string; device: string | null };
+    }
+  | { readonly kind: 'install'; readonly hint: string; readonly command: string };
+
+function installCommand(t: Target, backend: string | null): string {
+  if (t.engine === 'fastflowlm') {
+    return `local-decider engine install --engine fastflowlm --model ${t.model}`;
+  }
+  const flavor =
+    backend === 'MLX' || backend === 'CUDA' ? ` --flavor ${backend.toLowerCase()}` : '';
+  return `local-decider engine install${flavor}`;
+}
+
+const LADDER = ['NPU', 'CUDA', 'MLX', 'MPS', 'CPU'];
+
+function fasterThan(better: string | null, worse: string | null): boolean {
+  const a = better === null ? -1 : LADDER.indexOf(better);
+  const b = worse === null ? -1 : LADDER.indexOf(worse);
+  return a >= 0 && b >= 0 && a < b;
+}
+
+/**
+ * Manual mode only: the engine automatic selection would pick, when it is not the one running.
+ * Installed: a switch. Not installed: how to install it. Otherwise nothing to suggest.
+ */
+export function suggestionView(
+  active: ActiveInfo | null,
+  rec: Recommendation | null,
+  names: Names,
+): Suggestion | null {
+  const auto = rec?.automatic;
+  if (active?.selectionMode !== 'manual' || auto == null || active.engine === null) {
+    return null;
+  }
+  const candidate = rec?.candidates.find((c) => sameChoice(c, auto));
+  const backend = candidate?.backend ?? backendOf(auto.engine, auto.device);
+  const running = runningBackend(active);
+  if (auto.engine === active.engine && (backend === null || backend === running)) {
+    return null;
+  }
+  const name = shortName(auto.engine, backend, names);
+  if (candidate?.ready !== true) {
+    return {
+      kind: 'install',
+      hint: `${name} is faster here but not installed.`,
+      command: installCommand(auto, backend),
+    };
+  }
+  const than = fasterThan(backend, running)
+    ? ` and faster than ${shortName(active.engine, running, names)}`
+    : '';
+  return {
+    kind: 'switch',
+    hint: `${name} is installed${than}.`,
+    target: { engine: auto.engine, model: auto.model, device: auto.device },
+  };
+}
+
+function minutes(seconds: number): string {
+  if (seconds < 60) {
+    return 'under a minute';
+  }
+  return `${String(Math.ceil(seconds / 60))} min`;
+}
+
+/** `Apple GPU (MLX) failed; retrying in 2 min.` while automatic mode runs a backup engine. */
+export function fallbackLine(
+  active: ActiveInfo | null,
+  names: Names,
+  now: number = Date.now(),
+): string | null {
+  const fb = active?.fallback;
+  if (fb == null) {
+    return null;
+  }
+  const who =
+    fb.engine === null
+      ? 'The preferred engine'
+      : shortName(fb.engine, backendOf(fb.engine, fb.device), names);
+  const at = fb.retryAt === null ? Number.NaN : Date.parse(fb.retryAt);
+  if (Number.isNaN(at)) {
+    return `${who} failed; it will be retried.`;
+  }
+  const seconds = Math.max(0, Math.round((at - now) / 1000));
+  return `${who} failed; retrying in ${minutes(seconds)}.`;
+}
+
+function sameChoice(a: Choice, b: Choice): boolean {
+  return a.engine === b.engine && a.device === b.device;
 }
 
 interface Choice {
@@ -178,72 +389,77 @@ interface Choice {
   readonly device: string | null;
 }
 
-function sameChoice(a: Choice, b: Choice): boolean {
-  return a.engine === b.engine && a.device === b.device;
+export interface EngineRow {
+  readonly key: string;
+  readonly label: string;
+  readonly detail: string;
 }
 
-function summaryOf(rec: Recommendation, mode: SelectionMode | null, labels: EngineLabels): Summary {
-  const auto = rec.automatic;
-  const named = (t: Target): string =>
-    describe(
-      { ...t, backend: rec.candidates.find((c) => sameChoice(c, t))?.backend ?? null },
-      labels,
-    );
-  const manual = mode === 'manual' || rec.recommended?.explicit === true;
-  if (!manual) {
-    return auto === null
-      ? { label: 'Recommended', value: 'None eligible', reason: 'No engine is eligible here.' }
-      : { label: 'Recommended', value: named(auto), reason: auto.reason };
-  }
-  if (auto === null) {
-    return { label: 'Automatic would pick', value: 'None eligible', reason: '' };
-  }
-  if (rec.recommended !== null && sameChoice(auto, rec.recommended)) {
-    return { label: 'Automatic would pick', value: 'Matches your selection', reason: '' };
-  }
-  return { label: 'Automatic would pick', value: named(auto), reason: auto.reason };
+export interface EnginesView {
+  /** `3 ready`. */
+  readonly summary: string;
+  readonly rows: readonly EngineRow[];
 }
 
-/** The summary row and the candidates that can run here; null when there is nothing to show. */
-export function recommendationView(
+const HIDDEN: readonly (CandidateCode | null)[] = ['no-hardware', 'unsupported-platform'];
+
+const NOTE: Partial<Record<CandidateCode, string>> = {
+  'not-confirmed': 'Not detected on this Mac',
+  'no-memory': 'Not enough memory',
+  'uncalibrated': "Manual only · its confidence isn't calibrated for automatic use",
+};
+
+function rowDetail(c: RankedCandidate, speed: string): string {
+  const note = c.code === null ? undefined : NOTE[c.code];
+  if (note !== undefined) {
+    return note;
+  }
+  if (!c.eligible) {
+    return 'Not used automatically';
+  }
+  return c.ready ? `Ready${speed}` : 'Not installed';
+}
+
+/** ` · fastest`, ` · slowest, works everywhere`; empty for the middle of the ladder. */
+function speedNote(c: RankedCandidate, firstReady: boolean, onlyOne: boolean): string {
+  if (c.backend === 'CPU') {
+    return onlyOne ? ' · works everywhere' : ' · slowest, works everywhere';
+  }
+  return firstReady && !onlyOne ? ' · fastest' : '';
+}
+
+/** Engines that can run on this Mac, with a plain status each; null when there is no ranking. */
+export function enginesView(rec: Recommendation | null, names: Names): EnginesView | null {
+  if (rec === null) {
+    return null;
+  }
+  const shown = rec.candidates.filter((c) => c.supported && !HIDDEN.includes(c.code));
+  if (shown.length === 0) {
+    return null;
+  }
+  const readyList = shown.filter((c) => c.eligible && c.ready);
+  const first = readyList[0];
+  const rows = shown.map((c) => ({
+    key: `${c.engine}|${c.device ?? ''}|${c.model}`,
+    label: shortName(c.engine, c.backend, names),
+    detail: rowDetail(c, speedNote(c, c === first, readyList.length === 1)),
+  }));
+  return { summary: `${String(readyList.length)} ready`, rows };
+}
+
+/**
+ * Where an engine runs, for the engine select's hint: its running backend, else the best
+ * candidate's. Null for an engine that is not tied to hardware (a server you configure).
+ */
+export function engineWhere(
+  engine: string,
+  active: ActiveInfo | null,
   rec: Recommendation | null,
-  mode: SelectionMode | null,
-  labels: EngineLabels,
-): RecommendationView | null {
-  if (rec === null || (rec.automatic === null && rec.candidates.length === 0)) {
-    return null;
-  }
-  return {
-    summary: summaryOf(rec, mode, labels),
-    candidates: rec.candidates
-      .filter((c) => c.supported)
-      .map((c) => ({
-        key: `${c.engine}|${c.device ?? ''}|${c.model}`,
-        label: describe(c, labels),
-        status: statusOf(c),
-        eligible: c.eligible,
-        reason: c.reason,
-      })),
-  };
-}
-
-/** `Automatic` or `Manual`, or null for a gateway that does not say. */
-export function selectionModeLabel(mode: SelectionMode | null): string | null {
-  if (mode === null) {
-    return null;
-  }
-  return mode === 'auto' ? 'Automatic' : 'Manual';
-}
-
-/** One line for an active fallback: why it happened and when the engine is retried. */
-export function fallbackText(fallback: Fallback | null, now: number = Date.now()): string | null {
-  if (fallback === null) {
-    return null;
-  }
-  const at = fallback.retryAt === null ? Number.NaN : Date.parse(fallback.retryAt);
-  if (Number.isNaN(at)) {
-    return fallback.reason;
-  }
-  const seconds = Math.max(0, Math.round((at - now) / 1000));
-  return `${fallback.reason}; retry in ${String(seconds)} s`;
+): string | null {
+  const mine = rec?.candidates.filter((c) => c.engine === engine && c.supported) ?? [];
+  const backend =
+    (active?.engine === engine ? runningBackend(active) : null) ??
+    (mine.find((c) => c.eligible && c.ready) ?? mine.find((c) => c.eligible))?.backend ??
+    null;
+  return backend === null ? null : backendName(backend);
 }

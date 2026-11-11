@@ -5,6 +5,7 @@ import {
   downloadModel,
   listEngines,
   selectEngine,
+  setSelectionMode,
   setPath,
   validateEngine,
 } from '../server/engines.ts';
@@ -136,6 +137,8 @@ function ctx(overrides: Partial<ModelRowContext> = {}): ModelRowContext {
       engine: 'fastflowlm',
       model: 'd3:nano',
       device: null,
+      resolvedDevice: null,
+      backend: null,
       state: 'ready',
       detail: null,
       lifecycle: null,
@@ -344,6 +347,28 @@ describe('engine selection helpers', () => {
     assert.equal(initialEngine({ ...catalog, engines: [] }), null);
   });
 
+  it('starts on Automatic only when the gateway is in automatic mode', () => {
+    const catalog = parseEngineCatalog({
+      ...BODY,
+      active: { ...BODY.active, selectionMode: 'auto' },
+    });
+    assert.equal(initialEngine(catalog), '__auto__');
+    const manual = parseEngineCatalog({
+      ...BODY,
+      active: { ...BODY.active, selectionMode: 'manual' },
+    });
+    assert.equal(initialEngine(manual), 'fastflowlm');
+  });
+
+  it('offers Automatic first only when the gateway reports its mode', () => {
+    const catalog = parseEngineCatalog(BODY);
+    const withAuto = engineOptions(catalog.engines, null, true);
+    assert.deepEqual(withAuto[0], { label: 'Automatic — best for this Mac', value: '__auto__' });
+    assert.equal(withAuto.length, engineOptions(catalog.engines).length + 1);
+    assert.ok(engineOptions(catalog.engines, null, false).every((o) => o.value !== '__auto__'));
+    assert.ok(engineOptions(catalog.engines).every((o) => o.value !== '__auto__'));
+  });
+
   it('labels unavailable engines and short engine tags', () => {
     const catalog = parseEngineCatalog({
       engines: [
@@ -507,6 +532,26 @@ describe('engine RPC handlers', () => {
       { name: 'setPath', input: { key: 'tools.flm', value: '/opt/flm/bin/flm' } },
     ]);
     assert.ok(d.logs.every((line) => !line.includes('/opt/flm')));
+  });
+
+  it('turns automatic selection on and off through the gateway', async () => {
+    const gw = fakeGateway(() => null);
+    const d = deps(settings(), gw);
+    assert.deepEqual(await setSelectionMode(d, { mode: 'auto' }), { ok: true, error: null });
+    await setSelectionMode(d, { mode: 'manual' });
+    assert.deepEqual(gw.posts, [
+      { name: 'setSelectionMode', input: { mode: 'auto' } },
+      { name: 'setSelectionMode', input: { mode: 'manual' } },
+    ]);
+    const refusing = {
+      ...gw,
+      setSelectionMode: async () => ({ ok: false as const, error: 'busy' }),
+    };
+    assert.deepEqual(await setSelectionMode(deps(settings(), refusing), { mode: 'auto' }), {
+      ok: false,
+      error: 'busy',
+    });
+    assert.equal((await setSelectionMode(deps(settings(), null), { mode: 'auto' })).ok, false);
   });
 
   it('returns what the gateway sent back, and its errors', async () => {

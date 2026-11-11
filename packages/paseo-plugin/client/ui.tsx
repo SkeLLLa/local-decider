@@ -114,11 +114,14 @@ export function Value({
 /** Monospace family for paths and commands. */
 const MONO = Platform.select({ ios: 'Menlo', default: 'monospace' });
 
-export type Tone = 'error' | 'success' | 'info';
+export type Tone = 'error' | 'warning' | 'success' | 'info';
 
 function toneColor(theme: Theme, tone: Tone): string {
   if (tone === 'error') {
     return theme.colors.statusDanger;
+  }
+  if (tone === 'warning') {
+    return theme.colors.statusWarning;
   }
   return tone === 'success' ? theme.colors.statusSuccess : theme.colors.foregroundMuted;
 }

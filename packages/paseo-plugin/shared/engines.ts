@@ -4,14 +4,15 @@
  */
 import { z } from 'zod';
 
-import {
-  NOT_CONFIGURED_HINT,
-  connectionSchema,
-  isConnectable,
-  parseConnection,
-} from './connection.ts';
+import { connectionSchema, isConnectable, parseConnection } from './connection.ts';
 import { parsePaths, pathEntrySchema } from './paths.ts';
-import { parseFallback, parseRecommendation, parseSelectionMode } from './recommendation.ts';
+import {
+  AUTO_ENGINE,
+  AUTO_OPTION_LABEL,
+  parseFallback,
+  parseRecommendation,
+  parseSelectionMode,
+} from './recommendation.ts';
 
 const text = z.string().nullable();
 
@@ -70,6 +71,10 @@ const activeSchema = z.object({
   engine: text,
   model: text,
   device: text,
+  /** The device the engine actually runs on when `device` is `auto`. */
+  resolvedDevice: text,
+  /** `NPU`, `CUDA`, `MLX`, `MPS` or `CPU` when the gateway knows it. */
+  backend: text,
   state: text,
   detail: text,
   /** `lazy` loads on the first decision and unloads when idle; `eager` stays loaded. */
@@ -79,7 +84,7 @@ const activeSchema = z.object({
   /** `auto`: the gateway ranks engines and falls back on its own. Null on older gateways. */
   selectionMode: z.enum(['auto', 'manual']).nullable(),
   /** Set while the gateway runs a replacement for a failed engine. */
-  fallback: z.object({ reason: z.string(), retryAt: text }).nullable(),
+  fallback: z.object({ reason: z.string(), engine: text, device: text, retryAt: text }).nullable(),
 });
 
 const targetSchema = z.object({
@@ -95,6 +100,16 @@ const recommendationSchema = z.object({
   candidates: z.array(
     targetSchema.extend({
       backend: text,
+      code: z
+        .enum([
+          'available',
+          'no-hardware',
+          'not-confirmed',
+          'unsupported-platform',
+          'no-memory',
+          'uncalibrated',
+        ])
+        .nullable(),
       eligible: z.boolean(),
       supported: z.boolean(),
       ready: z.boolean(),
@@ -264,6 +279,8 @@ function parseActive(value: unknown): ActiveEngine | null {
     engine: str(v['engine']),
     model: str(v['model']),
     device: str(v['device']),
+    resolvedDevice: str(v['resolvedDevice']),
+    backend: str(v['backend']),
     state: str(v['state']),
     detail: str(v['detail']),
     lifecycle: v['lifecycle'] === 'lazy' || v['lifecycle'] === 'eager' ? v['lifecycle'] : null,
@@ -304,6 +321,9 @@ export function enginesPollInterval(catalog: EngineCatalog | undefined): number 
 
 /** The engine whose models to list first: the active one, else the first available, else any. */
 export function initialEngine(catalog: EngineCatalog): string | null {
+  if (catalog.active?.selectionMode === 'auto') {
+    return AUTO_ENGINE;
+  }
   const active = catalog.active?.engine ?? null;
   if (active !== null && catalog.engines.some((e) => e.id === active)) {
     return active;
@@ -507,13 +527,15 @@ export function activeEngineTag(catalog: EngineCatalog): string | null {
 export function engineOptions(
   engines: readonly EngineInfo[],
   activeId: string | null = null,
+  withAuto = false,
 ): { label: string; value: string }[] {
-  return engines
+  const options = engines
     .filter((e) => e.supported || e.id === activeId)
     .map((e) => ({
       label: e.available ? e.label : `${e.label} (${unavailableWord(e)})`,
       value: e.id,
     }));
+  return withAuto ? [{ label: AUTO_OPTION_LABEL, value: AUTO_ENGINE }, ...options] : options;
 }
 
 function unavailableWord(e: EngineInfo): string {
@@ -523,20 +545,23 @@ function unavailableWord(e: EngineInfo): string {
   return e.connectable ? 'not configured' : 'not installed';
 }
 
-/** Hint under the engine select: description, why unsupported, and the engine's state. */
-export function engineHint(engine: EngineInfo | null): string {
+/** Hint under the engine select: where it runs and whether it is usable, in one short line. */
+export function engineHint(engine: EngineInfo | null, where: string | null = null): string {
   if (engine === null) {
     return 'The gateway lists no engines.';
   }
-  const detail = engine.detail ?? '';
-  const note = engine.supported ? '' : (engine.unsupportedReason ?? 'Not supported here.');
-  let state = detail;
-  if (!engine.available) {
-    if (engine.installed) {
-      state = `Unavailable here. ${detail}`;
-    } else {
-      state = engine.connectable ? NOT_CONFIGURED_HINT : `Not installed. ${detail}`;
-    }
+  if (!engine.supported) {
+    return engine.unsupportedReason ?? 'Not supported here.';
   }
-  return [engine.description, note, state].filter((p) => p !== '').join(' ');
+  let state = 'not installed';
+  if (engine.available) {
+    state = 'ready';
+  } else if (engine.installed) {
+    state = 'unavailable here';
+  } else if (engine.connectable) {
+    return "Not configured yet. Enter your server's URL below.";
+  }
+  return where === null
+    ? `${state.charAt(0).toUpperCase()}${state.slice(1)}.`
+    : `Runs on ${where} · ${state}`;
 }

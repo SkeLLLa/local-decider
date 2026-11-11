@@ -146,9 +146,6 @@ export function lmStudioNote(server: DiscoveredServer): string {
   return `LM Studio found at ${server.url}. Choose LM Studio for its chat and logprob defaults. OpenAI-compatible remains available for custom settings.`;
 }
 
-export const NOT_CONFIGURED_HINT =
-  "Not configured. Enter your server's API base URL and choose or type a model below. Nothing to install.";
-
 /** What a server probe says; only a reachable result may claim a server answered. */
 export function serverSummary(server: DiscoveredServer): string {
   if (server.state !== 'reachable') {

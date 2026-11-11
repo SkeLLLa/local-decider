@@ -74,6 +74,19 @@ export async function selectEngine(
   return { ok, error };
 }
 
+export async function setSelectionMode(
+  deps: Deps,
+  { mode }: { mode: 'auto' | 'manual' },
+): Promise<{ ok: boolean; error: string | null }> {
+  const { ok, error } = await call(
+    deps,
+    mode === 'auto' ? 'turn automatic selection on' : 'turn automatic selection off',
+    async (gw) => gw.setSelectionMode(mode, { timeoutMs: 30_000 }),
+    () => null,
+  );
+  return { ok, error };
+}
+
 export async function downloadModel(
   deps: Deps,
   target: { engine: string; model: string },

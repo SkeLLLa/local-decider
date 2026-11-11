@@ -97,6 +97,7 @@ export function fakeGateway(
     engines: async () => ({}),
     stats: async () => ({}),
     selectEngine: record('selectEngine'),
+    setSelectionMode: async (mode) => record('setSelectionMode')({ mode }),
     downloadModel: record('downloadModel'),
     validateEngine: record('validateEngine'),
     saveEngineConnection: record('saveEngineConnection'),

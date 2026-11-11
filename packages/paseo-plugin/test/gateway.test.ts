@@ -229,6 +229,15 @@ describe('createGateway engine calls', () => {
     assert.ok(sent.every((s) => s.type === 'application/json'));
   });
 
+  it('posts the selection mode to its own endpoint', async () => {
+    const { gateway, sent } = recording(200, { mode: 'auto' });
+    await gateway?.setSelectionMode('auto');
+    assert.deepEqual(sent, [
+      { url: sent[0]?.url ?? '', body: { mode: 'auto' }, type: 'application/json' },
+    ]);
+    assert.match(sent[0]?.url ?? '', /\/v1\/engine\/mode$/);
+  });
+
   it('posts downloads, validation, paths, load and lifecycle to their endpoints', async () => {
     const { gateway, sent } = recording(202, { download: { id: 'dl-1' } });
     await gateway?.downloadModel({ engine: 'fastflowlm', model: 'd3:mini' });

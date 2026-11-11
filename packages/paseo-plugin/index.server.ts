@@ -16,6 +16,7 @@ import {
   saveConnection,
   selectEngine,
   setLifecycle,
+  setSelectionMode,
   setPolicyMode,
   setPolicyThresholds,
   setPolicyVariant,
@@ -49,6 +50,7 @@ import {
   discoverServersRpc,
   saveConnectionRpc,
   selectEngineRpc,
+  selectionModeRpc,
   serviceInfoRpc,
   serviceRpc,
   setPathRpc,
@@ -164,6 +166,7 @@ export default function contribute(server: PluginServerContext): () => void {
   server.handle(feedbackRpc, async (input, { paseo }) => recordFeedback(deps, paseo, input));
   server.handle(enginesRpc, async () => listEngines(deps));
   server.handle(selectEngineRpc, async (input) => selectEngine(deps, input));
+  server.handle(selectionModeRpc, async (input) => setSelectionMode(deps, input));
   server.handle(saveConnectionRpc, async (input) => saveConnection(deps, input));
   server.handle(discoverServersRpc, async (input) => discoverServers(deps, input));
   server.handle(downloadModelRpc, async (input) => downloadModel(deps, input));

@@ -54,6 +54,8 @@ export interface Gateway {
    * `auto` or absent keeps the gateway's device. Unlike the read calls, reports why it failed.
    */
   selectEngine(selection: EngineSelection, options?: CallOptions): Promise<PostResult>;
+  /** `POST /v1/engine/mode`: automatic selection on, or manual keeping the running engine. */
+  setSelectionMode(mode: 'auto' | 'manual', options?: CallOptions): Promise<PostResult>;
   /** `POST /v1/models/download`: start downloading a model; 202 with `{download}`. */
   downloadModel(
     target: { engine: string; model: string },
@@ -269,6 +271,7 @@ export function createGateway(options: GatewayOptions = {}): Gateway | null {
     engines: async (call) => request('GET', '/v1/engines', undefined, call),
     stats: async (call) => request('GET', '/v1/stats', undefined, call),
     selectEngine: async (selection, call) => post('/v1/engine', selectionBody(selection), call),
+    setSelectionMode: async (mode, call) => post('/v1/engine/mode', { mode }, call),
     downloadModel: async (target, call) => post('/v1/models/download', { ...target }, call),
     validateEngine: async (engine, call) => post('/v1/engines/validate', { engine }, call),
     saveEngineConnection: async (body, call) => post('/v1/config/engine', { ...body }, call),

@@ -149,6 +149,12 @@ candidate:
 settings page saves a manual `selection` and leaves auto mode. A manual selection never falls
 back. Setting `selection: { mode: auto }` in `config.yaml` turns auto mode back on.
 
+`POST /v1/engine/mode` with `{"mode": "auto"}` or `{"mode": "manual"}` flips the mode at run time
+and persists it. Going manual keeps the engine, model and device that are running. The settings
+page drives it with the "Automatic" option of its Engine select. `active.fallback` also carries the
+failed `engine` and `device`, and each ranking candidate has a stable `code` (`available`,
+`no-hardware`, `not-confirmed`, `unsupported-platform`, `no-memory`, `uncalibrated`).
+
 ## 6. openai-compatible: prompt mapping and caveats
 
 The engine asks an OpenAI-style server to answer with exactly one option label, then reads the

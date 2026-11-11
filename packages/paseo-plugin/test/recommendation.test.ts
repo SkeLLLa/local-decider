@@ -3,24 +3,31 @@ import { describe, it } from 'node:test';
 
 import { parseEngineCatalog } from '../shared/engines.ts';
 import {
-  fallbackText,
+  AUTO_ENGINE,
+  LEAVES_AUTO_HINT,
+  USE_AUTO_HINT,
+  autoHint,
+  backendName,
+  engineWhere,
+  enginesView,
+  fallbackLine,
+  namesOf,
   parseRecommendation,
-  recommendationView,
-  selectionModeLabel,
+  runningView,
+  suggestionView,
+  type ActiveInfo,
+  type Names,
+  type Recommendation,
 } from '../shared/recommendation.ts';
 
-const TARGET = {
-  engine: 'strands-decider',
-  model: 'm',
-  device: 'mlx',
-  reason: 'MLX/Metal: MLX with Metal',
-};
+const TARGET = { engine: 'strands-decider', model: 'm', device: 'mlx', reason: 'fastest here' };
 
 const cand = (over: Record<string, unknown>): Record<string, unknown> => ({
   engine: 'strands-decider',
   model: 'm',
   device: 'mlx',
   backend: 'MLX',
+  code: 'available',
   eligible: true,
   supported: true,
   ready: true,
@@ -33,32 +40,69 @@ const RECOMMENDATION = {
   automatic: { ...TARGET, explicit: false },
   candidates: [
     cand({}),
-    cand({ device: 'cpu', backend: 'CPU', ready: false, reason: 'always available' }),
+    cand({ device: 'mps', backend: 'MPS' }),
+    cand({ device: 'cpu', backend: 'CPU' }),
+    cand({
+      engine: 'lmstudio',
+      model: 'qwen3-4b-instruct-2507',
+      device: null,
+      backend: null,
+      code: 'uncalibrated',
+      eligible: false,
+    }),
     cand({
       engine: 'fastflowlm',
       model: 'd3:mini',
       device: null,
       backend: 'NPU',
+      code: 'unsupported-platform',
       eligible: false,
       supported: false,
-      reason: 'supported only on Linux',
     }),
+    cand({ device: 'cuda', backend: 'CUDA', code: 'no-hardware', eligible: false }),
     { engine: 'broken' },
   ],
   extra: true,
 };
 
-const LABELS = new Map([
-  ['strands-decider', 'Strands Decider'],
-  ['fastflowlm', 'FastFlowLM'],
-]);
+const NAMES: Names = namesOf({
+  engines: [
+    { id: 'strands-decider', label: 'Strands Decider' },
+    { id: 'fastflowlm', label: 'FastFlowLM' },
+    { id: 'lmstudio', label: 'LM Studio' },
+  ],
+  models: [
+    { engine: 'strands-decider', id: 'm', label: 'strands-decider 2B', latencyHint: '~66 ms' },
+    {
+      engine: 'lmstudio',
+      id: 'qwen3-4b-instruct-2507',
+      label: 'Qwen3 4B',
+      latencyHint: '~1.1 s CPU, ~180 ms MPS, ~66 ms MLX (M5 Pro, a long note)',
+    },
+  ],
+});
+
+const rec = (over: Record<string, unknown> = {}): Recommendation | null =>
+  parseRecommendation({ ...RECOMMENDATION, ...over });
+
+const active = (over: Partial<ActiveInfo> = {}): ActiveInfo => ({
+  engine: 'strands-decider',
+  model: 'm',
+  device: 'auto',
+  resolvedDevice: 'mlx',
+  backend: 'MLX',
+  state: 'ready',
+  selectionMode: 'manual',
+  fallback: null,
+  ...over,
+});
 
 describe('recommendation parsing', () => {
-  it('reads the gateway recommendation and skips malformed candidates', () => {
-    const rec = parseRecommendation(RECOMMENDATION);
-    assert.equal(rec?.automatic?.engine, 'strands-decider');
-    assert.equal(rec?.candidates.length, 3);
-    assert.equal(rec?.candidates[1]?.ready, false);
+  it('reads the gateway recommendation, codes included, and skips malformed candidates', () => {
+    const parsed = rec();
+    assert.equal(parsed?.automatic?.engine, 'strands-decider');
+    assert.equal(parsed?.candidates.length, 6);
+    assert.equal(parsed?.candidates[3]?.code, 'uncalibrated');
   });
 
   it('renders a catalog from an older gateway without these fields', () => {
@@ -66,27 +110,30 @@ describe('recommendation parsing', () => {
     assert.equal(catalog.recommendation, null);
     assert.equal(catalog.active?.selectionMode, null);
     assert.equal(catalog.active?.fallback, null);
-    assert.equal(recommendationView(catalog.recommendation, null, LABELS), null);
-    assert.equal(selectionModeLabel(catalog.active?.selectionMode ?? null), null);
+    assert.equal(enginesView(catalog.recommendation, NAMES), null);
+    assert.equal(suggestionView(catalog.active, catalog.recommendation, NAMES), null);
+    assert.equal(fallbackLine(catalog.active, NAMES), null);
   });
 
-  it('keeps the recommendation apart from the active selection', () => {
+  it('reads backend, resolved device and the failed engine of a fallback', () => {
     const catalog = parseEngineCatalog({
       active: {
         engine: 'strands-decider',
         model: 'm',
+        resolvedDevice: 'cpu',
+        backend: 'CPU',
         selectionMode: 'auto',
-        fallback: { reason: 'fastflowlm failed: boom', retryAt: '2026-01-01T00:00:30.000Z' },
+        fallback: { reason: 'x failed', engine: 'fastflowlm', retryAt: '2026-01-01T00:00:30.000Z' },
       },
-      recommendation: RECOMMENDATION,
     });
-    assert.equal(catalog.active?.engine, 'strands-decider');
-    assert.equal(catalog.recommendation?.recommended?.engine, 'strands-decider');
-    assert.equal(catalog.active?.selectionMode, 'auto');
-    assert.equal(catalog.active?.fallback?.reason, 'fastflowlm failed: boom');
+    assert.equal(catalog.active?.backend, 'CPU');
+    assert.equal(catalog.active?.resolvedDevice, 'cpu');
+    assert.equal(catalog.active?.fallback?.engine, 'fastflowlm');
   });
 
-  it('ignores an unknown selection mode and a fallback without a reason', () => {
+  it('ignores unknown codes, an unknown mode and a fallback without a reason', () => {
+    const parsed = rec({ candidates: [cand({ code: 'bogus' })] });
+    assert.equal(parsed?.candidates[0]?.code, null);
     const catalog = parseEngineCatalog({
       active: { selectionMode: 'sometimes', fallback: { retryAt: 'x' } },
     });
@@ -95,76 +142,192 @@ describe('recommendation parsing', () => {
   });
 });
 
-describe('recommendation view', () => {
-  const parsed = parseRecommendation(RECOMMENDATION);
-
-  it('summarises the pick in a short value and lists supported candidates only', () => {
-    const view = recommendationView(parsed, 'auto', LABELS);
-    assert.deepEqual(view?.summary, {
-      label: 'Recommended',
-      value: 'Strands Decider · Apple MLX',
-      reason: 'MLX/Metal: MLX with Metal',
+describe('current engine', () => {
+  it('names the running engine and shows a short model and a state badge', () => {
+    assert.deepEqual(runningView(active(), NAMES), {
+      value: 'Strands Decider · Apple GPU (MLX)',
+      hint: 'strands-decider 2B · ~66 ms',
+      state: { text: 'Ready', tone: 'success' },
     });
-    assert.deepEqual(
-      view?.candidates.map((c) => [c.label, c.status]),
-      [
-        ['Strands Decider · Apple MLX', 'Ready'],
-        ['Strands Decider · CPU', 'Not installed'],
-      ],
+  });
+
+  it('drops long latency notes and raw model ids', () => {
+    const view = runningView(
+      active({
+        engine: 'lmstudio',
+        model: 'qwen3-4b-instruct-2507',
+        backend: null,
+        resolvedDevice: null,
+        device: null,
+      }),
+      NAMES,
     );
+    assert.equal(view?.value, 'LM Studio');
+    assert.equal(view?.hint, 'Qwen3 4B');
+    assert.equal(runningView(active({ model: 'unlisted-id' }), NAMES)?.hint, '');
   });
 
-  it('in manual mode shows what automatic would pick, not the explicit echo', () => {
-    const rec = parseRecommendation({
-      ...RECOMMENDATION,
-      recommended: { ...TARGET, device: 'cpu', reason: 'explicit selection', explicit: true },
-    });
-    const view = recommendationView(rec, 'manual', LABELS);
-    assert.equal(view?.summary.label, 'Automatic would pick');
-    assert.equal(view?.summary.value, 'Strands Decider · Apple MLX');
-  });
-
-  it('says the selection matches when automatic would pick the same engine', () => {
-    const rec = parseRecommendation({
-      ...RECOMMENDATION,
-      recommended: { ...TARGET, reason: 'explicit selection', explicit: true },
-    });
+  it('derives the backend from the device on gateways that send no backend', () => {
+    const view = runningView(active({ backend: null, resolvedDevice: null, device: 'cpu' }), NAMES);
+    assert.equal(view?.value, 'Strands Decider · CPU');
     assert.equal(
-      recommendationView(rec, 'manual', LABELS)?.summary.value,
-      'Matches your selection',
+      runningView(
+        active({ engine: 'fastflowlm', backend: null, device: null, resolvedDevice: null }),
+        NAMES,
+      )?.value,
+      'FastFlowLM · AMD NPU',
     );
   });
 
-  it('treats a candidate without `supported` as supported and names model-only engines', () => {
-    const rec = parseRecommendation({
-      recommended: null,
-      candidates: [
-        {
-          engine: 'lmstudio',
-          model: 'qwen3-4b-instruct-2507',
-          device: null,
-          backend: null,
-          eligible: false,
-          ready: true,
-          reason: 'uncalibrated: explicit choice only',
-        },
-      ],
-    });
-    const view = recommendationView(rec, 'auto', new Map([['lmstudio', 'LM Studio']]));
-    assert.equal(view?.candidates[0]?.label, 'LM Studio · qwen3-4b-instruct-2507');
-    assert.equal(view?.candidates[0]?.status, 'Not eligible');
-    assert.equal(view?.summary.value, 'None eligible');
+  it('maps engine states to badges', () => {
+    assert.equal(runningView(active({ state: 'starting' }), NAMES)?.state?.text, 'Loading');
+    assert.equal(runningView(active({ state: 'failed' }), NAMES)?.state?.tone, 'error');
+    assert.equal(runningView(active({ state: 'weird' }), NAMES)?.state, null);
+    assert.equal(runningView(null, NAMES), null);
   });
 
-  it('labels the selection mode and the fallback countdown', () => {
-    assert.equal(selectionModeLabel('auto'), 'Automatic');
-    assert.equal(selectionModeLabel('manual'), 'Manual');
+  it('words the hint for Automatic, with and without a running engine', () => {
+    assert.equal(
+      autoHint(active({ selectionMode: 'auto' }), NAMES),
+      'Now using Strands Decider · Apple GPU (MLX). Falls back to the next engine if it fails.',
+    );
+    assert.equal(autoHint(null, NAMES), 'Falls back to the next engine if it fails.');
+    assert.match(USE_AUTO_HINT, /fastest engine this Mac supports/);
+    assert.equal(LEAVES_AUTO_HINT, 'Picking an engine turns off automatic selection.');
+    assert.equal(AUTO_ENGINE, '__auto__');
+  });
+
+  it('words a fallback with the failed backend and minutes', () => {
     const now = Date.parse('2026-01-01T00:00:00.000Z');
+    const at = (
+      retryAt: string | null,
+      engine: string | null = 'strands-decider',
+      device = 'mlx',
+    ): string | null =>
+      fallbackLine(active({ fallback: { reason: 'x', engine, device, retryAt } }), NAMES, now);
+    assert.equal(at('2026-01-01T00:01:30.000Z'), 'Apple GPU (MLX) failed; retrying in 2 min.');
     assert.equal(
-      fallbackText({ reason: 'x failed', retryAt: '2026-01-01T00:00:30.000Z' }, now),
-      'x failed; retry in 30 s',
+      at('2026-01-01T00:00:20.000Z'),
+      'Apple GPU (MLX) failed; retrying in under a minute.',
     );
-    assert.equal(fallbackText({ reason: 'x failed', retryAt: null }, now), 'x failed');
-    assert.equal(fallbackText(null, now), null);
+    assert.equal(at(null), 'Apple GPU (MLX) failed; it will be retried.');
+    assert.equal(at(null, null), 'The preferred engine failed; it will be retried.');
+    assert.equal(at(null, 'fastflowlm', ''), 'AMD NPU failed; it will be retried.');
+  });
+});
+
+describe('suggestion', () => {
+  const cpu = active({ resolvedDevice: 'cpu', backend: 'CPU', device: 'cpu' });
+
+  it('offers a switch to an installed faster engine in manual mode', () => {
+    assert.deepEqual(suggestionView(cpu, rec(), NAMES), {
+      kind: 'switch',
+      hint: 'Apple GPU (MLX) is installed and faster than CPU.',
+      target: { engine: 'strands-decider', model: 'm', device: 'mlx' },
+    });
+  });
+
+  it('points to the install command when the pick is not installed', () => {
+    const missing = rec({
+      candidates: [cand({ ready: false }), cand({ device: 'cpu', backend: 'CPU' })],
+    });
+    assert.deepEqual(suggestionView(cpu, missing, NAMES), {
+      kind: 'install',
+      hint: 'Apple GPU (MLX) is faster here but not installed.',
+      command: 'local-decider engine install --flavor mlx',
+    });
+    const flm = rec({
+      automatic: {
+        engine: 'fastflowlm',
+        model: 'd3:mini',
+        device: null,
+        reason: '',
+        explicit: false,
+      },
+      candidates: [
+        cand({
+          engine: 'fastflowlm',
+          model: 'd3:mini',
+          device: null,
+          backend: 'NPU',
+          ready: false,
+        }),
+      ],
+    });
+    assert.equal(
+      suggestionView(active(), flm, NAMES)?.kind === 'install' &&
+        (suggestionView(active(), flm, NAMES) as { command: string }).command,
+      'local-decider engine install --engine fastflowlm --model d3:mini',
+    );
+  });
+
+  it('shows nothing when it already runs the pick, in automatic mode, or without data', () => {
+    assert.equal(suggestionView(active(), rec(), NAMES), null);
+    assert.equal(suggestionView(active({ selectionMode: 'auto' }), rec(), NAMES), null);
+    assert.equal(suggestionView(active({ selectionMode: null }), rec(), NAMES), null);
+    assert.equal(suggestionView(cpu, rec({ automatic: null, recommended: null }), NAMES), null);
+    assert.equal(suggestionView(cpu, null, NAMES), null);
+    assert.equal(suggestionView(null, rec(), NAMES), null);
+  });
+});
+
+describe('engines on this Mac', () => {
+  it('hides unsupported engines and absent hardware and explains the rest plainly', () => {
+    const view = enginesView(rec(), NAMES);
+    assert.equal(view?.summary, '3 ready');
+    assert.deepEqual(
+      view?.rows.map((r) => [r.label, r.detail]),
+      [
+        ['Apple GPU (MLX)', 'Ready · fastest'],
+        ['Apple GPU (PyTorch MPS)', 'Ready'],
+        ['CPU', 'Ready · slowest, works everywhere'],
+        ['LM Studio', "Manual only · its confidence isn't calibrated for automatic use"],
+      ],
+    );
+  });
+
+  it('words not installed, not detected and not enough memory', () => {
+    const view = enginesView(
+      rec({
+        candidates: [
+          cand({ ready: false }),
+          cand({ device: 'mps', backend: 'MPS', code: 'not-confirmed', eligible: false }),
+          cand({ device: 'cpu', backend: 'CPU', code: 'no-memory', eligible: false }),
+        ],
+      }),
+      NAMES,
+    );
+    assert.deepEqual(
+      view?.rows.map((r) => r.detail),
+      ['Not installed', 'Not detected on this Mac', 'Not enough memory'],
+    );
+    assert.equal(view?.summary, '0 ready');
+  });
+
+  it('copes with candidates from an older gateway that send no code', () => {
+    const view = enginesView(
+      rec({
+        candidates: [
+          cand({ code: undefined }),
+          cand({ code: undefined, device: 'cpu', backend: 'CPU', eligible: false }),
+        ],
+      }),
+      NAMES,
+    );
+    assert.deepEqual(
+      view?.rows.map((r) => r.detail),
+      ['Ready', 'Not used automatically'],
+    );
+    assert.equal(enginesView(null, NAMES), null);
+  });
+
+  it('shows a lone CPU as working everywhere and names where each engine runs', () => {
+    const only = enginesView(rec({ candidates: [cand({ device: 'cpu', backend: 'CPU' })] }), NAMES);
+    assert.equal(only?.rows[0]?.detail, 'Ready · works everywhere');
+    assert.equal(engineWhere('strands-decider', active(), rec()), 'Apple GPU (MLX)');
+    assert.equal(engineWhere('strands-decider', null, rec()), 'Apple GPU (MLX)');
+    assert.equal(engineWhere('lmstudio', null, rec()), null);
+    assert.equal(backendName('MPS'), 'Apple GPU (PyTorch MPS)');
+    assert.equal(backendName('FUTURE'), 'FUTURE');
   });
 });

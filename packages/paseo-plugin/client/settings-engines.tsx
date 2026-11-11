@@ -21,19 +21,32 @@ import {
   initialEngine,
   modelRowState,
   modelRowView,
-  type ActiveEngine,
   type EngineCatalog,
   type EngineInfo,
   type EngineModel,
   type Validation,
 } from '../shared/engines.ts';
 import {
-  fallbackText,
-  recommendationView,
-  selectionModeLabel,
-  type CandidateView,
+  AUTO_ENGINE,
+  LEAVES_AUTO_HINT,
+  USE_AUTO_HINT,
+  autoHint,
+  engineWhere,
+  enginesView,
+  fallbackLine,
+  namesOf,
+  runningView,
+  suggestionView,
+  type EnginesView,
+  type RunningView,
+  type Suggestion,
 } from '../shared/recommendation.ts';
-import { downloadModelRpc, selectEngineRpc, validateEngineRpc } from '../shared/rpc.ts';
+import {
+  downloadModelRpc,
+  selectEngineRpc,
+  selectionModeRpc,
+  validateEngineRpc,
+} from '../shared/rpc.ts';
 import { ConnectionForm } from './connection-form.tsx';
 import { type Outcome, outcomeOf, useAction, useEngines } from './hooks.ts';
 import { Badge, InlineMessage, Mono, Progress, type Theme, Value } from './ui.tsx';
@@ -239,94 +252,205 @@ function ConnectionSlot({
   );
 }
 
-function CandidateRow({ theme, view }: { theme: Theme; view: CandidateView }): ReactNode {
+function EnginesCard({ view }: { view: EnginesView }): ReactNode {
+  const [open, setOpen] = useState(false);
   return (
-    <SettingsRow label={view.label} hint={view.reason}>
-      <Badge theme={theme} tone={view.status === 'Ready' ? 'success' : 'info'} text={view.status} />
+    <SettingsCard>
+      <SettingsAction
+        label="Engines on this Mac"
+        hint={view.summary}
+        actionLabel={open ? 'Hide' : 'Show'}
+        onPress={() => setOpen(!open)}
+      />
+      {open
+        ? view.rows.map((row) => <SettingsRow key={row.key} label={row.label} hint={row.detail} />)
+        : null}
+    </SettingsCard>
+  );
+}
+
+function SuggestionRow({
+  theme,
+  suggestion,
+  action,
+  onSwitch,
+}: {
+  theme: Theme;
+  suggestion: Suggestion;
+  action: Action;
+  onSwitch: (target: SwitchTarget) => void;
+}): ReactNode {
+  const [open, setOpen] = useState(false);
+  if (suggestion.kind === 'switch') {
+    return (
+      <SettingsAction
+        label="Faster engine available"
+        hint={suggestion.hint}
+        actionLabel={action.busy === null ? 'Switch' : 'Working…'}
+        disabled={action.busy !== null}
+        onPress={() => onSwitch(suggestion.target)}
+      />
+    );
+  }
+  return (
+    <>
+      <SettingsAction
+        label="Faster engine available"
+        hint={suggestion.hint}
+        actionLabel={open ? 'Hide' : 'How to install'}
+        onPress={() => setOpen(!open)}
+      />
+      {open ? (
+        <View style={{ paddingHorizontal: 16, paddingVertical: 8 }}>
+          <Mono theme={theme} lines={0}>
+            {suggestion.command}
+          </Mono>
+        </View>
+      ) : null}
+    </>
+  );
+}
+
+type SwitchTarget = { engine: string; model: string; device: string | null };
+
+function RunningRow({ theme, view }: { theme: Theme; view: RunningView }): ReactNode {
+  return (
+    <SettingsRow label="Running" {...(view.hint === '' ? {} : { hint: view.hint })}>
+      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+        <Value theme={theme}>{view.value}</Value>
+        {view.state === null ? null : (
+          <Badge theme={theme} tone={view.state.tone} text={view.state.text} />
+        )}
+      </View>
     </SettingsRow>
   );
 }
 
-function CandidateList({
-  theme,
-  candidates,
-}: {
-  theme: Theme;
-  candidates: readonly CandidateView[];
-}): ReactNode {
-  const [all, setAll] = useState(false);
-  const shown = all ? candidates : candidates.filter((c) => c.eligible);
-  const hidden = candidates.length - candidates.filter((c) => c.eligible).length;
+function RunningCard({ theme, catalog }: { theme: Theme; catalog: EngineCatalog }): ReactNode {
+  const select = useRpc(selectEngineRpc);
+  const action = useAction();
+  const { active } = catalog;
+  const names = namesOf(catalog);
+  const running = runningView(active, names);
+  const fallback = fallbackLine(active, names);
+  const suggestion = suggestionView(active, catalog.recommendation, names);
+  if (running === null) {
+    return null;
+  }
+  const switchTo = (target: SwitchTarget): void => {
+    void action.run('suggestion', async () =>
+      outcomeOf(
+        await select({ ...target, device: target.device ?? 'auto' }),
+        'Switching engines. Decisions fail open until it is ready.',
+      ),
+    );
+  };
   return (
     <SettingsCard>
-      {shown.map((c) => (
-        <CandidateRow key={c.key} theme={theme} view={c} />
-      ))}
-      {hidden === 0 ? null : (
-        <SettingsAction
-          label={all ? 'Not eligible' : `${String(hidden)} not eligible`}
-          hint="Engines the gateway will not pick on its own."
-          actionLabel={all ? 'Hide' : 'Show all'}
-          onPress={() => setAll(!all)}
-        />
+      <RunningRow theme={theme} view={running} />
+      {fallback === null ? null : (
+        <SettingsRow label="Using a backup engine" hint={fallback}>
+          <Badge theme={theme} tone="warning" text="Backup" />
+        </SettingsRow>
+      )}
+      {suggestion === null ? null : (
+        <SuggestionRow theme={theme} suggestion={suggestion} action={action} onSwitch={switchTo} />
+      )}
+      {action.outcome === null ? null : (
+        <InlineMessage theme={theme} tone={action.outcome.tone} text={action.outcome.text} />
       )}
     </SettingsCard>
   );
 }
 
-function SelectionRows({
-  theme,
-  active,
-}: {
-  theme: Theme;
-  active: ActiveEngine | null;
-}): ReactNode {
-  const mode = selectionModeLabel(active?.selectionMode ?? null);
-  const fallback = fallbackText(active?.fallback ?? null);
+function pickerHint(catalog: EngineCatalog, id: string | null, engine: EngineInfo | null): string {
+  const { active, recommendation } = catalog;
+  const auto = active?.selectionMode === 'auto';
+  if (id === AUTO_ENGINE) {
+    return auto ? autoHint(active, namesOf(catalog)) : USE_AUTO_HINT;
+  }
+  if (auto) {
+    return LEAVES_AUTO_HINT;
+  }
+  return engineHint(
+    engine,
+    engine === null ? null : engineWhere(engine.id, active, recommendation),
+  );
+}
+
+function UseAutomatic({ theme }: { theme: Theme }): ReactNode {
+  const setMode = useRpc(selectionModeRpc);
+  const action = useAction();
   return (
     <>
-      {mode === null ? null : (
-        <SettingsRow
-          label="Selection"
-          hint={
-            active?.selectionMode === 'auto'
-              ? 'The gateway picks the best installed engine and falls back if it fails.'
-              : 'You chose this engine; the gateway never switches it on its own.'
-          }
-        >
-          <Badge theme={theme} tone="info" text={mode} />
-        </SettingsRow>
-      )}
-      {fallback === null ? null : (
-        <SettingsRow label="Fallback" hint={fallback}>
-          <Badge theme={theme} tone="error" text="fallback" />
-        </SettingsRow>
+      <SettingsAction
+        label="Automatic selection"
+        hint="The gateway chooses the engine and switches if it fails."
+        actionLabel={action.busy === null ? 'Use automatic' : 'Working…'}
+        disabled={action.busy !== null}
+        onPress={() =>
+          void action.run('mode', async () =>
+            outcomeOf(await setMode({ mode: 'auto' }), 'Automatic selection is on.'),
+          )
+        }
+      />
+      {action.outcome === null ? null : (
+        <InlineMessage theme={theme} tone={action.outcome.tone} text={action.outcome.text} />
       )}
     </>
   );
 }
 
-function ChoiceCard({ theme, catalog }: { theme: Theme; catalog: EngineCatalog }): ReactNode {
+function EngineCard({
+  theme,
+  catalog,
+  id,
+  engine,
+  device,
+  onEngine,
+  onDevice,
+}: {
+  theme: Theme;
+  catalog: EngineCatalog;
+  id: string | null;
+  engine: EngineInfo | null;
+  device: string;
+  onEngine: (next: string) => void;
+  onDevice: (next: string) => void;
+}): ReactNode {
   const { active } = catalog;
-  const labels = new Map(catalog.engines.map((e) => [e.id, e.label]));
-  const view = recommendationView(catalog.recommendation, active?.selectionMode ?? null, labels);
-  if (active?.selectionMode == null && active?.fallback == null && view === null) {
-    return null;
-  }
+  const hasMode = active?.selectionMode != null;
   return (
-    <>
-      <SettingsCard>
-        <SelectionRows theme={theme} active={active} />
-        {view === null ? null : (
-          <SettingsRow label={view.summary.label} hint={view.summary.reason}>
-            <Value theme={theme}>{view.summary.value}</Value>
-          </SettingsRow>
-        )}
-      </SettingsCard>
-      {view === null || view.candidates.length === 0 ? null : (
-        <CandidateList theme={theme} candidates={view.candidates} />
+    <SettingsCard>
+      <SettingsSelect
+        label="Engine"
+        hint={pickerHint(catalog, id, engine)}
+        value={id ?? ''}
+        options={engineOptions(catalog.engines, active?.engine ?? null, hasMode)}
+        disabled={catalog.engines.length === 0}
+        onValueChange={onEngine}
+      />
+      {id === AUTO_ENGINE && active?.selectionMode === 'manual' ? (
+        <UseAutomatic theme={theme} />
+      ) : null}
+      {engine === null || engine.calibrated ? null : (
+        <SettingsRow
+          label="Calibration"
+          hint="This engine's confidence is not calibrated against the policy thresholds."
+        >
+          <Badge theme={theme} tone="info" text="uncalibrated" />
+        </SettingsRow>
       )}
-    </>
+      {engine === null || engine.devices.length === 0 ? null : (
+        <SettingsSelect
+          label="Device"
+          hint="Used when you press Use. Gateway default keeps the gateway's device."
+          value={device}
+          options={deviceOptions(engine.devices)}
+          onValueChange={onDevice}
+        />
+      )}
+    </SettingsCard>
   );
 }
 
@@ -336,41 +460,25 @@ function EnginePicker({ theme, catalog }: { theme: Theme; catalog: EngineCatalog
   const [device, setDevice] = useState('auto');
   const [seed, setSeed] = useState<Seed | null>(null);
   const id = picked ?? initialEngine(catalog);
+  const engines = enginesView(catalog.recommendation, namesOf(catalog));
   const engine = catalog.engines.find((e) => e.id === id) ?? null;
   return (
     <>
-      <ChoiceCard theme={theme} catalog={catalog} />
-      <SettingsCard>
-        <SettingsSelect
-          label="Engine"
-          hint={engineHint(engine)}
-          value={id ?? ''}
-          options={engineOptions(catalog.engines, catalog.active?.engine ?? null)}
-          disabled={catalog.engines.length === 0}
-          onValueChange={(next) => {
-            setPicked(next);
-            setDevice('auto');
-            action.clear();
-          }}
-        />
-        {engine === null || engine.calibrated ? null : (
-          <SettingsRow
-            label="Calibration"
-            hint="This engine's confidence is not calibrated against the policy thresholds."
-          >
-            <Badge theme={theme} tone="info" text="uncalibrated" />
-          </SettingsRow>
-        )}
-        {engine === null || engine.devices.length === 0 ? null : (
-          <SettingsSelect
-            label="Device"
-            hint="Used when you press Use. Gateway default keeps the gateway's device."
-            value={device}
-            options={deviceOptions(engine.devices)}
-            onValueChange={setDevice}
-          />
-        )}
-      </SettingsCard>
+      <EngineCard
+        theme={theme}
+        catalog={catalog}
+        id={id}
+        engine={engine}
+        device={device}
+        onEngine={(next) => {
+          setPicked(next);
+          setDevice('auto');
+          action.clear();
+        }}
+        onDevice={setDevice}
+      />
+      <RunningCard theme={theme} catalog={catalog} />
+      {engines === null ? null : <EnginesCard view={engines} />}
       <ConnectionSlot
         theme={theme}
         engine={engine}
@@ -410,7 +518,7 @@ export function EngineSection({
   return (
     <SettingsSection
       title="Engine and model"
-      info="Pick an engine to see its models. Use switches the gateway now, and the gateway keeps the choice across restarts. Decisions fail open while a model loads."
+      info="Automatic picks the fastest engine this Mac supports and switches to the next one if it fails. Manual keeps the engine you choose and never changes it on its own."
     >
       {reachable ? (
         <EnginePicker theme={theme} catalog={data} />

@@ -64,6 +64,13 @@ export const selectEngineRpc = defineRpc({
   output: z.object({ ok: z.boolean(), error: failure }),
 });
 
+/** Automatic selection on, or off keeping the running engine (`POST /v1/engine/mode`). */
+export const selectionModeRpc = defineRpc({
+  name: 'selection-mode',
+  input: z.object({ mode: z.enum(['auto', 'manual']) }),
+  output: z.object({ ok: z.boolean(), error: failure }),
+});
+
 /** Start a model download (`POST /v1/models/download`). */
 export const downloadModelRpc = defineRpc({
   name: 'download-model',
