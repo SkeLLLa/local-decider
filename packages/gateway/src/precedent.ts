@@ -70,6 +70,9 @@ export class PrecedentStore {
 
   /** Count the first eligible allow/deny outcome for a remembered escalated decision. */
   noteOutcome(outcome: OutcomeRecord): void {
+    if (outcome.verified !== true || outcome.source === 'unverified') {
+      return;
+    }
     if (this.#seenOutcomes.has(outcome.decisionId)) {
       return;
     }

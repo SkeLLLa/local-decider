@@ -1,8 +1,12 @@
 import assert from 'node:assert/strict';
+import { mkdtempSync, mkdirSync, writeFileSync } from 'node:fs';
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { after, before, describe, it } from 'node:test';
 
+import { readReportToken } from '../server/deps.ts';
 import { createGateway } from '../shared/gateway.ts';
 import { normaliseBaseUrl } from '../shared/url.ts';
 import { response } from './fakes.ts';
@@ -20,6 +24,22 @@ describe('normaliseBaseUrl', () => {
   it('defaults an empty value', () => {
     assert.equal(normaliseBaseUrl(''), 'http://127.0.0.1:8765');
     assert.equal(normaliseBaseUrl(undefined), 'http://127.0.0.1:8765');
+  });
+
+  it('reads the report token with gateway config path precedence', () => {
+    const root = mkdtempSync(join(tmpdir(), 'ld-paseo-token-'));
+    const explicit = join(root, 'explicit');
+    const xdg = join(root, 'xdg', 'local-decider');
+    mkdirSync(explicit, { recursive: true });
+    mkdirSync(xdg, { recursive: true });
+    writeFileSync(join(explicit, 'report-token'), 'explicit-token');
+    writeFileSync(join(xdg, 'report-token'), 'xdg-token');
+    assert.equal(
+      readReportToken({ LOCAL_DECIDER_CONFIG_DIR: explicit, XDG_CONFIG_HOME: join(root, 'xdg') }),
+      'explicit-token',
+    );
+    assert.equal(readReportToken({ XDG_CONFIG_HOME: join(root, 'xdg') }), 'xdg-token');
+    assert.equal(readReportToken({ LOCAL_DECIDER_CONFIG_DIR: join(root, 'missing') }), undefined);
   });
 
   it('rejects other schemes, credentials, queries and bad ports', () => {
@@ -40,14 +60,24 @@ describe('normaliseBaseUrl', () => {
 describe('createGateway (fail open)', () => {
   let server: Server;
   let url = '';
-  const seen: { path: string; auth: string | undefined; body: string }[] = [];
+  const seen: {
+    path: string;
+    auth: string | undefined;
+    report: string | string[] | undefined;
+    body: string;
+  }[] = [];
 
   before(async () => {
     server = createServer((req, res) => {
       let body = '';
       req.on('data', (c: Buffer) => (body += c.toString()));
       req.on('end', () => {
-        seen.push({ path: req.url ?? '', auth: req.headers.authorization, body });
+        seen.push({
+          path: req.url ?? '',
+          auth: req.headers.authorization,
+          report: req.headers['x-local-decider-report'],
+          body,
+        });
         const routes: Record<string, () => void> = {
           '/v1/decide/turn-outcome': () => res.end(JSON.stringify(response())),
           '/v1/decide/garbage': () => res.end('{not json'),
@@ -121,7 +151,7 @@ describe('createGateway (fail open)', () => {
   });
 
   it('sends the bearer token when set', async () => {
-    const gw = createGateway({ baseUrl: url, token: 'sekrit' });
+    const gw = createGateway({ baseUrl: url, token: 'sekrit', reportToken: 'report-secret' });
     assert.deepEqual(await gw?.health(), { status: 'ok', model: 'm', p50Ms: 90 });
     assert.equal(seen.at(-1)?.auth, 'Bearer sekrit');
     assert.equal(await gw?.reportOutcome('d-1', 'allow', 'user'), true);
@@ -130,12 +160,27 @@ describe('createGateway (fail open)', () => {
       outcome: 'allow',
       source: 'user',
     });
+    assert.equal(seen.at(-1)?.report, 'report-secret');
     assert.equal(await gw?.reportOutcome('d-2', 'deny', 'supervised'), true);
     assert.deepEqual(JSON.parse(seen.at(-1)?.body ?? ''), {
       decisionId: 'd-2',
       outcome: 'deny',
       source: 'supervised',
     });
+  });
+
+  it('does not send the report token to a remote plain HTTP gateway', async () => {
+    let sentHeaders = new Headers();
+    const gw = createGateway({
+      baseUrl: 'http://gateway.example',
+      reportToken: 'private-report-token',
+      fetch: async (_input, init) => {
+        sentHeaders = new Headers(init?.headers);
+        return Response.json({ ok: true });
+      },
+    });
+    assert.equal(await gw?.reportOutcome('d', 'allow', 'user'), true);
+    assert.equal(sentHeaders.get('x-local-decider-report'), null);
   });
 
   it('is null for an unusable URL', () => {

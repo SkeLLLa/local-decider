@@ -21,3 +21,11 @@ Status: accepted (2026-11-10)
 Precedent is project-scoped, exact-match, and auditable from decision and outcome records. It
 learns only after a human or supervised parent answers an escalated request; labels do not carry
 over to similar commands or other projects.
+
+## Addendum (2026-11-11): verified outcomes
+
+Only outcomes authenticated with the gateway's private report token may update precedent or
+calibration hints. Unauthenticated outcomes are logged as `source: unverified` and
+`verified: false`; they remain available to agreement and reliability statistics. The token is
+stored in the config directory with mode 0600 and is read by the Paseo plugin server when it
+reports outcomes. A same-user process without a sandbox can still read it.

@@ -142,9 +142,17 @@ export interface OutcomeRecord {
   /** The ground-truth answer for the policy's primary question, in its answer space. */
   readonly outcome: string;
   readonly source: OutcomeSource;
+  /** True only when the gateway's private report token authenticated the reporter. */
+  readonly verified?: boolean;
 }
 
-export type OutcomeSource = 'user' | 'harness' | 'heuristic' | 'supervised' | 'classifier';
+export type OutcomeSource =
+  | 'user'
+  | 'harness'
+  | 'heuristic'
+  | 'supervised'
+  | 'classifier'
+  | 'unverified';
 
 export interface PrecedentTally {
   readonly allows: number;

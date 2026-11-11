@@ -219,6 +219,12 @@ export const configSchema = z
       .describe(
         'lazy: load the model on the first decision and unload it when idle; eager: keep it loaded.',
       ),
+    logs: z
+      .strictObject({
+        retainDays: z.number().int().min(90).max(3650).default(365),
+      })
+      .default({ retainDays: 365 })
+      .describe('Retention for daily decision log files.'),
     tools: z
       .strictObject({
         flm: z.string().min(1).optional(),

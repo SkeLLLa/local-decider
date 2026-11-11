@@ -105,6 +105,7 @@ function escalations(total: number, denied: number, lowBand = 0): LogRecord[] {
       decisionId: id,
       outcome: i < denied ? 'deny' : 'allow',
       source: 'user',
+      verified: true,
     });
   }
   return records;
@@ -132,6 +133,16 @@ describe('calibration hints', () => {
     const [stats] = computeStats(escalations(120, 3), {}, policies);
     assert.deepEqual(stats?.calibrationHints, [{ rule: 'verdict.allow', n: 120, denies: 3 }]);
     assert.match(formatStats([stats]), /not enough labelled escalations \(n=120, denies=3\)/);
+  });
+
+  it('excludes unverified outcomes from calibration samples', () => {
+    const records = escalations(1, 0);
+    const outcome = records[1];
+    assert.ok(outcome?.kind === 'outcome');
+    records[1] = { ...outcome, verified: false };
+    const [stats] = computeStats(records, {}, policies);
+    assert.deepEqual(stats?.calibrationHints, [{ rule: 'verdict.allow', n: 0, denies: 0 }]);
+    assert.equal(stats?.labelled, 1, 'agreement and reliability still use every outcome');
   });
 });
 

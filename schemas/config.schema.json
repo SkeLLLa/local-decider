@@ -301,6 +301,22 @@
       },
       "additionalProperties": false
     },
+    "logs": {
+      "default": {
+        "retainDays": 365
+      },
+      "description": "Retention for daily decision log files.",
+      "type": "object",
+      "properties": {
+        "retainDays": {
+          "default": 365,
+          "type": "integer",
+          "minimum": 90,
+          "maximum": 3650
+        }
+      },
+      "additionalProperties": false
+    },
     "tools": {
       "default": {},
       "description": "Absolute tool paths; unset = automatic discovery.",

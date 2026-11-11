@@ -99,4 +99,10 @@ export interface GatewayHealth {
   readonly p50Ms?: number;
 }
 
-export type OutcomeSource = 'user' | 'harness' | 'heuristic' | 'supervised' | 'classifier';
+export type OutcomeSource =
+  | 'user'
+  | 'harness'
+  | 'heuristic'
+  | 'supervised'
+  | 'classifier'
+  | 'unverified';

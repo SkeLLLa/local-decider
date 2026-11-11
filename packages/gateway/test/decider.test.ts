@@ -65,6 +65,7 @@ describe('Decider', () => {
         decisionId: response.decisionId,
         outcome: 'allow',
         source: 'user' as const,
+        verified: true,
       };
       log.append(outcome);
       decider.noteOutcome(outcome);

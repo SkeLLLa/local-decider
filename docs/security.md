@@ -41,13 +41,28 @@ flowchart LR
 | Browser defences | Without a token, the Host header and any Origin must be loopback, and every POST must be `application/json`. This blocks cross-site requests and DNS rebinding. |
 | Untrusted input is data | Input is only rendered into the model's state. It is never executed or used as a path, URL, engine argument or a policy id outside the loaded set. Engine argv comes from validated config. |
 | Redaction | Keys, tokens, JWTs, private keys, URL credentials and `password=`-style assignments are redacted before the engine sees the state (`core/redact.ts`). |
-| No text in logs | The shadow log stores an input hash, answers and actions, never state text. |
+| No text in logs | The shadow log stores an input hash, answers and actions, never state text. Engine stdout/stderr lines containing `"state"` or `"questions"`, and lines over 500 characters, are dropped before logging. |
+| Bounded log storage | Engine logs rotate at 10 MiB with one previous file retained. Decision logs are pruned according to `logs.retainDays` (90–3650 days, default 365). |
 | Bounded work | Request bodies are capped at 256 KiB, engine responses at 1 MiB, the queue at 8 waiting decisions, and each decision has a deadline. Unparsable request targets get 400. |
 | Fail open | Adapters act only on `enforced` decisions. Any error, timeout or unreachable gateway means the harness default. Policies ship in `shadow`. |
 | Limited actions | Auto-allow needs p(allow) ≥ 0.95 (floor 0.5 for overrides). `command-risk` can only ask or deny. Permission hooks never deny from the model. |
 | Deterministic guard | Before any model, the hooks deny a short list of destructive shell commands, including inside `bash -lc` scripts, Codex argv arrays and `sudo` prefixes. A model cannot override it. |
 | Auto mode scope | The `claude-auto` scope caps the `permission` policy at `shadow` unless you raise it. The mod allows only in auto mode, only a plain ask, and only after a deterministic path and command check. |
 | Remote tool paths | Tool paths can only be changed on a loopback gateway. |
+
+## Outcomes
+
+At startup the gateway creates `<config dir>/report-token` if needed, using 32 random bytes and
+file mode 0600. The Paseo plugin server reads it from the same config directory and sends it only
+with outcome reports, only to loopback or HTTPS gateways. The Claude Code and Codex hooks do not
+read or send this token. Reports
+without a matching token are still logged as `source: unverified` and `verified: false`, and still
+count in agreement and reliability statistics; only verified outcomes can update precedent or
+calibration hints.
+
+The token does not stop an agent running as the same user without a sandbox from reading the file
+and forging a verified report. Claude Code and Codex sandboxes block reads outside the workspace,
+including this config path.
 
 ## What it does not protect against
 
@@ -56,9 +71,12 @@ flowchart LR
   make the label right.
 - **Redaction gaps.** Redaction is pattern matching. Unusual secret formats reach the local
   engine (still never the log).
-- **Forged outcomes.** Any local process can post an outcome to the loopback gateway, so labels
-  are not tied to a user or harness. Forged allows could build precedent for an exact repeated
-  request.
+- **Outcome reports.** Only reports carrying the gateway's private `report-token` count toward
+  precedent or calibration hints. Other reports are retained as `unverified` for agreement and
+  reliability stats. The token is stored in `<config dir>/report-token` with mode 0600 and is sent
+  by the Paseo plugin server. An agent running as the same user without a sandbox can read this
+  file and forge verified reports. Claude Code and Codex sandboxes block reads outside the
+  workspace, including this config path.
 - **Bad supervision.** A `supervised` outcome inherits the parent agent's judgement. Inconsistent
   parent answers teach inconsistent precedent.
 - **Model drift.** Calibration is per model. Thresholds tuned on one model do not transfer;
@@ -67,6 +85,10 @@ flowchart LR
   policies.
 
 ## Known limits
+
+The outcome token protects against sandboxed agents and unrelated local processes. It does not
+protect against code running as the same user without a sandbox, or against a compromised Paseo
+plugin process.
 
 - **CPU latency.** On CPU the 2B model takes seconds per decision, longer than the hooks' 1.5 s
   budget. There it suits shadow logging, turn outcomes and routing hints.

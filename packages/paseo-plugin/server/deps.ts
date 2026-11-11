@@ -9,6 +9,9 @@ import type {
   AgentUsage,
   JsonValue,
 } from '@getpaseo/protocol/agent-types';
+import { readFileSync } from 'node:fs';
+import { homedir } from 'node:os';
+import { join } from 'node:path';
 
 import type { Gateway } from '../shared/gateway.ts';
 import type { DeciderSettings } from '../shared/settings.ts';
@@ -52,6 +55,19 @@ export interface HookDeps {
   log(message: string): void;
   /** True when a recent health check failed; waiting hooks then skip the gateway entirely. */
   gatewayKnownDown?(): boolean;
+}
+
+/** Read the server-only outcome token using the gateway's config directory precedence. */
+export function readReportToken(env: NodeJS.ProcessEnv = process.env): string | undefined {
+  const config =
+    env['LOCAL_DECIDER_CONFIG_DIR'] ??
+    join(env['XDG_CONFIG_HOME'] ?? join(homedir(), '.config'), 'local-decider');
+  try {
+    const token = readFileSync(join(config, 'report-token'), 'utf8').trim();
+    return token === '' ? undefined : token;
+  } catch {
+    return undefined;
+  }
 }
 
 export function errorText(error: unknown): string {

@@ -1,17 +1,19 @@
 import type { SystemOneRequest, SystemOneResponse } from '@local-decider/core';
 import { spawn, type ChildProcess } from 'node:child_process';
-import { createWriteStream, existsSync, mkdirSync } from 'node:fs';
+import { createWriteStream, existsSync, mkdirSync, renameSync, rmSync, statSync } from 'node:fs';
 import { createServer } from 'node:net';
 import { join } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
 
 import type { Paths } from '../paths.ts';
 import { getHealth, postSystemOne } from './http.ts';
+import { createEngineLogFilter } from './log-filter.ts';
 import { EngineError, type Engine, type EngineHealth, type EngineState } from './types.ts';
 
 const MAX_RESTARTS = 5;
 /** Healthy this long before exiting, and the next crash starts a new restart budget. */
 const STABLE_MS = 5 * 60_000;
+const MAX_ENGINE_LOG_BYTES = 10 * 1024 * 1024;
 
 async function freePort(): Promise<number> {
   return new Promise((resolve, reject) => {
@@ -122,13 +124,15 @@ export class SupervisedEngine implements Engine {
     const port = await freePort();
     this.#url = `http://127.0.0.1:${String(port)}`;
     mkdirSync(this.#paths.logs, { recursive: true });
-    const log = createWriteStream(join(this.#paths.logs, `engine-${this.id}.log`), { flags: 'a' });
+    const logPath = join(this.#paths.logs, `engine-${this.id}.log`);
+    rotateEngineLog(logPath);
+    const log = createWriteStream(logPath, { flags: 'a' });
     const child = spawn(binary.path, this.#spec.args(port), {
       stdio: ['ignore', 'pipe', 'pipe'],
       env: { ...process.env, ...this.#spec.env },
     });
-    child.stdout?.pipe(log, { end: false });
-    child.stderr?.pipe(log, { end: false });
+    child.stdout?.pipe(createEngineLogFilter()).pipe(log, { end: false });
+    child.stderr?.pipe(createEngineLogFilter()).pipe(log, { end: false });
     child.once('exit', (code, signal) => {
       log.end();
       this.#onExit(code, signal);
@@ -192,4 +196,13 @@ export class SupervisedEngine implements Engine {
     this.#state = 'failed';
     this.#detail = detail;
   }
+}
+
+function rotateEngineLog(path: string): void {
+  if (!existsSync(path) || statSync(path).size <= MAX_ENGINE_LOG_BYTES) {
+    return;
+  }
+  const previous = `${path}.1`;
+  rmSync(previous, { force: true });
+  renameSync(path, previous);
 }

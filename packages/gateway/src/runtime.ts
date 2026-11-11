@@ -9,6 +9,7 @@ import { EngineControl } from './engine-control.ts';
 import type { Engine } from './engines/types.ts';
 import type { Paths } from './paths.ts';
 import { loadPolicies, policyDirs, type LoadedPolicy } from './policies.ts';
+import { ensureReportToken } from './report-token.ts';
 import { writeSchemas } from './schemas.ts';
 import { createGatewayServer } from './server.ts';
 import { ShadowLog } from './shadow.ts';
@@ -43,6 +44,7 @@ export interface StartOptions {
 export async function startGateway(options: StartOptions): Promise<Gateway> {
   const { config, paths } = options;
   const env = options.env ?? process.env;
+  const report = options.log ?? NOOP;
   const token = env['LOCAL_DECIDER_TOKEN'];
   checkBinding(config.host, token);
   const hasToken = token !== undefined && token !== '';
@@ -55,6 +57,8 @@ export async function startGateway(options: StartOptions): Promise<Gateway> {
       : undefined);
   const engine = options.engine ?? (engineControl as EngineControl).engine;
   const log = new ShadowLog(paths.logs);
+  const reportToken = ensureReportToken(paths);
+  pruneLogs(log, config.logs.retainDays, report);
   const decider = new Decider({
     engine,
     policies: options.policies ?? loadPolicies(config, policyDirs(config, paths)),
@@ -67,6 +71,7 @@ export async function startGateway(options: StartOptions): Promise<Gateway> {
     decider,
     log,
     token: hasToken ? token : undefined,
+    reportToken,
     engineControl,
     pricing: config.pricing,
     settings: () => engineControl?.settings ?? store.current,
@@ -78,8 +83,9 @@ export async function startGateway(options: StartOptions): Promise<Gateway> {
   void engine.start();
   const unwatch =
     store instanceof ConfigFile && engineControl !== undefined
-      ? watchSettings(store, engineControl, options.log ?? NOOP)
+      ? watchSettings(store, engineControl, report)
       : NOOP;
+  const stopPruning = scheduleLogPruning(log, store, report);
   const { port } = server.address() as AddressInfo;
   const host = config.host.includes(':') ? `[${config.host}]` : config.host;
   return {
@@ -88,12 +94,34 @@ export async function startGateway(options: StartOptions): Promise<Gateway> {
     url: `http://${host}:${String(port)}`,
     async close() {
       unwatch();
+      stopPruning();
       await engineControl?.idle();
       await decider.engine.stop();
       server.closeAllConnections();
       await new Promise<void>((resolve) => server.close(() => resolve()));
     },
   };
+}
+
+function pruneLogs(log: ShadowLog, retainDays: number, report: (line: string) => void): void {
+  try {
+    log.prune(retainDays);
+  } catch (error) {
+    report(`log retention failed: ${error instanceof Error ? error.message : String(error)}`);
+  }
+}
+
+function scheduleLogPruning(
+  log: ShadowLog,
+  store: ConfigStore,
+  report: (line: string) => void,
+): () => void {
+  const interval = setInterval(
+    () => pruneLogs(log, store.current.logs.retainDays, report),
+    24 * 60 * 60 * 1000,
+  );
+  interval.unref();
+  return () => clearInterval(interval);
 }
 
 function NOOP(): void {}

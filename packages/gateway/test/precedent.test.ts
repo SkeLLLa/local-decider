@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
 import { PrecedentStore } from '../src/precedent.ts';
+import { makeShadowRecord } from './records.ts';
 
 const SETTINGS = {
   from: 'subject',
@@ -23,22 +24,16 @@ function decision(
   action = 'ask',
   ts = new Date(NOW).toISOString(),
 ): ShadowRecord {
-  return {
-    kind: 'decision',
+  return makeShadowRecord(decisionId, {
     ts,
-    decisionId,
-    harness: 'cli',
-    policy: 'permission',
     mode: 'act',
     inputHash: 'state-hash',
     precedentKey: key,
-    answers: {},
     action,
     enforced: true,
     engine: 'test',
     model: 'test',
-    latencyMs: 1,
-  };
+  });
 }
 
 function outcome(
@@ -47,7 +42,7 @@ function outcome(
   source: OutcomeRecord['source'] = 'user',
   ts = new Date(NOW).toISOString(),
 ): OutcomeRecord {
-  return { kind: 'outcome', ts, decisionId, outcome: answer, source };
+  return { kind: 'outcome', ts, decisionId, outcome: answer, source, verified: true };
 }
 
 describe('PrecedentStore', () => {
@@ -73,6 +68,17 @@ describe('PrecedentStore', () => {
     store.noteOutcome(outcome('one', 'allow', 'harness'));
     store.noteOutcome(outcome('one', 'allow', 'user'));
     assert.deepEqual(store.tally('subject-hash'), { allows: 0, denies: 0 });
+  });
+
+  it('ignores unverified outcomes without consuming the decision', () => {
+    const store = makeStore();
+    store.noteDecision(decision('forged'));
+    store.noteOutcome({ ...outcome('forged'), verified: false });
+    assert.deepEqual(store.tally('subject-hash'), { allows: 0, denies: 0 });
+    store.noteOutcome({ ...outcome('forged'), source: 'unverified' });
+    assert.deepEqual(store.tally('subject-hash'), { allows: 0, denies: 0 });
+    store.noteOutcome(outcome('forged'));
+    assert.deepEqual(store.tally('subject-hash'), { allows: 1, denies: 0 });
   });
 
   it('expires evidence after maxAgeDays and ignores old decisions', () => {

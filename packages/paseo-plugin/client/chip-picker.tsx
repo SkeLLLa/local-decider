@@ -3,7 +3,7 @@
  * only full-row selects; chips let one settings row hold a model, its thinking level and mode
  * side by side.
  */
-import { Icon, Modal, type ModalContentProps, type ModalProps } from '@getpaseo/plugin/client/ui';
+import { Icon, Modal, type ModalProps } from '@getpaseo/plugin/client/ui';
 import { useState, type ComponentType, type ReactNode } from 'react';
 import { Pressable, Text, View } from 'react-native';
 
@@ -12,7 +12,7 @@ import type { Theme } from './ui.tsx';
 // `ModalComponent` (a FunctionComponent with a static `Content`) does not type-check as a JSX
 // element against this package's React types; the runtime component is a plain component.
 const Dialog = Modal as unknown as ComponentType<ModalProps>;
-const DialogContent = Modal.Content as ComponentType<ModalContentProps>;
+const DialogContent = Modal.Content;
 
 export interface ChipOption {
   readonly label: string;

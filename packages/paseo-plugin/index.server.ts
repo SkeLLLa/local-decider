@@ -1,7 +1,7 @@
 import type { PluginServerContext, PluginSettingsState } from '@getpaseo/plugin/server';
 
 import { Background } from './server/background.ts';
-import type { HookDeps } from './server/deps.ts';
+import { readReportToken, type HookDeps } from './server/deps.ts';
 import {
   downloadModel,
   engineLoad,
@@ -76,6 +76,7 @@ function createDeps(server: PluginServerContext): {
   cleanup: () => void;
 } {
   const handle = server.registerSettings(deciderSettings);
+  const reportToken = readReportToken();
   const defaults: DeciderSettings = deciderSettings.schema.parse({});
   let current = defaults;
   let cached: { url: string; gateway: Gateway | null } | null = null;
@@ -105,7 +106,11 @@ function createDeps(server: PluginServerContext): {
       if (cached?.url !== current.gatewayUrl) {
         cached = {
           url: current.gatewayUrl,
-          gateway: createGateway({ baseUrl: current.gatewayUrl, token: token() }),
+          gateway: createGateway({
+            baseUrl: current.gatewayUrl,
+            token: token(),
+            reportToken,
+          }),
         };
       }
       return cached.gateway;

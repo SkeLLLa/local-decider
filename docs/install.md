@@ -77,6 +77,10 @@ local-decider gateway status
   unloads after 15 idle minutes. Set `lifecycle: {mode: eager}` to keep it loaded.
 - Logs: `~/.local/share/local-decider/logs/` (`gateway.log`, `engine-<id>.log`,
   `decisions-YYYY-MM-DD.jsonl`).
+- Decision logs are retained for 365 days by default. Set `logs.retainDays` to a value from 90
+  to 3650 to change this. Engine logs rotate at 10 MiB and retain one previous file.
+- When upgrading from a release that logged unfiltered engine output, delete old engine logs:
+  `~/.local/share/local-decider/logs/engine-*.log`.
 
 ## 4. Harness plugins
 
@@ -152,6 +156,7 @@ validate edits.
 host: 127.0.0.1          # anything else requires LOCAL_DECIDER_TOKEN (>= 16 chars)
 port: 8765
 decisionTimeoutMs: 30000 # per decision, queue wait included
+logs: { retainDays: 365 }
 engine:
   type: strands-decider  # or fastflowlm, or systemone-remote with url and tokenEnv
   model: StrandsAgents/strands-decider-2B-qwen3.5-v1-2610

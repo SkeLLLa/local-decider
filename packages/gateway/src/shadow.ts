@@ -1,5 +1,16 @@
 import type { LogRecord } from '@local-decider/core';
-import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync } from 'node:fs';
+import {
+  appendFileSync,
+  closeSync,
+  existsSync,
+  fstatSync,
+  mkdirSync,
+  openSync,
+  readFileSync,
+  readSync,
+  readdirSync,
+  unlinkSync,
+} from 'node:fs';
 import { join } from 'node:path';
 
 const FILE_PATTERN = /^decisions-\d{4}-\d{2}-\d{2}\.jsonl$/;
@@ -9,6 +20,7 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 /** Append-only JSONL, one file per UTC day. Holds hashes, answers, actions and token counts; never state text. */
 export class ShadowLog {
   readonly #dir: string;
+  readonly #checkedFiles = new Set<string>();
 
   constructor(dir: string) {
     this.#dir = dir;
@@ -22,6 +34,7 @@ export class ShadowLog {
     try {
       mkdirSync(this.#dir, { recursive: true, mode: 0o700 });
       const file = join(this.#dir, `decisions-${record.ts.slice(0, 10)}.jsonl`);
+      repairTornLine(file, this.#checkedFiles);
       appendFileSync(file, `${JSON.stringify(record)}\n`, { mode: 0o600 });
     } catch (error) {
       // Logging must never fail a decision.
@@ -38,6 +51,11 @@ export class ShadowLog {
   readRecent(maxAgeDays: number, now = Date.now()): LogRecord[] {
     const from = new Date(now - maxAgeDays * DAY_MS).toISOString().slice(0, 10);
     return this.#readFrom(from);
+  }
+
+  /** Delete dated decision logs whose UTC date falls before the retention boundary. */
+  prune(retainDays: number, now = Date.now()): number {
+    return pruneFiles(this.#dir, retainDays, now);
   }
 
   #readFrom(from?: string): LogRecord[] {
@@ -58,6 +76,54 @@ export class ShadowLog {
     }
     return records;
   }
+}
+
+function pruneFiles(dir: string, retainDays: number, now: number): number {
+  if (!existsSync(dir)) {
+    return 0;
+  }
+  const cutoff = new Date(now - retainDays * DAY_MS).toISOString().slice(0, 10);
+  let deleted = 0;
+  for (const name of readdirSync(dir)) {
+    const date = datedLog(name);
+    if (date !== undefined && date < cutoff) {
+      unlinkSync(join(dir, name));
+      deleted += 1;
+    }
+  }
+  return deleted;
+}
+
+function repairTornLine(file: string, checkedFiles: Set<string>): void {
+  if (checkedFiles.has(file)) {
+    return;
+  }
+  if (!existsSync(file)) {
+    checkedFiles.add(file);
+    return;
+  }
+  const fd = openSync(file, 'r');
+  try {
+    const size = fstatSync(fd).size;
+    if (size > 0) {
+      appendMissingNewline(file, fd, size);
+    }
+    checkedFiles.add(file);
+  } finally {
+    closeSync(fd);
+  }
+}
+
+function appendMissingNewline(file: string, fd: number, size: number): void {
+  const last = Buffer.alloc(1);
+  readSync(fd, last, 0, 1, size - 1);
+  if (last[0] !== 0x0a) {
+    appendFileSync(file, '\n');
+  }
+}
+
+function datedLog(name: string): string | undefined {
+  return FILE_PATTERN.test(name) ? name.slice('decisions-'.length, -'.jsonl'.length) : undefined;
 }
 
 function parseLine(line: string): LogRecord | undefined {

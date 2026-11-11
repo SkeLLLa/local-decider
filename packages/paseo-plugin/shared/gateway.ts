@@ -19,6 +19,8 @@ export interface GatewayOptions {
   readonly timeoutMs?: number;
   /** Bearer token for a remote gateway; read from the daemon environment, never logged. */
   readonly token?: string | undefined;
+  /** Server-only token for authenticating outcome reports to a local gateway. */
+  readonly reportToken?: string | undefined;
   readonly fetch?: typeof fetch;
 }
 
@@ -174,14 +176,18 @@ export function createGateway(options: GatewayOptions = {}): Gateway | null {
   const doFetch = options.fetch ?? globalThis.fetch;
   // Never send the token in clear text to another machine.
   const token = tokenAllowed(baseUrl) ? options.token : undefined;
+  const reportToken = tokenAllowed(baseUrl) ? options.reportToken : undefined;
 
-  function headersFor(body: unknown): Record<string, string> {
+  function headersFor(body: unknown, path: string): Record<string, string> {
     const headers: Record<string, string> = { accept: 'application/json' };
     if (body !== undefined) {
       headers['content-type'] = 'application/json';
     }
     if (token !== undefined && token !== '') {
       headers['authorization'] = `Bearer ${token}`;
+    }
+    if (path === '/v1/outcomes' && reportToken !== undefined && reportToken !== '') {
+      headers['x-local-decider-report'] = reportToken;
     }
     return headers;
   }
@@ -194,7 +200,7 @@ export function createGateway(options: GatewayOptions = {}): Gateway | null {
   ): Promise<Response> {
     return doFetch(`${baseUrl}${path}`, {
       method,
-      headers: headersFor(body),
+      headers: headersFor(body, path),
       signal: signalFor(timeoutMs, call),
       ...(body === undefined ? {} : { body: JSON.stringify(body) }),
     });

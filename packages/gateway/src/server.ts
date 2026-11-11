@@ -42,6 +42,8 @@ export interface ServerOptions {
   readonly log: ShadowLog;
   /** Required bearer token, or undefined for loopback-only no-auth mode. */
   readonly token?: string | undefined;
+  /** Private token for authenticating outcome reports from Paseo. */
+  readonly reportToken?: string | undefined;
   /** Runtime model switching; absent in tests that inject an engine. */
   readonly engineControl?: EngineControl | undefined;
   /** Optional price table: stats then add dollar estimates to token savings. */
@@ -522,8 +524,12 @@ function route(method: string, path: string): Handler | undefined {
     };
   }
   if (key === 'POST /v1/outcomes') {
-    return async (req, res, { decider, log }) => {
-      const outcome = parseOutcome(await readJson(req));
+    return async (req, res, { decider, log, reportToken }) => {
+      const parsed = parseOutcome(await readJson(req));
+      const verified = validReportToken(req, reportToken);
+      const outcome: OutcomeRecord = verified
+        ? { ...parsed, verified: true }
+        : { ...parsed, source: 'unverified', verified: false };
       log.append(outcome);
       decider.noteOutcome(outcome);
       send(res, 200, { ok: true });
@@ -553,6 +559,18 @@ function route(method: string, path: string): Handler | undefined {
     };
   }
   return undefined;
+}
+
+function validReportToken(req: IncomingMessage, token: string | undefined): boolean {
+  const supplied = req.headers['x-local-decider-report'];
+  if (token === undefined || typeof supplied !== 'string') {
+    return false;
+  }
+  const expectedBytes = Buffer.from(token);
+  const suppliedBytes = Buffer.from(supplied);
+  return (
+    expectedBytes.length === suppliedBytes.length && timingSafeEqual(expectedBytes, suppliedBytes)
+  );
 }
 
 function sendError(res: ServerResponse, error: unknown): void {

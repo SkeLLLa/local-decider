@@ -1,5 +1,7 @@
 import type { ShadowRecord } from '@local-decider/core';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { describe, it } from 'node:test';
 
 import { startGateway, type Gateway } from '../src/runtime.ts';
@@ -8,10 +10,15 @@ import { FakeEngine, tempPaths, testConfig } from './helpers.ts';
 
 type Body = Record<string, unknown>;
 
-async function post(gw: Gateway, path: string, body: Body): Promise<Body> {
+async function post(
+  gw: Gateway,
+  path: string,
+  body: Body,
+  headers: Record<string, string> = {},
+): Promise<Body> {
   const res = await fetch(`${gw.url}${path}`, {
     method: 'POST',
-    headers: { 'content-type': 'application/json' },
+    headers: { 'content-type': 'application/json', ...headers },
     body: JSON.stringify(body),
   });
   return (await res.json()) as Body;
@@ -90,9 +97,15 @@ describe('decide call and scope fields', () => {
       env: {},
     });
     try {
-      await post(gw, '/v1/outcomes', { decisionId: 'd1', outcome: 'allow', source: 'classifier' });
+      await post(
+        gw,
+        '/v1/outcomes',
+        { decisionId: 'd1', outcome: 'allow', source: 'classifier' },
+        { 'x-local-decider-report': readFileSync(join(paths.config, 'report-token'), 'utf8') },
+      );
       const outcome = new ShadowLog(paths.logs).read().find((r) => r.kind === 'outcome');
       assert.equal(outcome?.kind === 'outcome' ? outcome.source : '', 'classifier');
+      assert.equal(outcome?.kind === 'outcome' ? outcome.verified : false, true);
     } finally {
       await gw.close();
     }
@@ -292,11 +305,16 @@ describe('GET /v1/stats?scope=', () => {
         harness: 'claude-code',
         input: { ...input, request: 'ls' },
       });
-      await post(gw, '/v1/outcomes', {
-        decisionId: scoped['decisionId'],
-        outcome: 'allow',
-        source: 'classifier',
-      });
+      await post(
+        gw,
+        '/v1/outcomes',
+        {
+          decisionId: scoped['decisionId'],
+          outcome: 'allow',
+          source: 'classifier',
+        },
+        { 'x-local-decider-report': readFileSync(join(paths.config, 'report-token'), 'utf8') },
+      );
       const all = (await (await fetch(`${gw.url}/v1/stats`)).json()) as Body[];
       assert.equal(all[0]?.['decisions'], 2);
       const filtered = (await (await fetch(`${gw.url}/v1/stats?scope=claude-auto`)).json()) as {

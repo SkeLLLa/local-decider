@@ -161,8 +161,10 @@ flowchart LR
 
 - **Records.** `decision` records hold the input hash, a precedent key (a hash of policy,
   project and redacted subject), answers, action, model and latency. `outcome` and `usage`
-  records join them by `decisionId`. No state text is logged. Files:
-  `~/.local/share/local-decider/logs/decisions-YYYY-MM-DD.jsonl`.
+  records join them by `decisionId`. Only token-verified outcomes update precedent and
+  calibration hints; every outcome remains in agreement and reliability stats. No state text is
+  logged. Daily files at `~/.local/share/local-decider/logs/decisions-YYYY-MM-DD.jsonl` are
+  pruned after `logs.retainDays` (default 365; range 90–3650 days).
 - **Who reports.** Only the Paseo plugin reports outcomes and usage today. The Claude Code and
   Codex hooks cannot see the user's answer.
 - **Calibration hints.** For probability-based allow rules, `stats` may suggest a lower threshold
@@ -183,9 +185,10 @@ flowchart LR
 | `fastflowlm` | Spawns `flm serve --decision <model>` on the AMD XDNA NPU (Linux), or attaches to `engine.url` |
 | `systemone-remote` | Any `/v1/systemone` server at `engine.url`, with an optional bearer token from `tokenEnv` |
 
-- **Supervision.** A spawned engine runs on a free loopback port and logs to
-  `logs/engine-<id>.log`. After a crash it restarts with exponential backoff, at most 5 times; a
-  5-minute healthy run resets that budget.
+- **Supervision.** A spawned engine runs on a free loopback port and logs filtered stdout/stderr
+  to `logs/engine-<id>.log`. Lines containing request `state` or `questions`, and lines over 500
+  characters, are discarded. Logs over 10 MiB rotate to one `.1` file. After a crash the engine
+  restarts with exponential backoff, at most 5 times; a 5-minute healthy run resets that budget.
 - **Lifecycle.** `lazy` (default) loads the model on the first decision and unloads it after
   `idleUnloadMinutes` (15). `eager` loads it at start. A decision that arrives while the model
   loads waits for it.

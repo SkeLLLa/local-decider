@@ -158,7 +158,8 @@ function samplesForRule(
 ): ThresholdSample[] {
   const samples: ThresholdSample[] = [];
   for (const decision of decisions) {
-    const outcome = outcomes.get(decision.decisionId)?.outcome;
+    const record = outcomes.get(decision.decisionId);
+    const outcome = record?.verified === true ? record.outcome : undefined;
     if (decision.action !== 'ask' || (outcome !== 'allow' && outcome !== 'deny')) {
       continue;
     }
