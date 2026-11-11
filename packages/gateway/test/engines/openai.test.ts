@@ -113,7 +113,7 @@ describe('OpenAI-compatible engine', () => {
     const parsed = config('http://127.0.0.1:1234/v1');
     assert.equal(parsed.api, 'chat');
     assert.equal(parsed.maxTokens, 1);
-    assert.equal(parsed.topLogprobs, 20);
+    assert.equal(parsed.topLogprobs, 10);
     assert.equal(parsed.maxOptions, 10);
     assert.equal(parsed.minCoverage, 0.5);
     assert.equal(openaiCompatibleEngine.selectable, false);
@@ -144,7 +144,7 @@ describe('OpenAI-compatible engine', () => {
         assert.equal(bodies[0]?.['model'], 'test-model');
         assert.equal(bodies[0]?.['max_tokens'], 8);
         assert.equal(bodies[0]?.['logprobs'], true);
-        assert.equal(bodies[0]?.['top_logprobs'], 20);
+        assert.equal(bodies[0]?.['top_logprobs'], 10);
         assert.match(chatUser(bodies[0] ?? {}), /\/no_think$/);
       },
     );
@@ -250,7 +250,7 @@ describe('OpenAI-compatible engine', () => {
         assert.equal(typeof body?.['prompt'], 'string');
         assert.match(String(body?.['prompt']), /Answer:\n\/no_think$/);
         assert.equal(body?.['max_tokens'], 8);
-        assert.equal(body?.['logprobs'], 20);
+        assert.equal(body?.['logprobs'], 10);
         assert.equal(body?.['messages'], undefined);
       },
     );

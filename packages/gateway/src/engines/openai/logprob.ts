@@ -171,18 +171,20 @@ export function parseTopLogprobs(response: unknown): TopLogprob[] {
   return logprobs === undefined ? [] : parseLogprobs(logprobs);
 }
 
-function canonicalToken(token: string): string {
+function canonicalToken(type: Question['type'], token: string): string {
   const cleaned = token
     .trim()
     .replace(/^\(+/, '')
     .replace(/[.):]+$/, '')
     .trim();
   const lower = cleaned.toLowerCase();
-  if (['yes', 'y', 'true'].includes(lower)) {
-    return 'yes';
-  }
-  if (['no', 'n', 'false'].includes(lower)) {
-    return 'no';
+  if (type === 'noul') {
+    if (['yes', 'y', 'true'].includes(lower)) {
+      return 'yes';
+    }
+    if (['no', 'n', 'false'].includes(lower)) {
+      return 'no';
+    }
   }
   return /^[a-z]$/i.test(cleaned) ? cleaned.toUpperCase() : cleaned;
 }
@@ -192,15 +194,8 @@ function keyForToken(
   options: readonly PromptLabel[],
   token: string,
 ): string | undefined {
-  const canonical = canonicalToken(token);
-  const matched = options.find((option) => option.label === canonical);
-  if (matched !== undefined) {
-    return matched.key;
-  }
-  if (question.type === 'noul' && canonical === 'yes') {
-    return 'true';
-  }
-  return question.type === 'noul' && canonical === 'no' ? 'false' : undefined;
+  const canonical = canonicalToken(question.type, token);
+  return options.find((option) => option.label === canonical)?.key;
 }
 
 function validMassOptions(options: OptionMassOptions): boolean {

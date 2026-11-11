@@ -66,6 +66,23 @@ describe('OpenAI-compatible logprob mapping', () => {
     assert.deepEqual(toWireAnswer(question, masses), { type: 'noul', noul: 0.5 });
   });
 
+  it('maps a single-letter N choice label without treating it as no', () => {
+    const keys = Array.from({ length: 14 }, (_, index) => `option-${index + 1}`);
+    const question: Question = {
+      type: 'choice',
+      instructions: 'Pick one.',
+      criteria: Object.fromEntries(keys.map((key) => [key, `Description for ${key}`])),
+    };
+    const masses = optionMasses(question, [probability(' N', 0.9), probability('?', 0.01)], {
+      maxOptions: 14,
+    });
+    assert.ok(masses);
+    assert.equal(masses.coverage, 0.9);
+    const answer = toWireAnswer(question, masses);
+    assert.ok(answer?.type === 'choice');
+    assert.equal(answer.choice, 'option-14');
+  });
+
   it('floors missing options at the least likely observed token', () => {
     const question: Question = {
       type: 'choice',

@@ -43,7 +43,7 @@ const openaiCompatibleSchema = z.strictObject({
     .string()
     .regex(/^[A-Z_][A-Z0-9_]*$/)
     .optional(),
-  topLogprobs: z.number().int().min(2).max(20).default(20),
+  topLogprobs: z.number().int().min(2).max(20).default(10),
   maxOptions: z.number().int().min(2).max(20).default(10),
   minCoverage: z.number().min(0).max(1).default(0.5),
   temperature: z.number().min(0.1).max(10).default(1),
