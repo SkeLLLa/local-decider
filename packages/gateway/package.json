@@ -1,8 +1,31 @@
 {
   "name": "@ziptie-soft/local-decider",
   "version": "1.0.1",
-  "description": "Local decision-model gateway for Paseo, Claude Code and Codex: /v1/systemone, policies, shadow log, MCP.",
+  "description": "Local decision-model gateway and CLI that answers routine coding-agent questions (permissions, command risk, routing, turn outcomes) for Paseo, Claude Code and Codex.",
+  "keywords": [
+    "ai-agents",
+    "claude-code",
+    "cli",
+    "codex",
+    "coding-agents",
+    "decision-model",
+    "fastflowlm",
+    "gateway",
+    "local-decider",
+    "local-llm",
+    "mcp",
+    "mlx",
+    "model-routing",
+    "npu",
+    "paseo",
+    "permissions"
+  ],
+  "homepage": "https://github.com/ziptie-soft/local-decider/tree/master/packages/gateway#readme",
+  "bugs": {
+    "url": "https://github.com/ziptie-soft/local-decider/issues"
+  },
   "license": "Apache-2.0",
+  "author": "ziptie-soft",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/ziptie-soft/local-decider.git",

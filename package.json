@@ -2,7 +2,7 @@
   "name": "local-decider-monorepo",
   "version": "0.0.0",
   "private": true,
-  "description": "Local decision models (System One) for Paseo, Claude Code and Codex.",
+  "description": "Local decision models for coding agents: let a small model on your machine answer routine permission, command-risk, routing and turn-outcome questions in Paseo, Claude Code and Codex.",
   "license": "Apache-2.0",
   "repository": {
     "type": "git",
