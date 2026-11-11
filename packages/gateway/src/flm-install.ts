@@ -3,7 +3,7 @@ import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, mkdtempSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
-import { FLM_DIR } from './engines/fastflowlm.ts';
+import { FLM_DIR } from './engines/fastflowlm/server.ts';
 import type { Paths } from './paths.ts';
 
 /** The FastFlowLM release this gateway is tested against (`/v1/systemone` with d3 models). */

@@ -1,61 +1,25 @@
+// fallow-ignore-file duplicate-export -- Keep GatewayConfig and the registry's public EngineConfig type.
 import { HARNESSES, MODES, SCOPES } from '@local-decider/core';
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { parse as parseYaml } from 'yaml';
 import { z } from 'zod';
 
+import { DEVICES } from './engines/descriptor.ts';
+import { DEFAULT_FLM_MODEL } from './engines/fastflowlm/index.ts';
+import { engineSchema, SELECTABLE_IDS } from './engines/registry.ts';
+import { DEFAULT_MODEL } from './engines/strands/index.ts';
 import type { Paths } from './paths.ts';
 import { pricingSchema } from './savings.ts';
 
 export const DEFAULT_PORT = 8765;
-export const DEFAULT_MODEL = 'StrandsAgents/strands-decider-2B-qwen3.5-v1-2610';
-export const DEVICES = ['auto', 'cpu', 'mlx', 'mps', 'cuda'] as const;
-export type Device = (typeof DEVICES)[number];
 
-const strandsSchema = z.strictObject({
-  type: z.literal('strands-decider'),
-  model: z.string().min(1).default(DEFAULT_MODEL),
-  device: z.enum(DEVICES).default('auto'),
-  /** Attach to a running `strands-decider serve` instead of spawning one. */
-  url: z.url().optional(),
-  maxBatch: z.number().int().min(1).max(64).default(8),
-  /** Extra `serve` flags, e.g. ["--no-warmup"]. Only flags; never derived from requests. */
-  extraArgs: z
-    .array(z.string().regex(/^--[a-z][a-z0-9-]*(?:=[\w./:-]+)?$|^[\w./:-]+$/))
-    .default([]),
-  startTimeoutSeconds: z.number().int().min(10).max(3600).default(900),
-});
-
-const remoteSchema = z.strictObject({
-  type: z.literal('systemone-remote'),
-  url: z.url(),
-  model: z.string().default('remote'),
-  /** Name of the environment variable holding a bearer token for the remote engine. */
-  tokenEnv: z
-    .string()
-    .regex(/^[A-Z_][A-Z0-9_]*$/)
-    .optional(),
-});
-
-export const DEFAULT_FLM_MODEL = 'd3:nano';
-const FLM_PMODES = ['powersaver', 'balanced', 'performance', 'turbo'] as const;
-
-const flmSchema = z.strictObject({
-  type: z.literal('fastflowlm'),
-  /** A d3 decision-model tag served with `flm serve --decision <model>`. */
-  model: z
-    .string()
-    .regex(/^[a-z0-9][a-z0-9.-]*:[a-z0-9][a-z0-9.-]*$/)
-    .default(DEFAULT_FLM_MODEL),
-  /** The `flm` launcher; default: the managed install (`local-decider engine install --engine fastflowlm`). */
-  binary: z.string().min(1).optional(),
-  /** Attach to a running `flm serve --decision` instead of spawning one. */
-  url: z.url().optional(),
-  pmode: z.enum(FLM_PMODES).default('performance'),
-  startTimeoutSeconds: z.number().int().min(10).max(3600).default(300),
-});
-
-const engineSchema = z.discriminatedUnion('type', [strandsSchema, remoteSchema, flmSchema]);
+export { DEFAULT_FLM_MODEL, DEFAULT_MODEL };
+export { DEVICES, type Device } from './engines/descriptor.ts';
+export type { FlmEngineConfig } from './engines/fastflowlm/index.ts';
+export type { RemoteEngineConfig } from './engines/remote.ts';
+export type { StrandsEngineConfig } from './engines/strands/index.ts';
+export { engineDefaults } from './engines/registry.ts';
 
 /** A routing preset name, as in a policy's `route:<preset>` action. */
 const presetName = z
@@ -191,7 +155,7 @@ export const configSchema = z
       ),
     selection: z
       .strictObject({
-        engine: z.enum(['strands-decider', 'fastflowlm']),
+        engine: z.enum(SELECTABLE_IDS),
         model: z.string().min(1).max(300),
         device: z.enum(DEVICES).optional(),
       })
@@ -264,14 +228,6 @@ export const configSchema = z
 
 export type GatewayConfig = z.infer<typeof configSchema>;
 export type EngineConfig = GatewayConfig['engine'];
-export type StrandsEngineConfig = z.infer<typeof strandsSchema>;
-export type RemoteEngineConfig = z.infer<typeof remoteSchema>;
-export type FlmEngineConfig = z.infer<typeof flmSchema>;
-
-/** Defaults for an engine type, for switching to an engine the config does not describe. */
-export function engineDefaults(type: 'strands-decider' | 'fastflowlm'): EngineConfig {
-  return engineSchema.parse({ type });
-}
 
 export function configFile(paths: Paths): string {
   return join(paths.config, 'config.yaml');

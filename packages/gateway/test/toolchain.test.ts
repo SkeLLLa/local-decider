@@ -6,7 +6,7 @@ import { describe, it } from 'node:test';
 import { hfCached, parseFlmList, summariseValidate } from '../src/catalog-status.ts';
 import { parseConfig } from '../src/config.ts';
 import { downloadSteps, lastPercent } from '../src/downloads.ts';
-import { flmServeArgs, managedFlm } from '../src/engines/fastflowlm.ts';
+import { flmServeArgs, managedFlm } from '../src/engines/fastflowlm/server.ts';
 import { catalogModel, modelFits } from '../src/models.ts';
 import { checkPath, resolveEntry, toolchain } from '../src/toolchain.ts';
 import { tempPaths } from './helpers.ts';

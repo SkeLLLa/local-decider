@@ -1,10 +1,10 @@
 import { existsSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 
-import type { FlmEngineConfig } from '../config.ts';
-import type { Paths } from '../paths.ts';
-import type { Toolchain } from '../toolchain.ts';
-import { SupervisedEngine, type ServerSpec } from './supervised.ts';
+import type { FlmEngineConfig } from '../../config.ts';
+import type { Paths } from '../../paths.ts';
+import type { Toolchain } from '../../toolchain.ts';
+import { SupervisedEngine, type ServerSpec } from '../supervised.ts';
 
 export const FLM_DIR = 'fastflowlm';
 

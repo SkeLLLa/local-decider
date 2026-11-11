@@ -1,9 +1,9 @@
 import { join } from 'node:path';
 
-import type { StrandsEngineConfig } from '../config.ts';
-import type { Paths } from '../paths.ts';
-import type { Toolchain } from '../toolchain.ts';
-import { SupervisedEngine, type ServerSpec } from './supervised.ts';
+import type { StrandsEngineConfig } from '../../config.ts';
+import type { Paths } from '../../paths.ts';
+import type { Toolchain } from '../../toolchain.ts';
+import { SupervisedEngine, type ServerSpec } from '../supervised.ts';
 
 const STRANDS_VENV = 'strands-decider';
 

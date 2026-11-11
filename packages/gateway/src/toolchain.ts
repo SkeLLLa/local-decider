@@ -4,8 +4,8 @@ import { homedir } from 'node:os';
 import { basename, delimiter, isAbsolute, join } from 'node:path';
 
 import type { GatewayConfig } from './config.ts';
-import { managedFlm } from './engines/fastflowlm.ts';
-import { strandsBinary } from './engines/strands.ts';
+import { managedFlm } from './engines/fastflowlm/server.ts';
+import { strandsBinary } from './engines/strands/server.ts';
 import type { Paths } from './paths.ts';
 
 const ANSI = new RegExp(`${String.fromCharCode(27)}\\[[0-9;]*m`, 'g');

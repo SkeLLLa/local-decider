@@ -1,8 +1,36 @@
 import { tokenAllowed, type SystemOneRequest, type SystemOneResponse } from '@local-decider/core';
+import { z } from 'zod';
 
-import type { RemoteEngineConfig } from '../config.ts';
+import { defineEngine } from './descriptor.ts';
 import { getHealth, postSystemOne } from './http.ts';
 import type { Engine, EngineHealth, EngineState } from './types.ts';
+
+const remoteSchema = z.strictObject({
+  type: z.literal('systemone-remote'),
+  url: z.url(),
+  model: z.string().default('remote'),
+  /** Name of the environment variable holding a bearer token for the remote engine. */
+  tokenEnv: z
+    .string()
+    .regex(/^[A-Z_][A-Z0-9_]*$/)
+    .optional(),
+});
+
+export type RemoteEngineConfig = z.infer<typeof remoteSchema>;
+
+export const remoteEngine = defineEngine({
+  id: 'systemone-remote',
+  label: 'SystemOne Remote',
+  description: 'Attach to another /v1/systemone server',
+  configSchema: remoteSchema,
+  selectable: false,
+  pinned: () => true,
+  supports: () => ({ ok: true }),
+  tag: () => 'Remote',
+  devices: () => [],
+  calibrated: true,
+  create: (config, ctx) => new SystemOneRemoteEngine(config, ctx.env),
+});
 
 /** Any `/v1/systemone` server: another machine, laya-serve, the GLiClass example server. */
 export class SystemOneRemoteEngine implements Engine {
