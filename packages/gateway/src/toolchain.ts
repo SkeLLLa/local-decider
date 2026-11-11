@@ -52,7 +52,7 @@ interface PathDef {
   ) => readonly [PathSource, string | undefined][];
 }
 
-function onPath(name: string, env: NodeJS.ProcessEnv): string | undefined {
+export function onPath(name: string, env: NodeJS.ProcessEnv): string | undefined {
   for (const dir of (env['PATH'] ?? '').split(delimiter)) {
     const candidate = join(dir, name);
     if (dir !== '' && isExecutable(candidate)) {

@@ -33,6 +33,11 @@ import type {
   ModelDescriptor,
 } from './engines/descriptor.ts';
 import { cachedFlmVersion } from './engines/fastflowlm/status.ts';
+import {
+  invalidateHostCapabilities,
+  probeHostCapabilities,
+  type HostCapabilities,
+} from './engines/host-capabilities.ts';
 import { hostInfo } from './engines/host.ts';
 import { createEngine } from './engines/index.ts';
 import { ManagedEngine, type LifecycleOptions } from './engines/lazy.ts';
@@ -43,6 +48,7 @@ import {
   SELECTABLE_IDS,
   type EngineId,
 } from './engines/registry.ts';
+import { rankEngines, type Ranking } from './engines/selector.ts';
 import { resolveStrandsDevice, type DeviceResolution } from './engines/strands/mlx.ts';
 import { strandsBinary } from './engines/strands/server.ts';
 import type { Engine } from './engines/types.ts';
@@ -218,6 +224,8 @@ export interface EngineControlOptions {
   readonly installed?: (models: readonly string[]) => Promise<Map<string, boolean>>;
   /** Injected in tests: model discovery requests. */
   readonly fetch?: typeof fetch;
+  /** Injected in tests: the accelerator probe. */
+  readonly capabilities?: (strandsDecider: string) => Promise<HostCapabilities>;
 }
 
 function lifecycleFrom(config: GatewayConfig): LifecycleOptions {
@@ -253,6 +261,11 @@ export class EngineControl {
   readonly #create: NonNullable<EngineControlOptions['create']>;
   readonly #memory: number;
   readonly #installedOverride: EngineControlOptions['installed'];
+  readonly #probeCapabilities: NonNullable<EngineControlOptions['capabilities']>;
+  #capabilities: HostCapabilities | undefined;
+  #probing = false;
+  /** Bumped by `#retool()`; a probe started under an older generation is discarded. */
+  #generation = 0;
   readonly #downloads = new Downloads();
   readonly #status: CatalogStatus;
   /** The config last applied, to tell what an edit of config.yaml changed. */
@@ -278,6 +291,8 @@ export class EngineControl {
     this.#create = options.create ?? ((c, p, t) => createEngine(c, p, t));
     this.#memory = options.totalMemory ?? totalmem();
     this.#installedOverride = options.installed;
+    this.#probeCapabilities =
+      options.capabilities ?? ((strandsDecider) => probeHostCapabilities({ strandsDecider }));
     this.pathsEditable = options.pathsEditable ?? true;
     this.#tools = toolchain(config, paths, this.#env);
     this.#status = new CatalogStatus(this.#context());
@@ -614,6 +629,10 @@ export class EngineControl {
   /** Rebuild the toolchain from the config and restart the engine on it. */
   #retool(): void {
     this.#tools = toolchain(this.#config, this.#paths, this.#env);
+    invalidateHostCapabilities();
+    this.#capabilities = undefined;
+    this.#probing = false;
+    this.#generation += 1;
     this.#status.reset(this.#context());
     if (this.#selected !== null) {
       const sel = this.#selected;
@@ -695,10 +714,52 @@ export class EngineControl {
         latencyHint: m.latencyHint,
         recommended: m.recommended === true,
       })),
+      recommendation: this.#recommendation(),
       downloads: this.#downloads.list(),
       paths: resolveAll(this.#config, this.#paths, this.#env, this.#host),
       pathsEditable: this.pathsEditable,
     };
+  }
+
+  /** Ranked candidates from cached capabilities; the first call kicks the probe and shows unknowns. */
+  #recommendation(): Ranking {
+    this.#refreshCapabilities();
+    const installed = new Set<string>();
+    if (this.#tools.strandsDecider !== undefined) {
+      installed.add('strands-decider');
+    }
+    if (this.#tools.flm !== undefined) {
+      installed.add('fastflowlm');
+    }
+    return rankEngines({
+      host: { ...this.#host, totalMemoryBytes: this.#memory },
+      capabilities: this.#capabilities,
+      engines: ENGINES,
+      installed,
+      explicit: this.#selected,
+    });
+  }
+
+  /** Outside the request path: never awaited by `status()`. */
+  #refreshCapabilities(): void {
+    if (this.#capabilities !== undefined || this.#probing) {
+      return;
+    }
+    this.#probing = true;
+    const generation = this.#generation;
+    const binary = this.#tools.strandsDecider ?? strandsBinary(this.#paths);
+    this.#probeCapabilities(binary)
+      .then((caps) => {
+        if (generation === this.#generation) {
+          this.#capabilities = caps;
+        }
+      })
+      .catch(() => undefined)
+      .finally(() => {
+        if (generation === this.#generation) {
+          this.#probing = false;
+        }
+      });
   }
 
   /** `device: auto` resolved once for the selected Strands engine; undefined for other engines. */

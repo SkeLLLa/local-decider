@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { parseConfig, type GatewayConfig } from '../src/config.ts';
+import type { HostCapabilities } from '../src/engines/host-capabilities.ts';
 import type { Engine, EngineHealth, EngineState } from '../src/engines/types.ts';
 import type { Paths } from '../src/paths.ts';
 
@@ -79,3 +80,14 @@ function choiceResponse(
   }
   return { model: 'fake-model', answers };
 }
+
+/** A fixed accelerator probe result for tests: nothing found, so no real probe runs. */
+export const NO_CAPABILITIES: HostCapabilities = {
+  npu: { status: 'unavailable', evidence: 'stub' },
+  nvidia: { status: 'unavailable', evidence: 'stub' },
+  apple: { status: 'unavailable', evidence: 'stub' },
+  vulkan: { status: 'unavailable', evidence: 'stub' },
+  probedAt: 0,
+};
+
+export const stubCapabilities = (): Promise<HostCapabilities> => Promise.resolve(NO_CAPABILITIES);

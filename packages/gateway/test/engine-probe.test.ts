@@ -9,7 +9,7 @@ import { ModelDiscovery } from '../src/engine-discovery.ts';
 import { parseDiscoverRequest, safeModelIds, ServerProbe } from '../src/engine-probe.ts';
 import type { Engine, EngineHealth } from '../src/engines/types.ts';
 import { settingsHandler } from '../src/settings-routes.ts';
-import { tempPaths } from './helpers.ts';
+import { stubCapabilities, tempPaths } from './helpers.ts';
 
 type Responder = (url: string, init: RequestInit | undefined) => Promise<Response>;
 
@@ -293,6 +293,7 @@ function control(fetch: typeof globalThis.fetch, pathsEditable = true): EngineCo
     ),
     paths: tempPaths(),
     env: { PATH: '' },
+    capabilities: stubCapabilities,
     pathsEditable,
     totalMemory: 1e12,
     installed: async () => new Map(),

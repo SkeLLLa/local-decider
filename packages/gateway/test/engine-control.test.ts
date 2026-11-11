@@ -26,12 +26,13 @@ import {
   parseThresholds,
 } from '../src/engine-control.ts';
 import type { HostInfo } from '../src/engines/descriptor.ts';
+import type { HostCapabilities } from '../src/engines/host-capabilities.ts';
 import type { Engine, EngineHealth } from '../src/engines/types.ts';
 import type { Paths } from '../src/paths.ts';
 import { defaultPolicyDir, loadPolicies, policyDirs } from '../src/policies.ts';
 import { startGateway } from '../src/runtime.ts';
 import { ShadowLog } from '../src/shadow.ts';
-import { FakeEngine, tempPaths, testConfig } from './helpers.ts';
+import { FakeEngine, NO_CAPABILITIES, stubCapabilities, tempPaths, testConfig } from './helpers.ts';
 
 class ModelEngine implements Engine {
   readonly id: string;
@@ -56,6 +57,23 @@ class ModelEngine implements Engine {
   async stop(): Promise<void> {
     this.stopped += 1;
   }
+}
+
+function recommendationOf(status: Record<string, unknown>): string | undefined {
+  const rec = status['recommendation'] as { automatic: { engine: string } | null };
+  return rec.automatic?.engine;
+}
+
+async function settleEventLoop(): Promise<void> {
+  await new Promise((resolve) => setImmediate(resolve));
+}
+
+function deferred<T>(): { promise: Promise<T>; resolve: (value: T) => void } {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((done) => {
+    resolve = done;
+  });
+  return { promise, resolve };
 }
 
 /** A fake `flm` on disk, so the FastFlowLM engine counts as installed. */
@@ -109,6 +127,7 @@ interface SetupOptions {
   readonly totalMemory?: number;
   readonly installed?: boolean;
   readonly paths?: Paths;
+  readonly capabilities?: () => Promise<HostCapabilities>;
   readonly persist?: boolean;
   readonly host?: HostInfo;
 }
@@ -149,6 +168,7 @@ function setup(options: SetupOptions = {}): Setup {
     store,
     paths,
     env: { PATH: '' },
+    capabilities: options.capabilities ?? stubCapabilities,
     ...(options.host === undefined ? {} : { host: options.host }),
     totalMemory: options.totalMemory ?? 1e12,
     installed: async (ids) => new Map(ids.map((id) => [id, options.installed ?? true])),
@@ -999,6 +1019,7 @@ describe('OpenAI-like persisted selection', () => {
       store,
       paths,
       env: { PATH: '' },
+      capabilities: stubCapabilities,
       totalMemory: 1e12,
       installed: async () => new Map(),
       create: (c) => new ModelEngine(c),
@@ -1019,5 +1040,42 @@ describe('OpenAI-like persisted selection', () => {
       status.models.find((m) => m.id === 'discovered-only')?.label,
       'discovered-only (MLX)',
     );
+  });
+});
+
+describe('EngineControl recommendation', () => {
+  const NPU_CAPS: HostCapabilities = {
+    ...NO_CAPABILITIES,
+    npu: { status: 'available', evidence: 'accel0: amdxdna' },
+  };
+
+  it('shows unknown-based output first, then the probed recommendation', async () => {
+    const { control } = setup({
+      host: LINUX_HOST,
+      capabilities: () => Promise.resolve(NPU_CAPS),
+    });
+    assert.equal(recommendationOf(await control.status()), 'strands-decider');
+    await settleEventLoop();
+    assert.equal(recommendationOf(await control.status()), 'fastflowlm');
+  });
+
+  it('discards a probe result that finishes after a retool', async () => {
+    const probe = deferred<HostCapabilities>();
+    let calls = 0;
+    const { control } = setup({
+      host: LINUX_HOST,
+      capabilities: () => {
+        calls += 1;
+        return calls === 1 ? probe.promise : Promise.resolve(NO_CAPABILITIES);
+      },
+    });
+    await control.status();
+    await control.setPath('tools.uv', null);
+    probe.resolve(NPU_CAPS);
+    await settleEventLoop();
+    assert.equal(recommendationOf(await control.status()), 'strands-decider');
+    await settleEventLoop();
+    assert.equal(calls, 2);
+    assert.equal(recommendationOf(await control.status()), 'strands-decider');
   });
 });

@@ -11,7 +11,7 @@ import type { Paths } from '../src/paths.ts';
 import { loadPolicies, policyDirs } from '../src/policies.ts';
 import { settingsHandler } from '../src/settings-routes.ts';
 import { ShadowLog } from '../src/shadow.ts';
-import { tempPaths } from './helpers.ts';
+import { stubCapabilities, tempPaths } from './helpers.ts';
 
 class StubEngine implements Engine {
   readonly id: string;
@@ -58,6 +58,7 @@ function setup(options: Options = {}): Setup {
     store,
     paths,
     env: { PATH: '' },
+    capabilities: stubCapabilities,
     pathsEditable: options.pathsEditable ?? true,
     totalMemory: 1e12,
     installed: async (ids) => new Map(ids.map((id) => [id, true])),
