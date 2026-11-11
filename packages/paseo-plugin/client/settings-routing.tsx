@@ -30,13 +30,13 @@ import {
   routingSettingsRpc,
 } from '../shared/rpc.ts';
 import { outcomeOf, useAction } from './hooks.ts';
+import { useQueryKey } from './host-scope.ts';
 import { PresetTable } from './preset-table.tsx';
 import type { SectionProps } from './settings-common.ts';
 import { InlineMessage, Mono, type Theme } from './ui.tsx';
 import { WritePolicyRows } from './write-policy.tsx';
 
 const ROUTING_POLICY = 'routing';
-const PROVIDER_MODELS_KEY = ['local-decider', 'provider-models'] as const;
 /** Prints the same prompt for any AI assistant in a terminal. */
 const PROMPT_COMMAND = `local-decider policies prompt ${ROUTING_POLICY}`;
 
@@ -56,7 +56,7 @@ async function loadModels(paseo: Paseo): Promise<ProviderModels[]> {
 function useProviderModels(): UseQueryResult<ProviderModels[]> {
   const paseo = usePaseo();
   return useQuery({
-    queryKey: PROVIDER_MODELS_KEY,
+    queryKey: useQueryKey('provider-models'),
     queryFn: async () => loadModels(paseo),
     staleTime: Number.POSITIVE_INFINITY,
     retry: false,
@@ -66,7 +66,7 @@ function useProviderModels(): UseQueryResult<ProviderModels[]> {
 function useRoutingVariants(gatewayUrl: string): UseQueryResult<PolicyVariants> {
   const variants = useRpc(policyVariantsRpc);
   return useQuery({
-    queryKey: ['local-decider', 'policy-variants', ROUTING_POLICY, gatewayUrl],
+    queryKey: useQueryKey('policy-variants', ROUTING_POLICY, gatewayUrl),
     queryFn: async () => variants({ policy: ROUTING_POLICY }),
     retry: false,
     staleTime: 10_000,
@@ -76,7 +76,7 @@ function useRoutingVariants(gatewayUrl: string): UseQueryResult<PolicyVariants> 
 function useRoutingSettings(gatewayUrl: string): UseQueryResult<RoutingSettings> {
   const settings = useRpc(routingSettingsRpc);
   return useQuery({
-    queryKey: ['local-decider', 'routing-settings', gatewayUrl],
+    queryKey: useQueryKey('routing-settings', gatewayUrl),
     queryFn: async () => settings({}),
     retry: false,
     staleTime: 10_000,
@@ -90,6 +90,7 @@ function useLegacyPresetMove(
 ): void {
   const setPreset = useRpc(routingPresetRpc);
   const queryClient = useQueryClient();
+  const routingKey = useQueryKey('routing-settings');
   const done = useRef(false);
   useEffect(() => {
     if (done.current || routing?.ok !== true || Object.keys(values.presets).length === 0) {
@@ -101,9 +102,9 @@ function useLegacyPresetMove(
       if (results.every((r) => r.ok)) {
         save({ ...values, presets: {} });
       }
-      await queryClient.invalidateQueries({ queryKey: ['local-decider', 'routing-settings'] });
+      await queryClient.invalidateQueries({ queryKey: routingKey });
     });
-  }, [routing, values, save, setPreset, queryClient]);
+  }, [routing, values, save, setPreset, queryClient, routingKey]);
 }
 
 /** The variant select, where the settings live, and a reload button. */
@@ -172,6 +173,7 @@ function VariantRows({
 function ProviderModelsRow({ models }: { models: UseQueryResult<ProviderModels[]> }): ReactNode {
   const paseo = usePaseo();
   const queryClient = useQueryClient();
+  const hostKey = useQueryKey();
   const [refreshing, setRefreshing] = useState(false);
   const refresh = async (): Promise<void> => {
     setRefreshing(true);
@@ -181,7 +183,7 @@ function ProviderModelsRow({ models }: { models: UseQueryResult<ProviderModels[]
     } catch {
       // Discovery keeps going in the background; list whatever is there now.
     } finally {
-      await queryClient.invalidateQueries({ queryKey: ['local-decider'] });
+      await queryClient.invalidateQueries({ queryKey: hostKey });
       setRefreshing(false);
     }
   };

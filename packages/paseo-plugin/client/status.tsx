@@ -15,6 +15,7 @@ import { checkedAgo, statusLabel } from '../shared/poll.ts';
 import { formatMs } from '../shared/stats.ts';
 import { EngineControls } from './engine-state.tsx';
 import { type Status, useDeciderValues, useGatewayStatus } from './hooks.ts';
+import { withHostScope } from './host-scope.ts';
 import { headline, healthColor, QuickStatus } from './quick-status.tsx';
 import { ServiceSection } from './service.tsx';
 import { SettingsScreen } from './settings-screen.tsx';
@@ -44,7 +45,7 @@ function StatusItem({
       active={currentScreen?.screenId === STATUS_SCREEN_ID}
       onPress={() =>
         press === 'popover'
-          ? props.openPopover(QuickStatus)
+          ? props.openPopover(withHostScope(QuickStatus))
           : props.openScreen({ screenId: STATUS_SCREEN_ID })
       }
       trailing={<StatusDot theme={theme} data={data} />}

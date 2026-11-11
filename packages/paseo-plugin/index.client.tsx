@@ -1,6 +1,7 @@
 import type { PluginClientContext } from '@getpaseo/plugin/client';
 
 import { DecisionRowView } from './client/decision-row.tsx';
+import { withHostScope } from './client/host-scope.ts';
 import { SettingsPage, SettingsScreen } from './client/settings-screen.tsx';
 import { StatsScreen } from './client/stats.tsx';
 import { StatusFooterItem, StatusHeaderItem, StatusScreen } from './client/status.tsx';
@@ -23,31 +24,39 @@ export default function contribute(client: PluginClientContext): () => void {
       id: SETTINGS_SCREEN_ID,
       title: 'Local decider',
       icon: 'Scale',
-      Component: SettingsScreen,
+      Component: withHostScope(SettingsScreen),
     }),
-    client.addScreen({ id: STATUS_SCREEN_ID, title: 'Local decider', Component: StatusScreen }),
+    client.addScreen({
+      id: STATUS_SCREEN_ID,
+      title: 'Local decider',
+      Component: withHostScope(StatusScreen),
+    }),
     client.addScreen({
       id: SETTINGS_PAGE_ID,
       title: 'Local decider settings',
-      Component: SettingsPage,
+      Component: withHostScope(SettingsPage),
     }),
-    client.addScreen({ id: STATS_SCREEN_ID, title: 'Shadow stats', Component: StatsScreen }),
+    client.addScreen({
+      id: STATS_SCREEN_ID,
+      title: 'Shadow stats',
+      Component: withHostScope(StatsScreen),
+    }),
     // Both slots are registered; each renders only when Settings → Sidebar → Position picks it.
     client.addSidebarHeaderItem({
       id: 'status-header',
       title: 'Local decider (top)',
-      Component: StatusHeaderItem,
+      Component: withHostScope(StatusHeaderItem),
     }),
     client.addSidebarFooterItem({
       id: 'status',
       title: 'Local decider',
-      Component: StatusFooterItem,
+      Component: withHostScope(StatusFooterItem),
     }),
     client.addTimelineRenderer({
       kind: ROW_KIND,
       version: ROW_VERSION,
       schema: decisionRowSchema,
-      Component: DecisionRowView,
+      Component: withHostScope(DecisionRowView),
     }),
     ...commandCenterItems(client),
     client.addSlashCommand({

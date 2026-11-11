@@ -8,11 +8,11 @@ import { enginesPollInterval, type EngineCatalog } from '../shared/engines.ts';
 import { nextPollDelay } from '../shared/poll.ts';
 import { enginesRpc, serviceInfoRpc, statusRpc } from '../shared/rpc.ts';
 import { deciderSettings, type DeciderSettings } from '../shared/settings.ts';
+import { useQueryKey } from './host-scope.ts';
 
 export type Status = z.output<typeof statusRpc.output>;
 export type ServiceInfo = z.output<typeof serviceInfoRpc.output>;
 
-const STATUS_QUERY_KEY = ['local-decider', 'status'] as const;
 const DEFAULTS: DeciderSettings = deciderSettings.schema.parse({});
 
 /**
@@ -22,7 +22,7 @@ const DEFAULTS: DeciderSettings = deciderSettings.schema.parse({});
 export function useGatewayStatus(enabled = true): UseQueryResult<Status> {
   const status = useRpc(statusRpc);
   return useQuery({
-    queryKey: STATUS_QUERY_KEY,
+    queryKey: useQueryKey('status'),
     enabled,
     queryFn: async () => status({}),
     retry: false,
@@ -39,7 +39,7 @@ export function useGatewayStatus(enabled = true): UseQueryResult<Status> {
 export function useEngines(gatewayUrl: string): UseQueryResult<EngineCatalog> {
   const engines = useRpc(enginesRpc);
   return useQuery({
-    queryKey: ['local-decider', 'engines', gatewayUrl],
+    queryKey: useQueryKey('engines', gatewayUrl),
     queryFn: async () => engines({}),
     retry: false,
     staleTime: 10_000,
@@ -51,7 +51,7 @@ export function useEngines(gatewayUrl: string): UseQueryResult<EngineCatalog> {
 export function useServiceInfo(): UseQueryResult<ServiceInfo> {
   const info = useRpc(serviceInfoRpc);
   return useQuery({
-    queryKey: ['local-decider', 'service-info'],
+    queryKey: useQueryKey('service-info'),
     queryFn: async () => info({}),
     retry: false,
     staleTime: 60_000,
@@ -74,6 +74,7 @@ export function useAction(): {
   clear: () => void;
 } {
   const queryClient = useQueryClient();
+  const hostKey = useQueryKey();
   const [busy, setBusy] = useState<string | null>(null);
   const [outcome, setOutcome] = useState<Outcome | null>(null);
   const run = async (name: string, task: () => Promise<Outcome>): Promise<Outcome> => {
@@ -87,7 +88,7 @@ export function useAction(): {
     }
     setOutcome(result);
     setBusy(null);
-    await queryClient.invalidateQueries({ queryKey: ['local-decider'] });
+    await queryClient.invalidateQueries({ queryKey: hostKey });
     return result;
   };
   return { busy, outcome, run, clear: () => setOutcome(null) };

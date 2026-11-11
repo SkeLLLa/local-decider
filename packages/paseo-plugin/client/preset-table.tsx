@@ -18,6 +18,7 @@ import {
 } from '../shared/presets.ts';
 import { routingPresetRpc } from '../shared/rpc.ts';
 import { ChipPicker, type ChipOption } from './chip-picker.tsx';
+import { useQueryKey } from './host-scope.ts';
 import type { Theme } from './ui.tsx';
 
 const PROFILE_PREFIX = 'profile:';
@@ -27,7 +28,7 @@ const COLUMNS = { route: 120, effort: 120, mode: 140 } as const;
 function useProfiles(): readonly ProfileLike[] {
   const paseo = usePaseo();
   const query = useQuery({
-    queryKey: ['local-decider', 'agent-profiles'],
+    queryKey: useQueryKey('agent-profiles'),
     queryFn: async () => (await paseo.config.get()).config.agentProfiles ?? [],
     staleTime: 60_000,
     retry: false,
@@ -89,6 +90,7 @@ interface RowProps {
 function useWrite(preset: string): (fields: Omit<PresetTargetSetting, never>) => void {
   const setPreset = useRpc(routingPresetRpc);
   const queryClient = useQueryClient();
+  const routingKey = useQueryKey('routing-settings');
   const toast = useToast();
   return (fields) => {
     void setPreset({ preset, ...fields })
@@ -99,7 +101,7 @@ function useWrite(preset: string): (fields: Omit<PresetTargetSetting, never>) =>
       })
       .catch((error: unknown) => toast.error(`route:${preset}: ${String(error)}`))
       .finally(() => {
-        void queryClient.invalidateQueries({ queryKey: ['local-decider', 'routing-settings'] });
+        void queryClient.invalidateQueries({ queryKey: routingKey });
       });
   };
 }
@@ -167,7 +169,7 @@ function ModeCell({
   const model = target?.model ?? '';
   const provider = parsePresetModel(model)?.provider ?? null;
   const modes = useQuery({
-    queryKey: ['local-decider', 'provider-modes', provider],
+    queryKey: useQueryKey('provider-modes', provider),
     queryFn: async () => (provider === null ? null : paseo.providers.listModes(provider)),
     enabled: provider !== null && target?.profile === undefined,
     staleTime: Number.POSITIVE_INFINITY,

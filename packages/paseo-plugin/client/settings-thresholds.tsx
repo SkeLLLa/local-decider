@@ -31,6 +31,7 @@ import {
 } from '../shared/policies.ts';
 import { policyThresholdsRpc, setPolicyThresholdsRpc } from '../shared/rpc.ts';
 import { outcomeOf, useAction } from './hooks.ts';
+import { hostQueryKey, useHostId } from './host-scope.ts';
 import { Slider } from './slider.tsx';
 import { Button, InlineMessage, type Theme } from './ui.tsx';
 
@@ -233,10 +234,11 @@ export function ThresholdsSection({
   gatewayUrl: string;
 }): ReactNode {
   const list = useRpc(policyThresholdsRpc);
+  const hostId = useHostId();
   const [open, setOpen] = useState(false);
   const results = useQueries({
     queries: HOOK_POLICIES.map((policy) => ({
-      queryKey: ['local-decider', 'policy-thresholds', policy, gatewayUrl],
+      queryKey: hostQueryKey(hostId, 'policy-thresholds', policy, gatewayUrl),
       queryFn: async () => list({ policy }),
       retry: false,
       staleTime: 10_000,

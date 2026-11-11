@@ -8,9 +8,10 @@ import {
   SettingsSection,
   useToast,
 } from '@getpaseo/plugin/client/ui';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, type UseQueryResult } from '@tanstack/react-query';
 import type { ReactNode } from 'react';
 import { View } from 'react-native';
+import type { z } from 'zod';
 
 import { statsRpc } from '../shared/rpc.ts';
 import {
@@ -21,6 +22,7 @@ import {
   savingsSummary,
   type PolicyStats,
 } from '../shared/stats.ts';
+import { useQueryKey } from './host-scope.ts';
 import { Button, Page, type Theme, Value } from './ui.tsx';
 
 function policyHint(s: PolicyStats): string {
@@ -81,20 +83,66 @@ function SavingsRows({ stats }: { stats: PolicyStats }): ReactNode {
   );
 }
 
+/** Policy rows, or the reason there are none, plus the raw-report copy button. */
+type StatsResult = z.output<typeof statsRpc.output>;
+
+function StatsCard({
+  query,
+  theme,
+}: {
+  query: UseQueryResult<StatsResult>;
+  theme: Theme;
+}): ReactNode {
+  const toast = useToast();
+  const data = query.data;
+  return (
+    <SettingsCard>
+      {data === undefined ? (
+        <SettingsRow
+          label={query.error === null ? 'Loading…' : 'Statistics unavailable'}
+          {...(query.error === null ? {} : { hint: String(query.error) })}
+        />
+      ) : !data.ok ? (
+        <SettingsRow label="Statistics unavailable" hint={data.text} />
+      ) : data.policies.length === 0 ? (
+        <SettingsRow label="No decisions logged yet" />
+      ) : (
+        data.policies.map((p) => (
+          <View key={p.policy}>
+            <PolicyRow stats={p} theme={theme} />
+            <SavingsRows stats={p} />
+          </View>
+        ))
+      )}
+      {data?.ok === true ? (
+        <SettingsAction
+          label="Raw report"
+          hint="The gateway's JSON, for sharing or a bug report."
+          actionLabel="Copy"
+          onPress={() => {
+            copyText(data.text).then(
+              () => toast.show('Copied', { variant: 'success' }),
+              () => toast.error('Copy is not available here'),
+            );
+          }}
+        />
+      ) : null}
+    </SettingsCard>
+  );
+}
+
 /**
  * `GET /v1/stats` through the daemon: per-policy volume, latency and agreement with the answers
  * reported back (feedback buttons, human permission answers).
  */
 export function StatsSection({ theme }: { theme: Theme }): ReactNode {
   const stats = useRpc(statsRpc);
-  const toast = useToast();
   const query = useQuery({
-    queryKey: ['local-decider', 'stats'],
+    queryKey: useQueryKey('stats'),
     queryFn: async () => stats({}),
     retry: false,
     staleTime: 30_000,
   });
-  const data = query.data;
   return (
     <SettingsSection
       title="Shadow statistics"
@@ -109,38 +157,7 @@ export function StatsSection({ theme }: { theme: Theme }): ReactNode {
         />
       }
     >
-      <SettingsCard>
-        {data === undefined ? (
-          <SettingsRow
-            label={query.error === null ? 'Loading…' : 'Statistics unavailable'}
-            {...(query.error === null ? {} : { hint: String(query.error) })}
-          />
-        ) : !data.ok ? (
-          <SettingsRow label="Statistics unavailable" hint={data.text} />
-        ) : data.policies.length === 0 ? (
-          <SettingsRow label="No decisions logged yet" />
-        ) : (
-          data.policies.map((p) => (
-            <View key={p.policy}>
-              <PolicyRow stats={p} theme={theme} />
-              <SavingsRows stats={p} />
-            </View>
-          ))
-        )}
-        {data?.ok === true ? (
-          <SettingsAction
-            label="Raw report"
-            hint="The gateway's JSON, for sharing or a bug report."
-            actionLabel="Copy"
-            onPress={() => {
-              copyText(data.text).then(
-                () => toast.show('Copied', { variant: 'success' }),
-                () => toast.error('Copy is not available here'),
-              );
-            }}
-          />
-        ) : null}
-      </SettingsCard>
+      <StatsCard query={query} theme={theme} />
     </SettingsSection>
   );
 }
