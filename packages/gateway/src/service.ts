@@ -1,7 +1,7 @@
 import { execFileSync, spawn } from 'node:child_process';
 import { existsSync, mkdirSync, openSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { homedir, userInfo } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 
 import type { Paths } from './paths.ts';
 
@@ -48,7 +48,65 @@ function xmlEscape(text: string): string {
   return text.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;');
 }
 
-export function launchdPlist(command: readonly string[], paths: Paths): string {
+/** Variables copied from the CLI's environment into the agent. Never a token. */
+const LAUNCHD_PASSTHROUGH = [
+  'LOCAL_DECIDER_HOME',
+  'LOCAL_DECIDER_CONFIG_DIR',
+  'XDG_DATA_HOME',
+  'XDG_CONFIG_HOME',
+  'HF_HOME',
+  'HF_HUB_CACHE',
+] as const;
+
+/**
+ * The environment of the launchd agent, which starts with a bare PATH: node's and uv's
+ * directories first, then the usual tool locations. No tokens; those go in `<config>/env`.
+ */
+export function launchdEnv(
+  env: NodeJS.ProcessEnv,
+  execPath: string,
+  tools: { readonly uv?: string | undefined },
+): Record<string, string> {
+  const home = env['HOME'] ?? homedir();
+  const dirs = [
+    dirname(execPath),
+    ...(tools.uv === undefined ? [] : [dirname(tools.uv)]),
+    join(home, '.local', 'bin'),
+    '/opt/homebrew/bin',
+    '/usr/local/bin',
+    '/usr/bin',
+    '/bin',
+    '/usr/sbin',
+    '/sbin',
+  ];
+  const out: Record<string, string> = { PATH: [...new Set(dirs)].join(':'), HOME: home };
+  for (const key of LAUNCHD_PASSTHROUGH) {
+    const value = env[key];
+    if (value !== undefined && value !== '') {
+      out[key] = value;
+    }
+  }
+  return out;
+}
+
+/** Node loads `<config>/env` (tokens) if present: launchd's `EnvironmentFile=-`. */
+function launchdCommand(command: readonly string[], paths: Paths): string[] {
+  const [node = process.execPath, ...rest] = command;
+  return [node, `--env-file-if-exists=${join(paths.config, 'env')}`, ...rest];
+}
+
+function plistEnv(env: Readonly<Record<string, string>>): string {
+  const rows = Object.entries(env)
+    .map(([k, v]) => `    <key>${xmlEscape(k)}</key>\n    <string>${xmlEscape(v)}</string>`)
+    .join('\n');
+  return `  <key>EnvironmentVariables</key>\n  <dict>\n${rows}\n  </dict>\n`;
+}
+
+export function launchdPlist(
+  command: readonly string[],
+  paths: Paths,
+  env: Readonly<Record<string, string>> = {},
+): string {
   const args = command.map((arg) => `    <string>${xmlEscape(arg)}</string>`).join('\n');
   return `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -60,7 +118,7 @@ export function launchdPlist(command: readonly string[], paths: Paths): string {
   <array>
 ${args}
   </array>
-  <key>RunAtLoad</key>
+${plistEnv(env)}  <key>RunAtLoad</key>
   <true/>
   <key>KeepAlive</key>
   <dict>
@@ -184,17 +242,91 @@ function startSystemd(command: readonly string[], paths: Paths, restart: boolean
   return `systemd user unit ${unitPath()} ${active ? 'restarted' : 'started'}`;
 }
 
-function startLaunchd(command: readonly string[], paths: Paths, restart: boolean): string {
-  const domain = `gui/${String(userInfo().uid)}`;
-  mkdirSync(join(homedir(), 'Library', 'LaunchAgents'), { recursive: true });
-  const changed = writeIfChanged(plistPath(), launchdPlist(command, paths));
-  const loaded = tryRun('launchctl', ['print', `${domain}/${LAUNCHD_LABEL}`]) !== undefined;
-  if (loaded && !changed && !restart) {
-    return `already loaded (${plistPath()} unchanged); use \`gateway restart\` to reload`;
+/** What `startLaunchd` needs from launchctl; injected so tests never touch the real one. */
+export interface LaunchctlDeps {
+  readonly run: (args: readonly string[]) => string;
+  readonly tryRun: (args: readonly string[]) => string | undefined;
+  readonly sleep: (ms: number) => void;
+  readonly uid: number;
+  /** Where the plist lives; defaults to `~/Library/LaunchAgents`. */
+  readonly plist?: string;
+}
+
+const defaultLaunchctl: LaunchctlDeps = {
+  run: (args) => run('launchctl', args),
+  tryRun: (args) => tryRun('launchctl', args),
+  sleep: (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms),
+  uid: userInfo().uid,
+};
+
+const UNLOAD_POLLS = 50;
+const UNLOAD_STEP_MS = 100;
+const BOOTSTRAP_TRIES = 4;
+const BOOTSTRAP_RETRY_MS = 500;
+
+function waitUnloaded(target: string, deps: LaunchctlDeps): boolean {
+  for (let i = 0; i < UNLOAD_POLLS; i += 1) {
+    if (deps.tryRun(['print', target]) === undefined) {
+      return true;
+    }
+    deps.sleep(UNLOAD_STEP_MS);
   }
-  tryRun('launchctl', ['bootout', `${domain}/${LAUNCHD_LABEL}`]);
-  run('launchctl', ['bootstrap', domain, plistPath()]);
-  return `launchd agent ${plistPath()} loaded`;
+  return deps.tryRun(['print', target]) === undefined;
+}
+
+function isBusy(error: unknown): boolean {
+  const e = error as { status?: number; message?: string; stderr?: string };
+  return e.status === 5 || /Input\/output error/.test(`${e.message ?? ''}${e.stderr ?? ''}`);
+}
+
+/** `bootstrap`, retried while launchd still tears the previous job down (exit 5, EIO). */
+function bootstrap(domain: string, plist: string, deps: LaunchctlDeps): void {
+  for (let attempt = 1; ; attempt += 1) {
+    try {
+      deps.run(['bootstrap', domain, plist]);
+      return;
+    } catch (error) {
+      if (!isBusy(error) || attempt >= BOOTSTRAP_TRIES) {
+        const why = error instanceof Error ? error.message : String(error);
+        throw new Error(`launchctl bootstrap failed after ${String(attempt)} attempt(s): ${why}`, {
+          cause: error,
+        });
+      }
+      deps.sleep(BOOTSTRAP_RETRY_MS);
+    }
+  }
+}
+
+export function startLaunchd(
+  command: readonly string[],
+  paths: Paths,
+  restart: boolean,
+  deps: LaunchctlDeps = defaultLaunchctl,
+  env: Readonly<Record<string, string>> = launchdEnv(process.env, process.execPath, {
+    uv: tryRun('which', ['uv']),
+  }),
+): string {
+  const domain = `gui/${String(deps.uid)}`;
+  const target = `${domain}/${LAUNCHD_LABEL}`;
+  const plist = deps.plist ?? plistPath();
+  mkdirSync(dirname(plist), { recursive: true });
+  const changed = writeIfChanged(plist, launchdPlist(launchdCommand(command, paths), paths, env));
+  const loaded = deps.tryRun(['print', target]) !== undefined;
+  if (loaded && !changed) {
+    if (!restart) {
+      return `already loaded (${plist} unchanged); use \`gateway restart\` to reload`;
+    }
+    deps.run(['kickstart', '-k', target]);
+    return `launchd agent ${plist} restarted`;
+  }
+  if (loaded) {
+    deps.tryRun(['bootout', target]);
+    if (!waitUnloaded(target, deps)) {
+      throw new Error(`launchd did not unload ${LAUNCHD_LABEL} within 5s`);
+    }
+  }
+  bootstrap(domain, plist, deps);
+  return `launchd agent ${plist} loaded`;
 }
 
 /**
@@ -223,7 +355,9 @@ export function stopService(manager: ServiceManager, paths: Paths): string {
     return 'stopped';
   }
   if (manager === 'launchd') {
-    tryRun('launchctl', ['bootout', `gui/${String(userInfo().uid)}/${LAUNCHD_LABEL}`]);
+    const target = `gui/${String(defaultLaunchctl.uid)}/${LAUNCHD_LABEL}`;
+    defaultLaunchctl.tryRun(['bootout', target]);
+    waitUnloaded(target, defaultLaunchctl);
     return 'stopped';
   }
   return stopPidfile(paths);
