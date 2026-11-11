@@ -26,6 +26,7 @@ import {
   type EngineModel,
   type Validation,
 } from '../shared/engines.ts';
+import { fallbackText, recommendationView, selectionModeLabel } from '../shared/recommendation.ts';
 import { downloadModelRpc, selectEngineRpc, validateEngineRpc } from '../shared/rpc.ts';
 import { ConnectionForm } from './connection-form.tsx';
 import { type Outcome, outcomeOf, useAction, useEngines } from './hooks.ts';
@@ -232,6 +233,46 @@ function ConnectionSlot({
   );
 }
 
+function ChoiceCard({ theme, catalog }: { theme: Theme; catalog: EngineCatalog }): ReactNode {
+  const mode = selectionModeLabel(catalog.active?.selectionMode ?? null);
+  const fallback = fallbackText(catalog.active?.fallback ?? null);
+  const view = recommendationView(catalog.recommendation);
+  if (mode === null && fallback === null && view === null) {
+    return null;
+  }
+  return (
+    <SettingsCard>
+      {mode === null ? null : (
+        <SettingsRow
+          label="Selection"
+          hint={
+            catalog.active?.selectionMode === 'auto'
+              ? 'The gateway picks the best installed engine and falls back if it fails.'
+              : 'You chose this engine; the gateway never switches it on its own.'
+          }
+        >
+          <Badge theme={theme} tone="info" text={mode} />
+        </SettingsRow>
+      )}
+      {fallback === null ? null : (
+        <SettingsRow label="Fallback" hint={fallback}>
+          <Badge theme={theme} tone="error" text="fallback" />
+        </SettingsRow>
+      )}
+      {view === null ? null : (
+        <SettingsRow
+          label="Recommended"
+          hint={[view.reason, ...view.candidates.map((c) => `${c.label}: ${c.note}`)]
+            .filter((line) => line !== '')
+            .join('\n')}
+        >
+          <Value theme={theme}>{view.headline}</Value>
+        </SettingsRow>
+      )}
+    </SettingsCard>
+  );
+}
+
 function EnginePicker({ theme, catalog }: { theme: Theme; catalog: EngineCatalog }): ReactNode {
   const action = useAction();
   const [picked, setPicked] = useState<string | null>(null);
@@ -241,6 +282,7 @@ function EnginePicker({ theme, catalog }: { theme: Theme; catalog: EngineCatalog
   const engine = catalog.engines.find((e) => e.id === id) ?? null;
   return (
     <>
+      <ChoiceCard theme={theme} catalog={catalog} />
       <SettingsCard>
         <SettingsSelect
           label="Engine"

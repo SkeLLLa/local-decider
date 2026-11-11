@@ -11,6 +11,7 @@ import {
   parseConnection,
 } from './connection.ts';
 import { parsePaths, pathEntrySchema } from './paths.ts';
+import { parseFallback, parseRecommendation, parseSelectionMode } from './recommendation.ts';
 
 const text = z.string().nullable();
 
@@ -75,12 +76,36 @@ const activeSchema = z.object({
   lifecycle: z.enum(['lazy', 'eager']).nullable(),
   idleUnloadMinutes: z.number().nullable(),
   lastUsedAt: text,
+  /** `auto`: the gateway ranks engines and falls back on its own. Null on older gateways. */
+  selectionMode: z.enum(['auto', 'manual']).nullable(),
+  /** Set while the gateway runs a replacement for a failed engine. */
+  fallback: z.object({ reason: z.string(), retryAt: text }).nullable(),
+});
+
+const targetSchema = z.object({
+  engine: z.string(),
+  model: z.string(),
+  device: text,
+  reason: z.string(),
+});
+
+const recommendationSchema = z.object({
+  recommended: targetSchema.extend({ explicit: z.boolean() }).nullable(),
+  candidates: z.array(
+    targetSchema.extend({
+      backend: text,
+      eligible: z.boolean(),
+      ready: z.boolean(),
+    }),
+  ),
 });
 
 export const engineCatalogSchema = z.object({
   reachable: z.boolean(),
   active: activeSchema.nullable(),
   totalMemoryGb: z.number().nullable(),
+  /** What the gateway would pick on this host, apart from the active selection. */
+  recommendation: recommendationSchema.nullable(),
   engines: z.array(engineSchema),
   models: z.array(modelSchema),
   downloads: z.array(downloadSchema),
@@ -242,6 +267,8 @@ function parseActive(value: unknown): ActiveEngine | null {
     lifecycle: v['lifecycle'] === 'lazy' || v['lifecycle'] === 'eager' ? v['lifecycle'] : null,
     idleUnloadMinutes: num(v['idleUnloadMinutes']),
     lastUsedAt: str(v['lastUsedAt']),
+    selectionMode: parseSelectionMode(v['selectionMode']),
+    fallback: parseFallback(v['fallback']),
   };
 }
 
@@ -252,6 +279,7 @@ export function parseEngineCatalog(body: unknown): EngineCatalog {
     reachable: v !== null,
     active: parseActive(v?.['active']),
     totalMemoryGb: num(v?.['totalMemoryGb']),
+    recommendation: parseRecommendation(v?.['recommendation']),
     engines: list(v?.['engines'], parseEngine),
     models: list(v?.['models'], parseModel),
     downloads: list(v?.['downloads'], parseDownload),

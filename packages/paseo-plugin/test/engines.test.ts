@@ -141,6 +141,8 @@ function ctx(overrides: Partial<ModelRowContext> = {}): ModelRowContext {
       lifecycle: null,
       idleUnloadMinutes: null,
       lastUsedAt: null,
+      selectionMode: null,
+      fallback: null,
     },
     downloads: [],
     engineAvailable: true,
