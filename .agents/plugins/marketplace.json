@@ -4,7 +4,7 @@
   "plugins": [
     {
       "name": "local-decider",
-      "source": { "source": "local", "path": "./plugins/local-decider" },
+      "source": { "source": "npm", "package": "@local-decider/agent-plugin", "version": "0.1.0" },
       "policy": { "installation": "AVAILABLE", "authentication": "ON_INSTALL" },
       "category": "Productivity"
     }

@@ -121,8 +121,8 @@ jobs:
         run: pnpm -r typecheck
       - name: Build
         run: pnpm -r build
-      # dist/hook.mjs and hooks/register.mjs (the Claude Code mod) are committed; they must match a fresh build.
-      - name: Hook bundles are up to date
-        run: git diff --exit-code -- plugins/local-decider/dist plugins/local-decider/hooks/register.mjs
+      # The plugin bundle is built, not committed; a broken `files` list must fail before release.
+      - name: Plugin package contents
+        run: scripts/check-plugin-pack.sh
       - name: Test
         run: pnpm -r test

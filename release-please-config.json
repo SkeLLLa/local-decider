@@ -19,6 +19,23 @@
     },
     "packages/paseo-plugin": {
       "component": "paseo-plugin"
+    },
+    "plugins/local-decider": {
+      "component": "agent-plugin",
+      "extra-files": [
+        { "type": "json", "path": ".claude-plugin/plugin.json", "jsonpath": "$.version" },
+        { "type": "json", "path": ".codex-plugin/plugin.json", "jsonpath": "$.version" },
+        {
+          "type": "json",
+          "path": "/.claude-plugin/marketplace.json",
+          "jsonpath": "$.plugins[0].source.version"
+        },
+        {
+          "type": "json",
+          "path": "/.agents/plugins/marketplace.json",
+          "jsonpath": "$.plugins[0].source.version"
+        }
+      ]
     }
   }
 }

@@ -20,8 +20,8 @@ lcov.info
 .local-decider/
 packages/gateway/policies/
 packages/gateway/schemas/
-# The Claude Code / Codex hook bundle is committed (installs copy only the plugin dir).
-!plugins/local-decider/dist/
+# Built at release and published in @local-decider/agent-plugin (dist/ is covered above).
+plugins/local-decider/hooks/register.mjs
 
 # Agent review/scratch docs
 docs/review/

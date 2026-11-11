@@ -111,7 +111,7 @@ dir = "packages/gateway"
 run = "node --test --conditions=source test/integration.test.ts"
 
 [tasks."test:mod"]
-description = "Claude Code mod: validate the bundle and run its `claude plugin test`; skipped when claude is not on PATH"
+description = "Claude Code mod: build, validate the bundle and run its `claude plugin test`; skipped when claude is not on PATH"
 run = '''
 #!/usr/bin/env bash
 set -euo pipefail
@@ -119,6 +119,7 @@ if ! command -v claude >/dev/null 2>&1; then
   echo "claude not on PATH: skipping the mod tests"
   exit 0
 fi
+pnpm --filter @local-decider/hooks build
 claude plugin validate --strict plugins/local-decider
 cd plugins/local-decider
 claude plugin test

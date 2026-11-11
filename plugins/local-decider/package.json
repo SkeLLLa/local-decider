@@ -1,0 +1,26 @@
+{
+  "name": "@local-decider/agent-plugin",
+  "version": "0.1.0",
+  "description": "local-decider hooks for Claude Code and Codex (built plugin directory)",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/SkeLLLa/local-decider.git",
+    "directory": "plugins/local-decider"
+  },
+  "files": [
+    ".claude-plugin",
+    ".codex-plugin",
+    "hooks",
+    "dist",
+    "skills",
+    "README.md"
+  ],
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
+  "scripts": {
+    "prepublishOnly": "test -s dist/hook.mjs && test -s hooks/register.mjs"
+  }
+}

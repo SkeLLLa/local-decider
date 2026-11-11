@@ -43,3 +43,10 @@ setup() {
   [ "$status" -eq 0 ]
   [ -z "$output" ] || { printf 'expected empty stdout, got %s\n' "$output"; return 1; }
 }
+
+@test "fails open when dist/hook.mjs is missing" {
+  rm "$tmp/plugin/dist/hook.mjs"
+  run env HOME="$home" PATH="$fakebin:$sysbin" /bin/sh "$tmp/plugin/hooks/run-hook.sh" claude Stop
+  [ "$status" -eq 0 ]
+  [ -z "$output" ] || { printf 'expected empty stdout, got %s\n' "$output"; return 1; }
+}

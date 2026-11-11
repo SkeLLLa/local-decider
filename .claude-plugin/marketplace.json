@@ -5,7 +5,7 @@
   "plugins": [
     {
       "name": "local-decider",
-      "source": "./plugins/local-decider",
+      "source": { "source": "npm", "package": "@local-decider/agent-plugin", "version": "0.1.0" },
       "description": "Local decision-model hooks: command guard, permission triage, routing hints, turn outcomes (fail-open)"
     }
   ]
