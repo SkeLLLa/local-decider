@@ -21,12 +21,18 @@ import {
   initialEngine,
   modelRowState,
   modelRowView,
+  type ActiveEngine,
   type EngineCatalog,
   type EngineInfo,
   type EngineModel,
   type Validation,
 } from '../shared/engines.ts';
-import { fallbackText, recommendationView, selectionModeLabel } from '../shared/recommendation.ts';
+import {
+  fallbackText,
+  recommendationView,
+  selectionModeLabel,
+  type CandidateView,
+} from '../shared/recommendation.ts';
 import { downloadModelRpc, selectEngineRpc, validateEngineRpc } from '../shared/rpc.ts';
 import { ConnectionForm } from './connection-form.tsx';
 import { type Outcome, outcomeOf, useAction, useEngines } from './hooks.ts';
@@ -233,20 +239,57 @@ function ConnectionSlot({
   );
 }
 
-function ChoiceCard({ theme, catalog }: { theme: Theme; catalog: EngineCatalog }): ReactNode {
-  const mode = selectionModeLabel(catalog.active?.selectionMode ?? null);
-  const fallback = fallbackText(catalog.active?.fallback ?? null);
-  const view = recommendationView(catalog.recommendation);
-  if (mode === null && fallback === null && view === null) {
-    return null;
-  }
+function CandidateRow({ theme, view }: { theme: Theme; view: CandidateView }): ReactNode {
+  return (
+    <SettingsRow label={view.label} hint={view.reason}>
+      <Badge theme={theme} tone={view.status === 'Ready' ? 'success' : 'info'} text={view.status} />
+    </SettingsRow>
+  );
+}
+
+function CandidateList({
+  theme,
+  candidates,
+}: {
+  theme: Theme;
+  candidates: readonly CandidateView[];
+}): ReactNode {
+  const [all, setAll] = useState(false);
+  const shown = all ? candidates : candidates.filter((c) => c.eligible);
+  const hidden = candidates.length - candidates.filter((c) => c.eligible).length;
   return (
     <SettingsCard>
+      {shown.map((c) => (
+        <CandidateRow key={c.key} theme={theme} view={c} />
+      ))}
+      {hidden === 0 ? null : (
+        <SettingsAction
+          label={all ? 'Not eligible' : `${String(hidden)} not eligible`}
+          hint="Engines the gateway will not pick on its own."
+          actionLabel={all ? 'Hide' : 'Show all'}
+          onPress={() => setAll(!all)}
+        />
+      )}
+    </SettingsCard>
+  );
+}
+
+function SelectionRows({
+  theme,
+  active,
+}: {
+  theme: Theme;
+  active: ActiveEngine | null;
+}): ReactNode {
+  const mode = selectionModeLabel(active?.selectionMode ?? null);
+  const fallback = fallbackText(active?.fallback ?? null);
+  return (
+    <>
       {mode === null ? null : (
         <SettingsRow
           label="Selection"
           hint={
-            catalog.active?.selectionMode === 'auto'
+            active?.selectionMode === 'auto'
               ? 'The gateway picks the best installed engine and falls back if it fails.'
               : 'You chose this engine; the gateway never switches it on its own.'
           }
@@ -259,17 +302,31 @@ function ChoiceCard({ theme, catalog }: { theme: Theme; catalog: EngineCatalog }
           <Badge theme={theme} tone="error" text="fallback" />
         </SettingsRow>
       )}
-      {view === null ? null : (
-        <SettingsRow
-          label="Recommended"
-          hint={[view.reason, ...view.candidates.map((c) => `${c.label}: ${c.note}`)]
-            .filter((line) => line !== '')
-            .join('\n')}
-        >
-          <Value theme={theme}>{view.headline}</Value>
-        </SettingsRow>
+    </>
+  );
+}
+
+function ChoiceCard({ theme, catalog }: { theme: Theme; catalog: EngineCatalog }): ReactNode {
+  const { active } = catalog;
+  const labels = new Map(catalog.engines.map((e) => [e.id, e.label]));
+  const view = recommendationView(catalog.recommendation, active?.selectionMode ?? null, labels);
+  if (active?.selectionMode == null && active?.fallback == null && view === null) {
+    return null;
+  }
+  return (
+    <>
+      <SettingsCard>
+        <SelectionRows theme={theme} active={active} />
+        {view === null ? null : (
+          <SettingsRow label={view.summary.label} hint={view.summary.reason}>
+            <Value theme={theme}>{view.summary.value}</Value>
+          </SettingsRow>
+        )}
+      </SettingsCard>
+      {view === null || view.candidates.length === 0 ? null : (
+        <CandidateList theme={theme} candidates={view.candidates} />
       )}
-    </SettingsCard>
+    </>
   );
 }
 

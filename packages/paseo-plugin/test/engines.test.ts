@@ -37,7 +37,7 @@ const BODY = {
   engines: [
     {
       id: 'strands-decider',
-      label: 'Strands Decider (PyTorch)',
+      label: 'Strands Decider',
       installed: true,
       available: true,
       detail: 'venv ~/.local/share/local-decider/venvs/strands-decider',

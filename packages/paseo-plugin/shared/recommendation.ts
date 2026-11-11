@@ -1,9 +1,9 @@
 /**
- * What the gateway recommends (`recommendation` in `GET /v1/engines`) and how it chooses
+ * What the gateway would pick (`recommendation` in `GET /v1/engines`) and how it chooses
  * (`active.selectionMode`, `active.fallback`): lenient parsers and the text the settings screen
  * shows. Older gateways send none of it, so every field here may be missing.
  */
-export interface RecommendedTarget {
+export interface Target {
   readonly engine: string;
   readonly model: string;
   readonly device: string | null;
@@ -20,13 +20,18 @@ export interface RankedCandidate {
   readonly backend: string | null;
   /** May be chosen automatically. */
   readonly eligible: boolean;
+  /** False when the engine can never run on this host. Older gateways omit it: assume true. */
+  readonly supported: boolean;
   /** Installed; false means it would need installing first. */
   readonly ready: boolean;
   readonly reason: string;
 }
 
 export interface Recommendation {
-  readonly recommended: RecommendedTarget | null;
+  /** The user's own selection in manual mode, otherwise what automatic selection picks. */
+  readonly recommended: Target | null;
+  /** What automatic selection would pick, whatever is selected now. */
+  readonly automatic: Target | null;
   /** Eligible candidates in ladder order, then ineligible ones. */
   readonly candidates: RankedCandidate[];
 }
@@ -54,7 +59,7 @@ function text(value: unknown): string | null {
   return typeof value === 'string' && value !== '' ? value.slice(0, MAX_TEXT) : null;
 }
 
-function parseTarget(value: unknown): RecommendedTarget | null {
+function parseTarget(value: unknown): Target | null {
   const v = fields(value);
   const engine = text(v?.['engine']);
   const model = text(v?.['model']);
@@ -82,6 +87,7 @@ function parseCandidate(value: unknown): RankedCandidate | null {
     device: target.device,
     backend: text(v['backend']),
     eligible: v['eligible'] === true,
+    supported: v['supported'] !== false,
     ready: v['ready'] === true,
     reason: target.reason,
   };
@@ -94,11 +100,18 @@ export function parseRecommendation(value: unknown): Recommendation | null {
     return null;
   }
   const raw: unknown[] = Array.isArray(v['candidates']) ? v['candidates'] : [];
-  const candidates = raw
-    .slice(0, MAX_ITEMS)
-    .map(parseCandidate)
-    .filter((c): c is RankedCandidate => c !== null);
-  return { recommended: parseTarget(v['recommended']), candidates };
+  const recommended = parseTarget(v['recommended']);
+  // A gateway without `automatic` only sends the ranking's pick as `recommended`.
+  const automatic =
+    parseTarget(v['automatic']) ?? (recommended?.explicit === false ? recommended : null);
+  return {
+    recommended,
+    automatic,
+    candidates: raw
+      .slice(0, MAX_ITEMS)
+      .map(parseCandidate)
+      .filter((c): c is RankedCandidate => c !== null),
+  };
 }
 
 export function parseSelectionMode(value: unknown): SelectionMode | null {
@@ -112,45 +125,105 @@ export function parseFallback(value: unknown): Fallback | null {
   return v === null || reason === null ? null : { reason, retryAt: text(v['retryAt']) };
 }
 
-const BACKEND_NAMES: Record<string, string> = { NPU: 'NPU', CUDA: 'NVIDIA GPU', MLX: 'Apple MLX' };
+const BACKEND_NAMES: Record<string, string> = {
+  NPU: 'AMD NPU',
+  CUDA: 'NVIDIA CUDA',
+  MLX: 'Apple MLX',
+  MPS: 'Apple MPS',
+  CPU: 'CPU',
+};
 
-function targetName(t: { engine: string; model: string; backend?: string | null }): string {
-  const backend =
-    t.backend === undefined || t.backend === null
-      ? ''
-      : ` on ${BACKEND_NAMES[t.backend] ?? t.backend}`;
-  return `${t.engine} · ${t.model}${backend}`;
+type EngineLabels = ReadonlyMap<string, string>;
+
+/** `Strands Decider · Apple MLX`; an engine without a backend shows its model instead. */
+function describe(
+  c: { engine: string; model: string; backend: string | null },
+  labels: EngineLabels,
+): string {
+  const engine = labels.get(c.engine) ?? c.engine;
+  return `${engine} · ${c.backend === null ? c.model : (BACKEND_NAMES[c.backend] ?? c.backend)}`;
+}
+
+export interface CandidateView {
+  readonly key: string;
+  readonly label: string;
+  readonly status: 'Ready' | 'Not installed' | 'Not eligible';
+  readonly eligible: boolean;
+  readonly reason: string;
+}
+
+export interface Summary {
+  /** `Recommended`, `Automatic would pick`, or `Automatic selection`. */
+  readonly label: string;
+  /** Short: engine and backend. */
+  readonly value: string;
+  readonly reason: string;
 }
 
 export interface RecommendationView {
-  /** The engine the gateway would pick (or the user's own selection). */
-  readonly headline: string;
-  readonly reason: string;
-  readonly candidates: readonly { readonly label: string; readonly note: string }[];
+  readonly summary: Summary;
+  /** Candidates that can run on this host: eligible first. */
+  readonly candidates: readonly CandidateView[];
 }
 
-function candidateNote(c: RankedCandidate): string {
-  const state = !c.eligible ? 'not eligible' : c.ready ? 'ready' : 'not installed';
-  return c.reason === '' ? state : `${state} · ${c.reason}`;
+function statusOf(c: RankedCandidate): CandidateView['status'] {
+  if (!c.eligible) {
+    return 'Not eligible';
+  }
+  return c.ready ? 'Ready' : 'Not installed';
 }
 
-/** The ranked list and its headline; null when there is nothing to show. */
-export function recommendationView(rec: Recommendation | null): RecommendationView | null {
-  if (rec === null || (rec.recommended === null && rec.candidates.length === 0)) {
+interface Choice {
+  readonly engine: string;
+  readonly device: string | null;
+}
+
+function sameChoice(a: Choice, b: Choice): boolean {
+  return a.engine === b.engine && a.device === b.device;
+}
+
+function summaryOf(rec: Recommendation, mode: SelectionMode | null, labels: EngineLabels): Summary {
+  const auto = rec.automatic;
+  const named = (t: Target): string =>
+    describe(
+      { ...t, backend: rec.candidates.find((c) => sameChoice(c, t))?.backend ?? null },
+      labels,
+    );
+  const manual = mode === 'manual' || rec.recommended?.explicit === true;
+  if (!manual) {
+    return auto === null
+      ? { label: 'Recommended', value: 'None eligible', reason: 'No engine is eligible here.' }
+      : { label: 'Recommended', value: named(auto), reason: auto.reason };
+  }
+  if (auto === null) {
+    return { label: 'Automatic would pick', value: 'None eligible', reason: '' };
+  }
+  if (rec.recommended !== null && sameChoice(auto, rec.recommended)) {
+    return { label: 'Automatic would pick', value: 'Matches your selection', reason: '' };
+  }
+  return { label: 'Automatic would pick', value: named(auto), reason: auto.reason };
+}
+
+/** The summary row and the candidates that can run here; null when there is nothing to show. */
+export function recommendationView(
+  rec: Recommendation | null,
+  mode: SelectionMode | null,
+  labels: EngineLabels,
+): RecommendationView | null {
+  if (rec === null || (rec.automatic === null && rec.candidates.length === 0)) {
     return null;
   }
-  const pick = rec.recommended;
-  const same = (c: RankedCandidate): boolean =>
-    c.engine === pick?.engine && c.model === pick.model && c.device === pick.device;
-  const backend = rec.candidates.find(same)?.backend ?? null;
   return {
-    headline:
-      pick === null ? 'No engine is eligible on this machine' : targetName({ ...pick, backend }),
-    reason: pick?.reason ?? '',
-    candidates: rec.candidates.map((c) => ({
-      label: targetName(c),
-      note: candidateNote(c),
-    })),
+    summary: summaryOf(rec, mode, labels),
+    candidates: rec.candidates
+      .filter((c) => c.supported)
+      .map((c) => ({
+        key: `${c.engine}|${c.device ?? ''}|${c.model}`,
+        label: describe(c, labels),
+        status: statusOf(c),
+        eligible: c.eligible,
+        reason: c.reason,
+      })),
   };
 }
 

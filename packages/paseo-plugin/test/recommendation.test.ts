@@ -9,43 +9,55 @@ import {
   selectionModeLabel,
 } from '../shared/recommendation.ts';
 
+const TARGET = {
+  engine: 'strands-decider',
+  model: 'm',
+  device: 'mlx',
+  reason: 'MLX/Metal: MLX with Metal',
+};
+
+const cand = (over: Record<string, unknown>): Record<string, unknown> => ({
+  engine: 'strands-decider',
+  model: 'm',
+  device: 'mlx',
+  backend: 'MLX',
+  eligible: true,
+  supported: true,
+  ready: true,
+  reason: 'MLX/Metal: MLX with Metal',
+  ...over,
+});
+
 const RECOMMENDATION = {
-  recommended: {
-    engine: 'fastflowlm',
-    model: 'd3:mini',
-    device: null,
-    reason: 'AMD NPU found',
-    explicit: false,
-  },
+  recommended: { ...TARGET, explicit: false },
+  automatic: { ...TARGET, explicit: false },
   candidates: [
-    {
+    cand({}),
+    cand({ device: 'cpu', backend: 'CPU', ready: false, reason: 'always available' }),
+    cand({
       engine: 'fastflowlm',
       model: 'd3:mini',
       device: null,
       backend: 'NPU',
-      eligible: true,
-      ready: true,
-      reason: 'AMD NPU found',
-    },
-    {
-      engine: 'strands-decider',
-      model: 'm',
-      device: 'cpu',
-      backend: 'CPU',
-      eligible: true,
-      ready: false,
-      reason: 'always works',
-    },
+      eligible: false,
+      supported: false,
+      reason: 'supported only on Linux',
+    }),
     { engine: 'broken' },
   ],
   extra: true,
 };
 
+const LABELS = new Map([
+  ['strands-decider', 'Strands Decider'],
+  ['fastflowlm', 'FastFlowLM'],
+]);
+
 describe('recommendation parsing', () => {
   it('reads the gateway recommendation and skips malformed candidates', () => {
     const rec = parseRecommendation(RECOMMENDATION);
-    assert.equal(rec?.recommended?.model, 'd3:mini');
-    assert.equal(rec?.candidates.length, 2);
+    assert.equal(rec?.automatic?.engine, 'strands-decider');
+    assert.equal(rec?.candidates.length, 3);
     assert.equal(rec?.candidates[1]?.ready, false);
   });
 
@@ -54,7 +66,7 @@ describe('recommendation parsing', () => {
     assert.equal(catalog.recommendation, null);
     assert.equal(catalog.active?.selectionMode, null);
     assert.equal(catalog.active?.fallback, null);
-    assert.equal(recommendationView(catalog.recommendation), null);
+    assert.equal(recommendationView(catalog.recommendation, null, LABELS), null);
     assert.equal(selectionModeLabel(catalog.active?.selectionMode ?? null), null);
   });
 
@@ -69,7 +81,7 @@ describe('recommendation parsing', () => {
       recommendation: RECOMMENDATION,
     });
     assert.equal(catalog.active?.engine, 'strands-decider');
-    assert.equal(catalog.recommendation?.recommended?.engine, 'fastflowlm');
+    assert.equal(catalog.recommendation?.recommended?.engine, 'strands-decider');
     assert.equal(catalog.active?.selectionMode, 'auto');
     assert.equal(catalog.active?.fallback?.reason, 'fastflowlm failed: boom');
   });
@@ -84,32 +96,64 @@ describe('recommendation parsing', () => {
 });
 
 describe('recommendation view', () => {
-  it('names the pick and each candidate with its state', () => {
-    const view = recommendationView(parseRecommendation(RECOMMENDATION));
-    assert.equal(view?.headline, 'fastflowlm · d3:mini on NPU');
+  const parsed = parseRecommendation(RECOMMENDATION);
+
+  it('summarises the pick in a short value and lists supported candidates only', () => {
+    const view = recommendationView(parsed, 'auto', LABELS);
+    assert.deepEqual(view?.summary, {
+      label: 'Recommended',
+      value: 'Strands Decider · Apple MLX',
+      reason: 'MLX/Metal: MLX with Metal',
+    });
     assert.deepEqual(
-      view?.candidates.map((c) => c.note),
-      ['ready · AMD NPU found', 'not installed · always works'],
+      view?.candidates.map((c) => [c.label, c.status]),
+      [
+        ['Strands Decider · Apple MLX', 'Ready'],
+        ['Strands Decider · CPU', 'Not installed'],
+      ],
     );
   });
 
-  it('says so when nothing is eligible', () => {
-    const view = recommendationView({
+  it('in manual mode shows what automatic would pick, not the explicit echo', () => {
+    const rec = parseRecommendation({
+      ...RECOMMENDATION,
+      recommended: { ...TARGET, device: 'cpu', reason: 'explicit selection', explicit: true },
+    });
+    const view = recommendationView(rec, 'manual', LABELS);
+    assert.equal(view?.summary.label, 'Automatic would pick');
+    assert.equal(view?.summary.value, 'Strands Decider · Apple MLX');
+  });
+
+  it('says the selection matches when automatic would pick the same engine', () => {
+    const rec = parseRecommendation({
+      ...RECOMMENDATION,
+      recommended: { ...TARGET, reason: 'explicit selection', explicit: true },
+    });
+    assert.equal(
+      recommendationView(rec, 'manual', LABELS)?.summary.value,
+      'Matches your selection',
+    );
+  });
+
+  it('treats a candidate without `supported` as supported and names model-only engines', () => {
+    const rec = parseRecommendation({
       recommended: null,
       candidates: [
         {
-          engine: 'x',
-          model: 'm',
+          engine: 'lmstudio',
+          model: 'qwen3-4b-instruct-2507',
           device: null,
           backend: null,
           eligible: false,
-          ready: false,
-          reason: 'uncalibrated',
+          ready: true,
+          reason: 'uncalibrated: explicit choice only',
         },
       ],
     });
-    assert.match(view?.headline ?? '', /No engine is eligible/);
-    assert.equal(view?.candidates[0]?.note, 'not eligible · uncalibrated');
+    const view = recommendationView(rec, 'auto', new Map([['lmstudio', 'LM Studio']]));
+    assert.equal(view?.candidates[0]?.label, 'LM Studio · qwen3-4b-instruct-2507');
+    assert.equal(view?.candidates[0]?.status, 'Not eligible');
+    assert.equal(view?.summary.value, 'None eligible');
   });
 
   it('labels the selection mode and the fallback countdown', () => {

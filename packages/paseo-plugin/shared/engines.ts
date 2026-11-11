@@ -91,10 +91,12 @@ const targetSchema = z.object({
 
 const recommendationSchema = z.object({
   recommended: targetSchema.extend({ explicit: z.boolean() }).nullable(),
+  automatic: targetSchema.extend({ explicit: z.boolean() }).nullable(),
   candidates: z.array(
     targetSchema.extend({
       backend: text,
       eligible: z.boolean(),
+      supported: z.boolean(),
       ready: z.boolean(),
     }),
   ),
