@@ -81,5 +81,5 @@ export const strandsEngine = defineEngine({
   models: MODELS,
   modelsPresent: strandsModelsPresent,
   downloadSteps: strandsDownloadSteps,
-  create: (config, ctx) => new StrandsDeciderEngine(config, ctx.paths, ctx.tools),
+  create: (config, ctx) => new StrandsDeciderEngine(config, ctx.paths, ctx.tools, ctx.host),
 });
