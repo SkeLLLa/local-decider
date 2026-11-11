@@ -12,7 +12,12 @@ import { parseArgs } from 'node:util';
 
 import { authoringPrompt } from './authoring.ts';
 import { bench } from './bench.ts';
-import { EngineInstallUsageError, formatEngineList, planInstall } from './cli-engine.ts';
+import {
+  configIsExplicit,
+  EngineInstallUsageError,
+  formatEngineList,
+  planInstall,
+} from './cli-engine.ts';
 import { logsCommand } from './cli-logs.ts';
 import {
   configCommand,
@@ -24,8 +29,14 @@ import {
 } from './cli-settings.ts';
 import { ConfigFile } from './config-file.ts';
 import { DEFAULT_FLM_MODEL, DEFAULT_PORT, loadConfig, type GatewayConfig } from './config.ts';
+import type { AutoInstall } from './engine-install-auto.ts';
 import { installStrandsEngine } from './engine-install.ts';
+import type { HostInfo } from './engines/descriptor.ts';
+import { probeHostCapabilities } from './engines/host-capabilities.ts';
 import { hostInfo } from './engines/host.ts';
+import { ENGINES } from './engines/registry.ts';
+import { rankEngines } from './engines/selector.ts';
+import { strandsBinary } from './engines/strands/server.ts';
 import { parseEvalCases, runPolicyEval } from './eval.ts';
 import { FLM_VERSION, installFlm } from './flm-install.ts';
 import { serveMcpStdio, type McpBackend } from './mcp.ts';
@@ -233,8 +244,29 @@ async function useEngine(ctx: Context, args: readonly string[]): Promise<void> {
   printSelectionResult(result, selection.engine, selection.model);
 }
 
+/** The ranked recommendation for a fresh install; undefined when config already chose. */
+async function autoInstallInput(ctx: Context, host: HostInfo): Promise<AutoInstall | undefined> {
+  if (configIsExplicit(ctx.config)) {
+    return undefined;
+  }
+  const capabilities = await probeHostCapabilities({ strandsDecider: strandsBinary(ctx.paths) });
+  const ranking = rankEngines({
+    host,
+    capabilities,
+    engines: ENGINES,
+    installed: new Set(),
+    explicit: null,
+  });
+  return { ranking };
+}
+
 async function installEngine(ctx: Context, args: readonly string[]): Promise<void> {
-  const plan = planInstall(args, hostInfo(), ctx.config.engine.type, ctx.config.engine.model);
+  const host = hostInfo();
+  const auto = await autoInstallInput(ctx, host);
+  const plan = planInstall(args, host, ctx.config.engine.type, ctx.config.engine.model, auto);
+  if (plan.reason !== undefined) {
+    console.log(plan.reason);
+  }
   if (plan.engine === 'fastflowlm') {
     return installFastFlowLM(plan.model, plan.noDownload);
   }

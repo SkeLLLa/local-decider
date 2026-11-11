@@ -1,6 +1,8 @@
 import { parseArgs } from 'node:util';
 
+import { DEFAULT_MODEL, type GatewayConfig } from './config.ts';
 import { isOpenAILike } from './engine-discovery.ts';
+import { autoTarget, type AutoInstall, type AutoTarget } from './engine-install-auto.ts';
 import { defaultFlavor, type InstallFlavor } from './engine-install.ts';
 import type { HostInfo } from './engines/descriptor.ts';
 import { engineDescriptor } from './engines/registry.ts';
@@ -84,11 +86,18 @@ export function formatEngineList(payload: unknown): string {
 }
 
 export type InstallPlan =
-  | { readonly engine: 'strands-decider'; readonly flavor: InstallFlavor; readonly model?: string }
+  | {
+      readonly engine: 'strands-decider';
+      readonly flavor: InstallFlavor;
+      readonly model?: string;
+      /** One line explaining an automatic choice; absent for explicit ones. */
+      readonly reason?: string;
+    }
   | {
       readonly engine: 'fastflowlm';
       readonly model?: string;
       readonly noDownload: boolean;
+      readonly reason?: string;
     };
 
 function refusal(engine: string): never {
@@ -146,20 +155,32 @@ function supportedTarget(engine: string, host: HostInfo): 'strands-decider' | 'f
   return engine;
 }
 
-function strandsPlan(values: InstallArgs, host: HostInfo, model: string | undefined): InstallPlan {
+function strandsPlan(
+  values: InstallArgs,
+  host: HostInfo,
+  model: string | undefined,
+  auto?: AutoTarget,
+): InstallPlan {
   if (values.flavor !== undefined && !FLAVORS.includes(values.flavor as InstallFlavor)) {
     throw new EngineInstallUsageError(`invalid strands-decider flavor "${values.flavor}"`);
   }
   const flavor =
-    (values.flavor as InstallFlavor | undefined) ?? defaultFlavor(host.platform, host.arch);
+    (values.flavor as InstallFlavor | undefined) ??
+    auto?.flavor ??
+    defaultFlavor(host.platform, host.arch);
   return {
     engine: 'strands-decider',
     flavor,
     ...(values['no-download'] === true || model === undefined ? {} : { model }),
+    ...(auto === undefined ? {} : { reason: auto.reason }),
   };
 }
 
-function fastFlowPlan(values: InstallArgs, model: string | undefined): InstallPlan {
+function fastFlowPlan(
+  values: InstallArgs,
+  model: string | undefined,
+  auto?: AutoTarget,
+): InstallPlan {
   if (values.flavor !== undefined) {
     throw new EngineInstallUsageError('--flavor is only valid for strands-decider');
   }
@@ -168,18 +189,56 @@ function fastFlowPlan(values: InstallArgs, model: string | undefined): InstallPl
     engine: 'fastflowlm',
     ...(model === undefined ? {} : { model }),
     noDownload: values['no-download'] === true,
+    ...(auto === undefined ? {} : { reason: auto.reason }),
   };
 }
 
-/** Parse an install request and reject unsupported targets before installer I/O starts. */
+function resolveAuto(
+  auto: AutoInstall | undefined,
+  host: HostInfo,
+  flagged: string | undefined,
+): AutoTarget | undefined {
+  if (auto === undefined) {
+    return undefined;
+  }
+  const target = autoTarget(auto, host, flagged);
+  if (typeof target === 'string') {
+    throw new EngineInstallUsageError(target);
+  }
+  return target;
+}
+
+/**
+ * Parse an install request and reject unsupported targets before installer I/O starts.
+ * Precedence: CLI flags, then explicit config, then `auto` (the ranked recommendation), which
+ * callers pass only when the config is not explicit.
+ */
 export function planInstall(
   argv: readonly string[],
   host: HostInfo,
   configuredEngine: string,
   configuredModel?: string,
+  auto?: AutoInstall,
 ): InstallPlan {
   const values = parseInstallArgs(argv);
-  const engine = supportedTarget(values.engine ?? configuredEngine, host);
-  const model = values.model ?? (engine === configuredEngine ? configuredModel : undefined);
-  return engine === 'fastflowlm' ? fastFlowPlan(values, model) : strandsPlan(values, host, model);
+  const picked = resolveAuto(auto, host, values.engine);
+  const engine = supportedTarget(values.engine ?? picked?.engine ?? configuredEngine, host);
+  const fromConfig =
+    auto === undefined && engine === configuredEngine ? configuredModel : undefined;
+  const model = values.model ?? fromConfig ?? picked?.model;
+  return engine === 'fastflowlm'
+    ? fastFlowPlan(values, model, picked)
+    : strandsPlan(values, host, model, picked);
+}
+
+/**
+ * True when the user chose an engine or model themselves (a `selection`, or `engine` settings
+ * that differ from the defaults), so install follows it instead of the automatic ranking.
+ */
+export function configIsExplicit(config: GatewayConfig): boolean {
+  return (
+    config.selection !== undefined ||
+    config.engine.type !== 'strands-decider' ||
+    config.engine.model !== DEFAULT_MODEL
+  );
 }

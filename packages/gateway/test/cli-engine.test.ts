@@ -1,8 +1,23 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
-import { EngineInstallUsageError, formatEngineList, planInstall } from '../src/cli-engine.ts';
+import {
+  configIsExplicit,
+  EngineInstallUsageError,
+  formatEngineList,
+  planInstall,
+  type InstallPlan,
+} from '../src/cli-engine.ts';
+import { parseConfig } from '../src/config.ts';
+import type { AutoInstall } from '../src/engine-install-auto.ts';
 import type { HostInfo } from '../src/engines/descriptor.ts';
+import type { HostCapabilities } from '../src/engines/host-capabilities.ts';
+import { ENGINES } from '../src/engines/registry.ts';
+import { rankEngines } from '../src/engines/selector.ts';
+
+function planAuto(argv: string[], host: HostInfo, auto: AutoInstall): InstallPlan {
+  return planInstall(argv, host, 'strands-decider', undefined, auto);
+}
 
 const linux: HostInfo = {
   platform: 'linux',
@@ -144,5 +159,90 @@ describe('engine list formatting', () => {
       formatEngineList('not an engine catalog'),
       'gateway returned an invalid engine list',
     );
+  });
+});
+
+describe('automatic install planning', () => {
+  const NO = { status: 'unavailable', evidence: 'x' } as const;
+  const YES = { status: 'available', evidence: 'ok' } as const;
+  const base: HostCapabilities = { npu: NO, nvidia: NO, apple: NO, vulkan: NO, probedAt: 0 };
+
+  function auto(host: HostInfo, caps: Partial<HostCapabilities> = {}): AutoInstall {
+    return {
+      ranking: rankEngines({
+        host,
+        capabilities: { ...base, ...caps },
+        engines: ENGINES,
+        installed: new Set(),
+        explicit: null,
+      }),
+    };
+  }
+
+  it('plans FLM d3:mini on a supported NPU', () => {
+    const p = planAuto([], linux, auto(linux, { npu: YES }));
+    assert.equal(p.engine, 'fastflowlm');
+    assert.equal(p.model, 'd3:mini');
+    assert.match(p.reason ?? '', /fastflowlm \(NPU\)/);
+  });
+
+  it('plans the mlx flavor on a fresh Mac and on Mac with MLX', () => {
+    for (const apple of [base.apple, { ...YES, variant: 'mlx' as const }]) {
+      const p = planAuto([], darwin, auto(darwin, { apple }));
+      assert.equal(p.engine, 'strands-decider');
+      assert.equal(p.engine === 'strands-decider' && p.flavor, 'mlx');
+      assert.ok(p.model?.includes('strands-decider-2B'));
+    }
+  });
+
+  it('plans torch (MPS) on a Mac with MPS only', () => {
+    const p = planAuto([], darwin, auto(darwin, { apple: { ...YES, variant: 'mps' } }));
+    assert.equal(p.engine === 'strands-decider' && p.flavor, 'cpu');
+    assert.match(p.reason ?? '', /MPS/);
+  });
+
+  it('plans cuda on NVIDIA and cpu otherwise', () => {
+    const cuda = planAuto([], linux, auto(linux, { nvidia: YES }));
+    assert.equal(cuda.engine === 'strands-decider' && cuda.flavor, 'cuda');
+    const cpu = planAuto([], linux, auto(linux));
+    assert.equal(cpu.engine === 'strands-decider' && cpu.flavor, 'cpu');
+  });
+
+  it('lets CLI flags beat the ranking', () => {
+    const a = auto(linux, { npu: YES });
+    const p = planAuto(
+      ['--engine', 'strands-decider', '--flavor', 'cuda', '--model', 'my/model'],
+      linux,
+      a,
+    );
+    assert.deepEqual(
+      [p.engine, p.engine === 'strands-decider' && p.flavor, p.model],
+      ['strands-decider', 'cuda', 'my/model'],
+    );
+  });
+
+  it('lets explicit config beat the ranking (no auto input)', () => {
+    const p = planInstall([], linux, 'strands-decider', 'cfg/model');
+    assert.deepEqual(p, { engine: 'strands-decider', flavor: 'cpu', model: 'cfg/model' });
+    assert.equal(configIsExplicit(parseConfig({})), false);
+    assert.equal(configIsExplicit(parseConfig({ engine: { type: 'fastflowlm' } })), true);
+    const selection = { engine: 'fastflowlm', model: 'd3:nano' };
+    assert.equal(configIsExplicit(parseConfig({ selection })), true);
+  });
+
+  it('keeps --no-download and prepares without selecting anything', () => {
+    const strands = planAuto(['--no-download'], linux, auto(linux));
+    assert.equal(strands.model, undefined);
+    const flm = planAuto(['--no-download'], linux, auto(linux, { npu: YES }));
+    assert.deepEqual(
+      [flm.engine, flm.engine === 'fastflowlm' && flm.noDownload],
+      ['fastflowlm', true],
+    );
+    assert.ok(!('device' in flm) && !('selection' in flm));
+  });
+
+  it('rejects instead of substituting when the model does not fit', () => {
+    const tiny: HostInfo = { ...linux, totalMemoryBytes: 2e9 };
+    assert.throws(() => planAuto([], tiny, auto(tiny, { npu: YES })), EngineInstallUsageError);
   });
 });
