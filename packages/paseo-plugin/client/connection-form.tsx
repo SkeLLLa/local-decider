@@ -190,7 +190,7 @@ export function ConnectionForm({ theme, engine, onSetupLmStudio, seed }: Props):
         hint={engine.id === 'lmstudio' ? 'Usually http://127.0.0.1:1234/v1' : 'Ends with /v1'}
         initialValue={c.form.url}
         placeholder="http://127.0.0.1:1234/v1"
-        onChangeText={(url) => c.patch({ url })}
+        onChangeText={(url: string) => c.patch({ url })}
       />
       <SettingsAction
         label="Find local servers"
@@ -228,7 +228,7 @@ export function ConnectionForm({ theme, engine, onSetupLmStudio, seed }: Props):
         label="Model"
         hint="Choose a discovered model above or type its id."
         initialValue={c.form.model}
-        onChangeText={(model) => c.patch({ model })}
+        onChangeText={(model: string) => c.patch({ model })}
       />
       <SettingsInput
         key={`token:${engine.id}`}
@@ -236,7 +236,7 @@ export function ConnectionForm({ theme, engine, onSetupLmStudio, seed }: Props):
         hint="The name of a variable on the gateway machine, never the token itself."
         initialValue={c.form.tokenEnv}
         placeholder="LM_API_TOKEN"
-        onChangeText={(tokenEnv) => c.patch({ tokenEnv })}
+        onChangeText={(tokenEnv: string) => c.patch({ tokenEnv })}
       />
       <SettingsAction
         label="Save"
