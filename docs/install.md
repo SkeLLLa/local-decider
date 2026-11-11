@@ -61,8 +61,8 @@ never switches the running engine.
   `~/.local/share/local-decider/venvs/strands-decider` and downloads the weights into the Hugging
   Face cache. Flags: `--flavor cpu|mlx|cuda`, `--model <id>`, `--no-download`.
 - **FastFlowLM** downloads the pinned portable build (1.0.12) into
-  `~/.local/share/local-decider/engines/fastflowlm/`, checks it against GitHub's published
-  SHA-256, runs `flm validate` and pulls the model. Then select it in **Settings → Local
+  `~/.local/share/local-decider/engines/fastflowlm/`, checks it against a SHA-256 pinned in the
+  gateway, runs `flm validate` and pulls the model. Then select it in **Settings → Local
   decider**, or run:
 
   ```sh

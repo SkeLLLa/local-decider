@@ -10,10 +10,18 @@ import type { Paths } from './paths.ts';
 export const FLM_VERSION = '1.0.12';
 const REPO = 'FastFlowLM/FastFlowLM';
 
+/**
+ * SHA-256 of each supported release archive, pinned here rather than taken from the GitHub API, so
+ * a replaced release asset is refused. Add the digest from the release page when bumping
+ * `FLM_VERSION`.
+ */
+const FLM_SHA256: Readonly<Record<string, string>> = {
+  '1.0.12': 'sha256:626fbee5e5206a215a8c2c4d3d961055cbf7289d257d36599e9fef38f2f555a8',
+};
+
 interface Asset {
   readonly name: string;
   readonly browser_download_url: string;
-  readonly digest?: string;
 }
 
 function flmAssetName(version: string): string {
@@ -33,15 +41,12 @@ async function releaseAsset(version: string): Promise<Asset> {
   if (asset === undefined) {
     throw new Error(`release v${version} has no ${flmAssetName(version)}`);
   }
-  if (asset.digest?.startsWith('sha256:') !== true) {
-    throw new Error(`release v${version} publishes no sha256 digest for ${asset.name}; refusing`);
-  }
   return asset;
 }
 
 /**
  * Install the upstream portable FastFlowLM build (Linux, AMD XDNA NPU) into
- * `engines/fastflowlm/<version>/dist`, verified against GitHub's published SHA-256. The
+ * `engines/fastflowlm/<version>/dist`, verified against the SHA-256 pinned in `FLM_SHA256`. The
  * archive is unpacked into a fresh directory and only then moved into place.
  */
 export async function installFlm(paths: Paths, version: string = FLM_VERSION): Promise<string> {
@@ -54,6 +59,10 @@ export async function installFlm(paths: Paths, version: string = FLM_VERSION): P
   if (existsSync(launcher)) {
     return launcher;
   }
+  const expected = FLM_SHA256[version];
+  if (expected === undefined) {
+    throw new Error(`no pinned checksum for FastFlowLM ${version}; refusing to install it`);
+  }
   const asset = await releaseAsset(version);
   const res = await fetch(asset.browser_download_url, { signal: AbortSignal.timeout(600_000) });
   if (!res.ok) {
@@ -61,10 +70,8 @@ export async function installFlm(paths: Paths, version: string = FLM_VERSION): P
   }
   const bytes = Buffer.from(await res.arrayBuffer());
   const actual = `sha256:${createHash('sha256').update(bytes).digest('hex')}`;
-  if (actual !== asset.digest) {
-    throw new Error(
-      `checksum mismatch for ${asset.name}: expected ${String(asset.digest)}, got ${actual}`,
-    );
+  if (actual !== expected) {
+    throw new Error(`checksum mismatch for ${asset.name}: expected ${expected}, got ${actual}`);
   }
   mkdirSync(root, { recursive: true });
   const staging = mkdtempSync(join(root, 'staging-'));
