@@ -12,6 +12,7 @@ import { parseArgs } from 'node:util';
 
 import { authoringPrompt } from './authoring.ts';
 import { bench } from './bench.ts';
+import { planInstall, EngineInstallUsageError } from './cli-engine.ts';
 import { logsCommand } from './cli-logs.ts';
 import {
   configCommand,
@@ -22,7 +23,8 @@ import {
 } from './cli-settings.ts';
 import { ConfigFile } from './config-file.ts';
 import { DEFAULT_FLM_MODEL, DEFAULT_PORT, loadConfig, type GatewayConfig } from './config.ts';
-import { defaultFlavor, installStrandsEngine, type InstallFlavor } from './engine-install.ts';
+import { installStrandsEngine } from './engine-install.ts';
+import { hostInfo } from './engines/host.ts';
 import { parseEvalCases, runPolicyEval } from './eval.ts';
 import { FLM_VERSION, installFlm } from './flm-install.ts';
 import { serveMcpStdio, type McpBackend } from './mcp.ts';
@@ -153,29 +155,12 @@ async function engine(ctx: Context): Promise<void> {
   if (sub !== 'install') {
     throw new UsageError();
   }
-  const { values } = parseArgs({
-    args: rest,
-    options: {
-      'engine': { type: 'string' },
-      'flavor': { type: 'string' },
-      'model': { type: 'string' },
-      'no-download': { type: 'boolean' },
-    },
-  });
-  if (values.engine === 'fastflowlm') {
-    return installFastFlowLM(values.model, values['no-download'] === true);
+  const plan = planInstall(rest, hostInfo(), ctx.config.engine.type, ctx.config.engine.model);
+  if (plan.engine === 'fastflowlm') {
+    return installFastFlowLM(plan.model, plan.noDownload);
   }
-  if (values.engine !== undefined && values.engine !== 'strands-decider') {
-    throw new UsageError();
-  }
-  const flavor = (values.flavor ?? defaultFlavor()) as InstallFlavor;
-  if (!['cpu', 'mlx', 'cuda'].includes(flavor)) {
-    throw new UsageError();
-  }
-  const model =
-    values['no-download'] === true ? undefined : (values.model ?? ctx.config.engine.model);
-  installStrandsEngine(ctx.paths, flavor, model);
-  console.log(`strands-decider engine installed (${flavor}) under ${ctx.paths.venvs}`);
+  installStrandsEngine(ctx.paths, plan.flavor, plan.model);
+  console.log(`strands-decider engine installed (${plan.flavor}) under ${ctx.paths.venvs}`);
 }
 
 function parseInput(args: readonly string[]): DecideRequest['input'] {
@@ -426,6 +411,11 @@ async function main(argv: readonly string[]): Promise<void> {
   try {
     await dispatch(command, { paths, config: loadConfig(paths), args });
   } catch (error) {
+    if (error instanceof EngineInstallUsageError) {
+      console.error(`local-decider: ${error.message}`);
+      process.exitCode = error.exitCode;
+      return;
+    }
     if (error instanceof UsageError || error instanceof SettingsUsageError) {
       console.error(error.message === '' ? USAGE : `local-decider: ${error.message}`);
       process.exitCode = 2;

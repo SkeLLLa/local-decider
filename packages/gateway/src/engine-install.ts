@@ -7,8 +7,11 @@ import type { Paths } from './paths.ts';
 
 export type InstallFlavor = 'cpu' | 'mlx' | 'cuda';
 
-export function defaultFlavor(): InstallFlavor {
-  return process.platform === 'darwin' && process.arch === 'arm64' ? 'mlx' : 'cpu';
+export function defaultFlavor(
+  platform: NodeJS.Platform = process.platform,
+  arch: NodeJS.Architecture = process.arch,
+): InstallFlavor {
+  return platform === 'darwin' && arch === 'arm64' ? 'mlx' : 'cpu';
 }
 
 /** The pinned uv project shipped with the gateway (`engines/strands-decider`). */
