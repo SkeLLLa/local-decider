@@ -5,6 +5,7 @@
 import {
   DEFAULT_GATEWAY_URL,
   tokenAllowed,
+  trimTrailingSlashes,
   type DecideRequest,
   type DecideResponse,
 } from '@ziptie-soft/local-decider-core';
@@ -31,7 +32,7 @@ export async function readEnv($: ModApi): Promise<ModEnv> {
   const token = await $.env.get('LOCAL_DECIDER_TOKEN');
   const mod = await $.env.get('LOCAL_DECIDER_MOD');
   const timeout = Number(await $.env.get('LOCAL_DECIDER_TIMEOUT_MS'));
-  const baseUrl = (url === undefined || url === '' ? DEFAULT_GATEWAY_URL : url).replace(/\/+$/, '');
+  const baseUrl = trimTrailingSlashes(url === undefined || url === '' ? DEFAULT_GATEWAY_URL : url);
   return {
     baseUrl,
     token: token !== undefined && token !== '' && tokenAllowed(baseUrl) ? token : undefined,

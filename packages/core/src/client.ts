@@ -6,6 +6,15 @@ import type { DecideRequest, DecideResponse } from './decision.ts';
 
 export const DEFAULT_GATEWAY_URL = 'http://127.0.0.1:8765';
 
+/** `value` without trailing `/`. A loop, not `/\/+$/`, which backtracks quadratically on long runs. */
+export function trimTrailingSlashes(value: string): string {
+  let end = value.length;
+  while (end > 0 && value.charCodeAt(end - 1) === 0x2f) {
+    end -= 1;
+  }
+  return value.slice(0, end);
+}
+
 export interface ClientOptions {
   readonly baseUrl?: string;
   readonly timeoutMs?: number;
@@ -57,7 +66,7 @@ export class GatewayClient {
   readonly #fetch: typeof fetch;
 
   constructor(options: ClientOptions = {}) {
-    this.#baseUrl = (options.baseUrl ?? DEFAULT_GATEWAY_URL).replace(/\/+$/, '');
+    this.#baseUrl = trimTrailingSlashes(options.baseUrl ?? DEFAULT_GATEWAY_URL);
     this.#timeoutMs = options.timeoutMs ?? 2000;
     // Never send the token in clear text to another machine: https, or loopback only.
     this.#token = tokenAllowed(this.#baseUrl) ? options.token : undefined;

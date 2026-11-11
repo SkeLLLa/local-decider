@@ -220,8 +220,14 @@ function stopPidfile(paths: Paths): string {
 
 /** Write `content` to `file` only if it differs; true when it changed. */
 function writeIfChanged(file: string, content: string): boolean {
-  if (existsSync(file) && readFileSync(file, 'utf8') === content) {
-    return false;
+  try {
+    if (readFileSync(file, 'utf8') === content) {
+      return false;
+    }
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
+      throw error;
+    }
   }
   writeFileSync(file, content);
   return true;

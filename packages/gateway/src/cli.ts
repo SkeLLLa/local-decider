@@ -492,7 +492,7 @@ async function mcp(ctx: Context): Promise<void> {
 
 class UsageError extends Error {}
 
-async function dispatch(command: string | undefined, ctx: Context): Promise<void> {
+async function dispatch(command: string, ctx: Context): Promise<void> {
   if (command === 'gateway') {
     const [action, ...rest] = ctx.args;
     if (action === 'run') {
@@ -523,7 +523,7 @@ async function dispatch(command: string | undefined, ctx: Context): Promise<void
         : console.log(configCommand(c.paths, c.args)),
     routing: async (c) => console.log(routingCommand(c.paths, c.args)),
   };
-  const handler = command === undefined ? undefined : commands[command];
+  const handler = commands[command];
   if (handler === undefined) {
     throw new UsageError();
   }

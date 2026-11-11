@@ -107,11 +107,16 @@ function repairTornLine(file: string, checkedFiles: Set<string>): void {
   if (checkedFiles.has(file)) {
     return;
   }
-  if (!existsSync(file)) {
+  let fd: number;
+  try {
+    fd = openSync(file, 'r');
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
+      throw error;
+    }
     checkedFiles.add(file);
     return;
   }
-  const fd = openSync(file, 'r');
   try {
     const size = fstatSync(fd).size;
     if (size > 0) {

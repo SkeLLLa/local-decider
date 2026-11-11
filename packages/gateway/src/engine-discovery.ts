@@ -1,4 +1,4 @@
-import { tokenAllowed } from '@ziptie-soft/local-decider-core';
+import { tokenAllowed, trimTrailingSlashes } from '@ziptie-soft/local-decider-core';
 
 import type { GatewayConfig } from './config.ts';
 import { getJson } from './engines/http.ts';
@@ -106,7 +106,7 @@ export function parseNativeModels(value: unknown): NativeModel[] {
 
 /** `http://host:1234/v1` -> `http://host:1234/api/v0/models`. */
 export function nativeModelsUrl(url: string): string {
-  return `${url.replace(/\/+$/, '').replace(/\/v1$/, '')}/api/v0/models`;
+  return `${trimTrailingSlashes(url).replace(/\/v1$/, '')}/api/v0/models`;
 }
 
 function endpointKey(id: string, endpoint: DiscoveryEndpoint): string {
@@ -243,7 +243,7 @@ export class ModelDiscovery {
 
   async #list(endpoint: DiscoveryEndpoint): Promise<readonly string[]> {
     try {
-      const response = await this.#get(`${endpoint.url.replace(/\/+$/, '')}/models`, endpoint);
+      const response = await this.#get(`${trimTrailingSlashes(endpoint.url)}/models`, endpoint);
       return [endpoint.model, ...parseModelIds(response).filter((id) => id !== endpoint.model)];
     } catch {
       return [endpoint.model];

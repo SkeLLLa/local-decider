@@ -2,6 +2,7 @@ import {
   canonicalJson,
   cutText,
   tokenAllowed,
+  trimTrailingSlashes,
   type Question,
   type SystemOneRequest,
   type SystemOneResponse,
@@ -72,7 +73,7 @@ export type OpenAICompatibleEngineConfig =
   | z.infer<typeof lmStudioSchema>;
 
 function endpoint(baseUrl: string, path: string): string {
-  return `${baseUrl.replace(/\/+$/, '')}${path}`;
+  return `${trimTrailingSlashes(baseUrl)}${path}`;
 }
 
 function record(value: unknown): Record<string, unknown> | undefined {

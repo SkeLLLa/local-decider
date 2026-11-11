@@ -3,6 +3,15 @@ import { DEFAULT_GATEWAY_URL } from './constants.ts';
 // No `URL` here: React Native's URL implements almost none of its getters.
 const BASE_URL = /^(https?):\/\/([A-Za-z0-9.-]+|\[[0-9A-Fa-f:.]+\])(:\d{1,5})?(\/[^\s?#@]*)?$/i;
 
+/** `value` without trailing `/`. A loop, not `/\/+$/`, which backtracks quadratically on long runs. */
+function trimTrailingSlashes(value: string): string {
+  let end = value.length;
+  while (end > 0 && value.charCodeAt(end - 1) === 0x2f) {
+    end -= 1;
+  }
+  return value.slice(0, end);
+}
+
 /** `http(s)://host[:port][/path]` without a trailing slash, or null when unusable. */
 export function normaliseBaseUrl(raw: string | undefined): string | null {
   const value = (raw ?? '').trim() || DEFAULT_GATEWAY_URL;
@@ -14,7 +23,7 @@ export function normaliseBaseUrl(raw: string | undefined): string | null {
   if (port !== '' && Number(port.slice(1)) > 65_535) {
     return null;
   }
-  return `${scheme.toLowerCase()}://${host.toLowerCase()}${port}${path}`.replace(/\/+$/, '');
+  return trimTrailingSlashes(`${scheme.toLowerCase()}://${host.toLowerCase()}${port}${path}`);
 }
 
 const LOOPBACK_HOST = /^(?:127\.\d{1,3}\.\d{1,3}\.\d{1,3}|localhost|\[::1\])$/;

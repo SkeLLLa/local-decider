@@ -69,7 +69,7 @@ export async function installFlm(paths: Paths, version: string = FLM_VERSION): P
   mkdirSync(root, { recursive: true });
   const staging = mkdtempSync(join(root, 'staging-'));
   try {
-    const archive = join(staging, asset.name);
+    const archive = join(staging, 'flm.tar.gz');
     writeFileSync(archive, bytes);
     const out = join(staging, 'dist');
     mkdirSync(out);

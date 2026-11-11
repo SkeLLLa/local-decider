@@ -1,3 +1,4 @@
+import { trimTrailingSlashes } from '@ziptie-soft/local-decider-core';
 import type { SystemOneRequest, SystemOneResponse } from '@ziptie-soft/local-decider-core';
 
 import { EngineError } from './types.ts';
@@ -107,7 +108,7 @@ export async function postSystemOne(
   request: SystemOneRequest,
   signal: AbortSignal,
 ): Promise<SystemOneResponse> {
-  const body = await postJson(`${options.baseUrl.replace(/\/+$/, '')}/v1/systemone`, request, {
+  const body = await postJson(`${trimTrailingSlashes(options.baseUrl)}/v1/systemone`, request, {
     token: options.token,
     signal,
     maxBytes: MAX_RESPONSE_BYTES,
@@ -127,7 +128,7 @@ export async function getHealth(
   doFetch: typeof fetch = globalThis.fetch,
 ): Promise<Record<string, unknown> | null> {
   try {
-    const res = await doFetch(`${baseUrl.replace(/\/+$/, '')}${path}`, {
+    const res = await doFetch(`${trimTrailingSlashes(baseUrl)}${path}`, {
       signal: AbortSignal.timeout(timeoutMs),
     });
     if (!res.ok) {

@@ -3,7 +3,21 @@ import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { after, before, describe, it } from 'node:test';
 
-import { GatewayClient } from '../src/index.ts';
+import { GatewayClient, trimTrailingSlashes } from '../src/index.ts';
+
+describe('trimTrailingSlashes', () => {
+  it('drops every trailing slash and nothing else', () => {
+    assert.equal(trimTrailingSlashes('http://h:1/v1///'), 'http://h:1/v1');
+    assert.equal(trimTrailingSlashes('http://h:1'), 'http://h:1');
+    assert.equal(trimTrailingSlashes('///'), '');
+    assert.equal(trimTrailingSlashes(''), '');
+  });
+
+  it('stays linear on a long run of slashes', () => {
+    const value = `${'/'.repeat(200_000)}x`;
+    assert.equal(trimTrailingSlashes(value), value);
+  });
+});
 
 describe('GatewayClient', () => {
   let server: Server;

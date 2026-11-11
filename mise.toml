@@ -82,8 +82,9 @@ PATH="$bats_root/libexec/bats-core:/bin:/usr/bin:$PATH" /bin/bash "$bats_bin" pl
 '''
 
 [tasks."lint:complexity"]
+# Paths spelled out: mise runs tasks with sh, and dash (Ubuntu CI) has no brace expansion.
 description = "cccc: cognitive and cyclomatic complexity ceilings (cccc.toml)"
-run = "s=0; cccc --top-cognitive 10 packages/*/src packages/paseo-plugin/{server,shared,client} || s=$?; cccc --top-cyclomatic 10 packages/*/src packages/paseo-plugin/{server,shared,client} || s=$?; exit $s"
+run = "s=0; cccc --top-cognitive 10 packages/*/src packages/paseo-plugin/server packages/paseo-plugin/shared packages/paseo-plugin/client || s=$?; cccc --top-cyclomatic 10 packages/*/src packages/paseo-plugin/server packages/paseo-plugin/shared packages/paseo-plugin/client || s=$?; exit $s"
 
 [tasks."lint:fallow"]
 description = "fallow: dead code, duplication and complexity (fallow.toml)"

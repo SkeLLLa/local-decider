@@ -90,21 +90,26 @@ jobs:
     runs-on: ${{ matrix.os }}
     timeout-minutes: 20
     env:
-      MISE_NODE_VERSION: ${{ matrix.node }}
+      # node24 layers mise.node24.toml/.lock over mise.toml; '' keeps the default pins.
+      MISE_ENV: ${{ matrix.mise_env }}
     permissions:
       contents: read
     strategy:
       fail-fast: false
       matrix:
-        # Keep 26.13.0 aligned with mise.toml; 24 is the previous major, matching engines.node >=24.
+        # `node` is the label only: mise.toml pins the current Node and mise.node24.toml the previous
+        # major (engines.node >=24); both are in mise lockfiles, which `mise install --locked` needs.
         # Linux covers both Node majors; macOS covers the current Node and Apple Silicon/MLX.
         include:
           - os: ubuntu-latest
-            node: '26.13.0'
+            node: '26'
+            mise_env: ''
           - os: ubuntu-latest
             node: '24'
+            mise_env: node24
           - os: macos-latest
-            node: '26.13.0'
+            node: '26'
+            mise_env: ''
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:

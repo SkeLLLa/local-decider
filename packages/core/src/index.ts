@@ -3,6 +3,7 @@ export {
   DEFAULT_GATEWAY_URL,
   GatewayClient,
   tokenAllowed,
+  trimTrailingSlashes,
   type ClientOptions,
   type GatewayHealth,
 } from './client.ts';

@@ -1,3 +1,5 @@
+import { trimTrailingSlashes } from '@ziptie-soft/local-decider-core';
+
 /**
  * The `permission` policy's input, built the same way for the hook runner (transcript file) and the
  * Claude Code mod (`$.session.messages()`). No `node:` imports.
@@ -6,7 +8,7 @@ import { firstUserText, historyText, lastUserText, taskText, type Turn } from '.
 
 /** `name (cwd)`: how the policies refer to the project. */
 export function projectLabel(cwd: string): string {
-  const name = cwd.replace(/\/+$/, '').split('/').at(-1) ?? '';
+  const name = trimTrailingSlashes(cwd).split('/').at(-1) ?? '';
   return `${name === '' ? cwd : name} (${cwd})`;
 }
 

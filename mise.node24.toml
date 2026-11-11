@@ -1,0 +1,5 @@
+# Node 24 (the previous major, engines.node >=24) for the CI build matrix: MISE_ENV=node24 layers
+# this over mise.toml, and mise.node24.lock pins it so `mise install --locked` works there.
+# Refresh with `MISE_ENV=node24 mise lock -p linux-x64,linux-arm64,macos-arm64,macos-x64 node`.
+[tools]
+node = "24.22.3"

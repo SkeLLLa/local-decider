@@ -1,3 +1,4 @@
+import { trimTrailingSlashes } from '@ziptie-soft/local-decider-core';
 /**
  * `POST /v1/config/engine`: the connection settings (URL, model, token variable name) of an
  * OpenAI-like engine. Validation reuses the engine's own schema fields; messages name fields,
@@ -65,7 +66,7 @@ export function normalizeUrl(raw: string): string | undefined {
     (parsed.protocol === 'http:' || parsed.protocol === 'https:') &&
     parsed.username === '' &&
     parsed.password === '';
-  return plain ? raw.replace(/\/+$/, '') : undefined;
+  return plain ? trimTrailingSlashes(raw) : undefined;
 }
 
 function fieldName(name: string): string {
