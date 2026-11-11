@@ -23,6 +23,7 @@ import {
   parseMode,
   parsePathUpdate,
   parseSelection,
+  parseSelectionMode,
   parseThresholds,
   parseVariant,
   type EngineControl,
@@ -351,6 +352,10 @@ const CONTROL_ROUTES: Readonly<Record<string, ControlHandler>> = {
     const selection = await c.select(parseSelection(await readJson(req)));
     return [200, { ...selection, state: d.engine.health().state }];
   },
+  'POST /v1/engine/mode': async (req, c) => [
+    200,
+    { mode: await c.setSelectionMode(parseSelectionMode(await readJson(req))) },
+  ],
   'POST /v1/engine/load': async (_req, c, d) => {
     await c.load();
     return [202, { state: d.engine.health().state }];

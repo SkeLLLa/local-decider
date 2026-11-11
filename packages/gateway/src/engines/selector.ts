@@ -11,6 +11,15 @@ export type SelectorEngine = Pick<
   'id' | 'selectable' | 'calibrated' | 'supports' | 'models'
 >;
 
+/** Why a candidate is or is not eligible, stable for clients (the `reason` is English prose). */
+export type CandidateCode =
+  | 'available'
+  | 'no-hardware'
+  | 'not-confirmed'
+  | 'unsupported-platform'
+  | 'no-memory'
+  | 'uncalibrated';
+
 export interface Candidate {
   readonly engine: string;
   /** Strands device; null for engines without one. */
@@ -24,6 +33,7 @@ export interface Candidate {
   /** The engine is installed; false means it would need installing first. */
   readonly ready: boolean;
   readonly reason: string;
+  readonly code: CandidateCode;
 }
 
 export interface Target {
@@ -94,9 +104,13 @@ const LADDER: readonly Rung[] = [
 function appleVariant(want: 'mlx' | 'mps'): (c: HostCapabilities) => CapabilityResult {
   return (c) => {
     const confirmed = c.apple.variant === want || (want === 'mps' && c.apple.mps === true);
-    return c.apple.status === 'available' && !confirmed
-      ? { status: 'unknown', evidence: `${want.toUpperCase()} not confirmed` }
-      : c.apple;
+    if (c.apple.status !== 'available' || c.apple.variant === want) {
+      return c.apple;
+    }
+    // MPS confirmed next to MLX: report MPS's own evidence, not MLX's.
+    return confirmed
+      ? { status: 'available', evidence: 'PyTorch MPS', variant: 'mps', mps: true }
+      : { status: 'unknown', evidence: `${want.toUpperCase()} not confirmed` };
   };
 }
 
@@ -105,18 +119,25 @@ function recommendedModel(engine: SelectorEngine): ModelDescriptor | undefined {
   return engine.models.find((m) => m.recommended === true);
 }
 
-function verdict(rung: Rung, caps: HostCapabilities | undefined): { ok: boolean; reason: string } {
+interface Verdict {
+  readonly ok: boolean;
+  readonly reason: string;
+  readonly code: CandidateCode;
+}
+
+function verdict(rung: Rung, caps: HostCapabilities | undefined): Verdict {
   if (rung.needs === undefined) {
-    return { ok: true, reason: 'always available' };
+    return { ok: true, reason: 'always available', code: 'available' };
   }
   const result = caps === undefined ? undefined : rung.needs(caps);
   if (result?.status === 'available') {
-    return { ok: true, reason: `${rung.label}: ${result.evidence}` };
+    return { ok: true, reason: `${rung.label}: ${result.evidence}`, code: 'available' };
   }
   const state = result?.status ?? 'unknown';
   return {
     ok: false,
     reason: `${rung.label} ${state === 'unknown' ? 'not confirmed' : 'not present'}`,
+    code: state === 'unknown' ? 'not-confirmed' : 'no-hardware',
   };
 }
 
@@ -138,7 +159,13 @@ function rungCandidate(
   };
   const support = engine.supports(input.host);
   if (!support.ok) {
-    return { ...base, eligible: false, supported: false, reason: support.reason };
+    return {
+      ...base,
+      eligible: false,
+      supported: false,
+      reason: support.reason,
+      code: 'unsupported-platform',
+    };
   }
   if (!modelFits(model.id, input.host.totalMemoryBytes, rung.device, rung.engine as EngineId)) {
     return {
@@ -146,10 +173,11 @@ function rungCandidate(
       eligible: false,
       supported: true,
       reason: `${model.id} does not fit in memory`,
+      code: 'no-memory',
     };
   }
-  const { ok, reason } = verdict(rung, input.capabilities);
-  return { ...base, eligible: ok, supported: true, reason };
+  const { ok, reason, code } = verdict(rung, input.capabilities);
+  return { ...base, eligible: ok, supported: true, reason, code };
 }
 
 function uncalibrated(
@@ -169,6 +197,7 @@ function uncalibrated(
     supported: true,
     ready: installed.has(engine.id),
     reason: 'uncalibrated: explicit choice only',
+    code: 'uncalibrated',
   };
 }
 

@@ -6,7 +6,7 @@ import { describe, it } from 'node:test';
 import { MemoryConfigStore } from '../src/config-file.ts';
 import { parseConfig, type EngineConfig } from '../src/config.ts';
 import { Decider } from '../src/decider.ts';
-import { EngineControl } from '../src/engine-control.ts';
+import { EngineControl, parseSelectionMode } from '../src/engine-control.ts';
 import type { HostInfo } from '../src/engines/descriptor.ts';
 import type { HostCapabilities } from '../src/engines/host-capabilities.ts';
 import {
@@ -198,9 +198,13 @@ describe('automatic runtime fallback', () => {
     assert.ok(stop >= 0 && stop < world.events.lastIndexOf('start:strands-decider'));
     assert.equal(world.maxLoaded, 1, 'two models were loaded at once');
     const status = await control.status();
-    const info = status['active'] as { fallback?: { reason: string }; selectionMode: string };
+    const info = status['active'] as {
+      fallback?: { reason: string; engine?: string };
+      selectionMode: string;
+    };
     assert.equal(info.selectionMode, 'auto');
     assert.match(info.fallback?.reason ?? '', /fastflowlm failed/);
+    assert.equal(info.fallback?.engine, 'fastflowlm');
   });
 
   it('never falls back from a manual selection', async () => {
@@ -364,5 +368,46 @@ describe('automatic runtime fallback', () => {
     assert.ok(performance.now() - started < 2000, 'decision was not bounded');
     assert.ok(response.action !== undefined);
     await settle(control);
+  });
+});
+
+describe('selection mode switch', () => {
+  it('goes automatic: persists the mode and moves to the best engine', async () => {
+    const { control, store } = setup({
+      selection: { engine: 'strands-decider', model: 'strands-decider-2b' },
+    });
+    await settle(control);
+    assert.equal(active(control), 'strands-decider');
+    assert.equal(await control.setSelectionMode('auto'), 'auto');
+    await settle(control);
+    assert.deepEqual(store.current.selection, { mode: 'auto' });
+    assert.equal(active(control), 'fastflowlm');
+    const status = await control.status();
+    assert.equal((status['active'] as { selectionMode: string }).selectionMode, 'auto');
+  });
+
+  it('goes manual: keeps the running engine, persists it and drops the fallback note', async () => {
+    const { control, world, decide, store } = setup({ selection: { mode: 'auto' } });
+    await settle(control);
+    world.fail('fastflowlm');
+    await decide();
+    await settle(control);
+    assert.ok(await fallbackOf(control));
+    assert.equal(await control.setSelectionMode('manual'), 'manual');
+    await settle(control);
+    assert.equal(active(control), 'strands-decider');
+    assert.equal(store.current.selection?.mode, undefined);
+    assert.equal(store.current.selection?.engine, 'strands-decider');
+    assert.equal(await fallbackOf(control), undefined);
+    const status = await control.status();
+    assert.equal((status['active'] as { selectionMode: string }).selectionMode, 'manual');
+  });
+
+  it('validates the requested mode', () => {
+    assert.equal(parseSelectionMode({ mode: 'auto' }), 'auto');
+    assert.equal(parseSelectionMode({ mode: 'manual' }), 'manual');
+    for (const bad of [null, {}, { mode: 'x' }, { mode: 1 }, 'auto']) {
+      assert.throws(() => parseSelectionMode(bad), /mode must be/);
+    }
   });
 });

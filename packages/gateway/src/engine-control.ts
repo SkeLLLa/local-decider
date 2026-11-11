@@ -123,6 +123,30 @@ export function parseSelection(body: unknown): EngineRequest {
   };
 }
 
+export type SelectionModeName = 'auto' | 'manual';
+
+export function parseSelectionMode(body: unknown): SelectionModeName {
+  const mode = isRecord(body) ? body['mode'] : undefined;
+  if (mode !== 'auto' && mode !== 'manual') {
+    throw new EngineSwitchError(400, 'mode must be "auto" or "manual"');
+  }
+  return mode;
+}
+
+/** The engine and device behind a fallback note's `engine|device|model` key. */
+function failedCandidate(key: string): { engine: string; device?: string } {
+  const [engine = '', device = ''] = key.split('|');
+  return { engine, ...(device === '' ? {} : { device }) };
+}
+
+function persistedSelection(sel: EngineSelection): Record<string, string> {
+  return {
+    engine: sel.engine,
+    model: sel.model,
+    ...(sel.device === null ? {} : { device: sel.device }),
+  };
+}
+
 export function parseLifecycle(body: unknown): LifecycleOptions {
   const record = isRecord(body) ? body : {};
   const lifecycle = record['lifecycle'];
@@ -276,7 +300,12 @@ export class EngineControl {
   #booted = false;
   #attempting: string | undefined;
   /** Why automatic mode is not on its top choice; null while it is. */
-  #fallbackNote: { readonly reason: string; readonly retryAt: number | undefined } | null = null;
+  #fallbackNote: {
+    readonly reason: string;
+    /** `engine|device|model` of the candidate that failed. */
+    readonly key: string;
+    readonly retryAt: number | undefined;
+  } | null = null;
   #retryTimer: NodeJS.Timeout | undefined;
   readonly #downloads = new Downloads();
   readonly #status: CatalogStatus;
@@ -396,6 +425,26 @@ export class EngineControl {
     return this.#pending;
   }
 
+  /**
+   * Turn automatic selection on, or off while keeping the engine that runs now. Persisted like a
+   * manual `select`, so it survives a restart.
+   */
+  async setSelectionMode(mode: SelectionModeName): Promise<SelectionModeName> {
+    const current = this.#requireSwitchable();
+    if (mode === 'auto') {
+      this.#save([{ path: ['selection'], value: { mode: 'auto' } }]);
+      this.#applied = this.#config;
+      await this.reconcileAuto();
+      return 'auto';
+    }
+    if (this.#auto) {
+      this.#save([{ path: ['selection'], value: persistedSelection(current) }]);
+      this.#applied = this.#config;
+    }
+    this.#leaveAuto();
+    return 'manual';
+  }
+
   async select(request: EngineRequest): Promise<EngineSelection> {
     const current = this.#requireSwitchable();
     const engine = request.engine ?? current.engine;
@@ -410,16 +459,7 @@ export class EngineControl {
     await run;
     if (this.#auto) {
       // Choosing the engine that is already active changes nothing to persist; do it anyway.
-      this.#save([
-        {
-          path: ['selection'],
-          value: {
-            engine: next.engine,
-            model: next.model,
-            ...(next.device === null ? {} : { device: next.device }),
-          },
-        },
-      ]);
+      this.#save([{ path: ['selection'], value: persistedSelection(next) }]);
       this.#applied = this.#config;
     }
     this.#leaveAuto();
@@ -753,6 +793,7 @@ export class EngineControl {
           : {
               fallback: {
                 reason: this.#fallbackNote.reason,
+                ...failedCandidate(this.#fallbackNote.key),
                 ...(this.#fallbackNote.retryAt === undefined
                   ? {}
                   : { retryAt: new Date(this.#fallbackNote.retryAt).toISOString() }),
@@ -1146,11 +1187,7 @@ export class EngineControl {
     this.#engine = engine;
     this.#selected = next;
     this.#decider?.replaceEngine(engine);
-    const selection = {
-      engine: next.engine,
-      model: next.model,
-      ...(next.device === null ? {} : { device: next.device }),
-    };
+    const selection = persistedSelection(next);
     if (persist && JSON.stringify(this.#config.selection) !== JSON.stringify(selection)) {
       this.#save([{ path: ['selection'], value: selection }]);
       this.#applied = this.#config;
@@ -1202,9 +1239,11 @@ export class EngineControl {
       return;
     }
     this.#reported.add(engine);
-    const retryAt = this.#fallback.recordFailure(candidateKey(this.#selected));
+    const key = candidateKey(this.#selected);
+    const retryAt = this.#fallback.recordFailure(key);
     this.#fallbackNote = {
       reason: `${engine.id} failed: ${health.detail ?? 'unknown'}`,
+      key,
       retryAt,
     };
     void this.#queueReconcile();
@@ -1279,6 +1318,7 @@ export class EngineControl {
     const message = error instanceof Error ? error.message : String(error);
     this.#fallbackNote = {
       reason: `switching to ${key.split('|')[0] ?? key} failed: ${message}`,
+      key,
       retryAt: this.#fallback.recordFailure(key),
     };
   }

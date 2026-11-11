@@ -83,6 +83,28 @@ describe('engine ranking', () => {
     assert.ok(r.candidates.filter((c) => c.engine !== 'fastflowlm').every((c) => c.supported));
   });
 
+  it('gives each candidate a stable code', () => {
+    const r = rank(MAC, caps({ apple: YES('mlx') }));
+    const code = (backend: string): string | undefined =>
+      r.candidates.find((c) => c.backend === backend)?.code;
+    assert.equal(code('MLX'), 'available');
+    assert.equal(code('MPS'), 'not-confirmed');
+    assert.equal(code('CPU'), 'available');
+    const flm = r.candidates.find((c) => c.engine === 'fastflowlm');
+    assert.equal(flm?.code, 'unsupported-platform');
+    assert.equal(
+      rank(LINUX, caps({})).candidates.find((c) => c.backend === 'NPU')?.code,
+      'no-hardware',
+    );
+  });
+
+  it('explains MPS with MPS evidence, not MLX evidence', () => {
+    const r = rank(MAC, caps({ apple: { ...YES('mlx'), mps: true } }));
+    const mps = r.candidates.find((c) => c.backend === 'MPS');
+    assert.match(mps?.reason ?? '', /MPS/);
+    assert.doesNotMatch(mps?.reason ?? '', /MLX/);
+  });
+
   it('Apple Silicon without MLX: MPS then CPU', () => {
     const r = rank(MAC, caps({ apple: YES('mps') }));
     assert.deepEqual(ladder(r), ['strands-decider:MPS', 'strands-decider:CPU']);
