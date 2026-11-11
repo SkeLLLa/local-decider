@@ -26,6 +26,14 @@ export interface ServiceEnv {
 export interface ServiceCommand {
   readonly file: string;
   readonly args: readonly string[];
+  /** Fixed second argv, run only when the first one fails the way `when` describes. */
+  readonly fallback?: FallbackCommand;
+}
+
+export interface FallbackCommand {
+  readonly file: string;
+  readonly args: readonly string[];
+  readonly when: { readonly codes: readonly number[]; readonly output: RegExp };
 }
 
 export type Manager = 'systemd' | 'launchd';
@@ -60,12 +68,34 @@ function serviceManager(env: ServiceEnv): Manager | null {
 
 function launchdCommand(env: ServiceEnv, action: ServiceAction): ServiceCommand {
   const domain = `gui/${String(env.uid)}`;
-  const args: Record<ServiceAction, string[]> = {
-    start: ['bootstrap', domain, launchdPlistPath(env)],
-    stop: ['bootout', `${domain}/${LAUNCHD_LABEL}`],
-    restart: ['kickstart', '-k', `${domain}/${LAUNCHD_LABEL}`],
-  };
-  return { file: 'launchctl', args: args[action] };
+  const target = `${domain}/${LAUNCHD_LABEL}`;
+  const bootstrap = ['bootstrap', domain, launchdPlistPath(env)];
+  switch (action) {
+    case 'start':
+      // Already loaded (or still loading): the agent only needs a kick.
+      return {
+        file: 'launchctl',
+        args: bootstrap,
+        fallback: {
+          file: 'launchctl',
+          args: ['kickstart', target],
+          when: { codes: [5, 37], output: /already|in progress|Input\/output error/i },
+        },
+      };
+    case 'restart':
+      // Not loaded (exit 113): there is nothing to kick, so load it.
+      return {
+        file: 'launchctl',
+        args: ['kickstart', '-k', target],
+        fallback: {
+          file: 'launchctl',
+          args: bootstrap,
+          when: { codes: [113], output: /Could not find service/i },
+        },
+      };
+    default:
+      return { file: 'launchctl', args: ['bootout', target] };
+  }
 }
 
 /** The exact command for `action`, or null when no user service is installed. */
@@ -77,8 +107,15 @@ export function serviceCommand(env: ServiceEnv, action: ServiceAction): ServiceC
   return manager === 'launchd' ? launchdCommand(env, action) : null;
 }
 
-function commandText(command: ServiceCommand): string {
+function commandText(command: Pick<ServiceCommand, 'file' | 'args'>): string {
   return [command.file, ...command.args].join(' ');
+}
+
+/** The button's command, plus the fallback it may run: `a (if that fails: b)`. */
+function describe(command: ServiceCommand): string {
+  return command.fallback === undefined
+    ? commandText(command)
+    : `${commandText(command)} (if that fails: ${commandText(command.fallback)})`;
 }
 
 export type Exec = (
@@ -116,6 +153,16 @@ export interface ServiceResult {
   readonly error: string | null;
 }
 
+function shouldFallBack(
+  fallback: FallbackCommand,
+  res: { code: number | null; output: string; error: string | null },
+): boolean {
+  return (
+    (res.code !== null && fallback.when.codes.includes(res.code)) ||
+    fallback.when.output.test(`${res.output}\n${res.error ?? ''}`)
+  );
+}
+
 export async function runService(
   env: ServiceEnv,
   action: ServiceAction,
@@ -125,10 +172,16 @@ export async function runService(
   if (command === null) {
     return { ok: false, command: null, output: '', error: 'No gateway user service is installed.' };
   }
-  const res = await exec(command.file, command.args, TIMEOUT_MS);
+  let ran: Pick<ServiceCommand, 'file' | 'args'> = command;
+  let res = await exec(command.file, command.args, TIMEOUT_MS);
+  const fallback = command.fallback;
+  if (res.error !== null && fallback !== undefined && shouldFallBack(fallback, res)) {
+    ran = fallback;
+    res = await exec(fallback.file, fallback.args, TIMEOUT_MS);
+  }
   return {
     ok: res.error === null,
-    command: commandText(command),
+    command: commandText(ran),
     output: res.output.slice(0, MAX_OUTPUT),
     error: res.error === null ? null : res.error.slice(0, MAX_OUTPUT),
   };
@@ -147,6 +200,6 @@ export function serviceInfo(env: ServiceEnv): {
   }
   return {
     manager: serviceManager(env),
-    commands: { start: commandText(start), stop: commandText(stop), restart: commandText(restart) },
+    commands: { start: describe(start), stop: describe(stop), restart: describe(restart) },
   };
 }
