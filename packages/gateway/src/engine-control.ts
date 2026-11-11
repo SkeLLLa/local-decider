@@ -633,7 +633,7 @@ export class EngineControl {
         recommended: m.recommended === true,
       })),
       downloads: this.#downloads.list(),
-      paths: resolveAll(this.#config, this.#paths, this.#env),
+      paths: resolveAll(this.#config, this.#paths, this.#env, this.#host),
       pathsEditable: this.pathsEditable,
     };
   }

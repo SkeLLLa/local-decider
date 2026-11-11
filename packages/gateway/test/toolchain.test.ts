@@ -4,10 +4,23 @@ import { join } from 'node:path';
 import { describe, it } from 'node:test';
 
 import { parseConfig } from '../src/config.ts';
+import type { HostInfo } from '../src/engines/descriptor.ts';
 import { flmServeArgs, managedFlm } from '../src/engines/fastflowlm/server.ts';
 import { modelFits } from '../src/models.ts';
-import { checkPath, resolveEntry, toolchain } from '../src/toolchain.ts';
+import { checkPath, resolveAll, resolveEntry, toolchain } from '../src/toolchain.ts';
 import { tempPaths } from './helpers.ts';
+
+const DARWIN_HOST: HostInfo = {
+  platform: 'darwin',
+  arch: 'arm64',
+  totalMemoryBytes: 64e9,
+};
+
+const LINUX_HOST: HostInfo = {
+  platform: 'linux',
+  arch: 'x64',
+  totalMemoryBytes: 64e9,
+};
 
 function executable(path: string): string {
   mkdirSync(join(path, '..'), { recursive: true });
@@ -45,6 +58,22 @@ describe('toolchain discovery', () => {
       { PATH: '' },
     );
     assert.deepEqual(custom.env, { FLM_MODEL_PATH: paths.data, HF_HUB_CACHE: paths.logs });
+  });
+
+  it('hides paths for engines unsupported on the host', () => {
+    const paths = tempPaths();
+    const config = parseConfig({});
+    const darwinKeys = resolveAll(config, paths, { PATH: '' }, DARWIN_HOST).map(({ key }) => key);
+    assert.deepEqual(darwinKeys, ['tools.strandsDecider', 'tools.uv', 'dirs.hfCache']);
+
+    const linuxKeys = resolveAll(config, paths, { PATH: '' }, LINUX_HOST).map(({ key }) => key);
+    assert.deepEqual(linuxKeys, [
+      'tools.flm',
+      'tools.strandsDecider',
+      'tools.uv',
+      'dirs.flmModels',
+      'dirs.hfCache',
+    ]);
   });
 
   it('only accepts absolute paths to the expected tool or an existing directory', () => {

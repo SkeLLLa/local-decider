@@ -1,4 +1,4 @@
-import { probe } from '../../toolchain.ts';
+import { probe } from '../../toolchain-probe.ts';
 import type { EngineContext, Validation } from '../descriptor.ts';
 
 /** Tags `flm list` marks downloaded (`  - d3:nano ✅`). */

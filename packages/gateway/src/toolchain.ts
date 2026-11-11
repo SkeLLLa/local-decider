@@ -1,19 +1,16 @@
-import { execFile } from 'node:child_process';
 import { accessSync, constants, existsSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { basename, delimiter, isAbsolute, join } from 'node:path';
 
 import type { GatewayConfig } from './config.ts';
+import type { HostInfo } from './engines/descriptor.ts';
 import { managedFlm } from './engines/fastflowlm/server.ts';
+import { hostInfo } from './engines/host.ts';
+import { engineDescriptor, type EngineId } from './engines/registry.ts';
 import { strandsBinary } from './engines/strands/server.ts';
 import type { Paths } from './paths.ts';
 
-const ANSI = new RegExp(`${String.fromCharCode(27)}\\[[0-9;]*m`, 'g');
-
-/** Drop terminal colour codes from tool output. */
-export function stripAnsi(text: string): string {
-  return text.replace(ANSI, '');
-}
+export { probe, stripAnsi } from './toolchain-probe.ts';
 
 export const PATH_KEYS = [
   'tools.flm',
@@ -41,6 +38,7 @@ export interface PathEntry {
 interface PathDef {
   readonly label: string;
   readonly kind: 'executable' | 'directory';
+  readonly engine?: EngineId;
   /** Required basename for executables, so a path can only ever name that tool. */
   readonly tool?: string;
   /** Automatic candidates in order: [source, path]. */
@@ -71,6 +69,7 @@ const DEFS: Readonly<Record<PathKey, PathDef>> = {
   'tools.flm': {
     label: 'FastFlowLM launcher (flm)',
     kind: 'executable',
+    engine: 'fastflowlm',
     tool: 'flm',
     auto: (paths, env) => [
       ['managed', managedFlm(paths)],
@@ -95,6 +94,7 @@ const DEFS: Readonly<Record<PathKey, PathDef>> = {
   'dirs.flmModels': {
     label: 'FastFlowLM models',
     kind: 'directory',
+    engine: 'fastflowlm',
     auto: (_paths, env) => [
       ['default', env['FLM_MODEL_PATH'] ?? join(homedir(), '.config', 'flm', 'models')],
     ],
@@ -176,8 +176,12 @@ export function resolveAll(
   config: GatewayConfig,
   paths: Paths,
   env?: NodeJS.ProcessEnv,
+  host: HostInfo = hostInfo(),
 ): PathEntry[] {
-  return PATH_KEYS.map((key) => resolveEntry(key, config, paths, env));
+  return PATH_KEYS.filter((key) => {
+    const engine = DEFS[key].engine;
+    return engine === undefined || engineDescriptor(engine)?.supports(host).ok !== false;
+  }).map((key) => resolveEntry(key, config, paths, env));
 }
 
 /** Resolved locations the engines and downloads use. */
@@ -209,29 +213,4 @@ export function toolchain(config: GatewayConfig, paths: Paths, env?: NodeJS.Proc
         : { HF_HUB_CACHE: hfCache.effective }),
     },
   };
-}
-
-/** Run a tool briefly (fixed argv) and return its trimmed output, or throw. */
-export function probe(
-  binary: string,
-  args: readonly string[],
-  env: Readonly<Record<string, string>> = {},
-  timeoutMs = 15_000,
-): Promise<string> {
-  return new Promise((resolve, reject) => {
-    execFile(
-      binary,
-      [...args],
-      { timeout: timeoutMs, env: { ...process.env, ...env }, maxBuffer: 1024 * 1024 },
-      (error, stdout, stderr) => {
-        const text = stripAnsi(`${stdout}
-${stderr}`);
-        if (error !== null) {
-          reject(new Error(text.trim().split('\n').slice(-3).join(' ') || error.message));
-          return;
-        }
-        resolve(text.trim());
-      },
-    );
-  });
 }
