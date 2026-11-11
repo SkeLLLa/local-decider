@@ -227,11 +227,12 @@ export class OpenAICompatibleEngine implements Engine {
       this.#state = 'ready';
       return systemOneResponse(this.model, result.answers, result.usage);
     } catch (error) {
+      const message = this.#errorMessage(error);
       if (!signal.aborted) {
         this.#state = 'failed';
-        this.#detail = this.#errorMessage(error);
+        this.#detail = message;
       }
-      throw error;
+      throw new EngineError(message);
     }
   }
 

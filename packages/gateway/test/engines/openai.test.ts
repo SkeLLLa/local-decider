@@ -298,6 +298,44 @@ describe('OpenAI-compatible engine', () => {
     assert.deepEqual(secureHeaders, ['Bearer secure-secret']);
   });
 
+  it('redacts a token echoed by an HTTP error before rethrowing', async () => {
+    let calls = 0;
+    const token = 'openai-test-secret';
+    await withServer(
+      (request, response) => {
+        calls += 1;
+        if (calls === 1) {
+          void readJson(request).then(() =>
+            json(response, chatResponse([logprob('yes', 0.8), logprob('no', 0.2)])),
+          );
+          return;
+        }
+        response.writeHead(401, { 'content-type': 'text/plain' });
+        response.end(`unauthorized bearer ${token}`);
+      },
+      async (url) => {
+        const engine = new OpenAICompatibleEngine(config(url, { tokenEnv: 'OPENAI_TEST_TOKEN' }), {
+          OPENAI_TEST_TOKEN: token,
+        });
+        await engine.start();
+        await assert.rejects(
+          engine.decide(
+            {
+              state: 'safe',
+              questions: { ready: { type: 'noul', instructions: 'Is it ready?' } },
+            },
+            new AbortController().signal,
+          ),
+          (error: unknown) =>
+            error instanceof EngineError &&
+            !error.message.includes(token) &&
+            error.message.includes('[REDACTED]'),
+        );
+        assert.ok(!engine.health().detail?.includes(token));
+      },
+    );
+  });
+
   it('honours an aborted decision signal', async () => {
     let postCount = 0;
     let receivedResolve: (() => void) | undefined;

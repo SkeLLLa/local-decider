@@ -64,6 +64,7 @@ async function requestJson(
   try {
     res = await doFetch(url, {
       ...init,
+      redirect: 'error',
       headers: headers(options.token, init.body !== undefined),
       ...(options.signal === undefined ? {} : { signal: options.signal }),
     });

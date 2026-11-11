@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { createServer } from 'node:http';
 import { describe, it } from 'node:test';
 
 import { getJson, postJson, postSystemOne } from '../src/engines/http.ts';
@@ -95,5 +96,25 @@ describe('JSON HTTP helpers', () => {
       postJson('http://example.test/model', {}, { fetch: fakeFetch('model not loaded', 1, 503) }),
       /engine HTTP 503: model not loaded/,
     );
+  });
+
+  it('rejects redirects from a loopback endpoint', async () => {
+    const server = createServer((_request, response) => {
+      response.writeHead(302, { location: '/redirected' }).end();
+    });
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+    const address = server.address();
+    assert.ok(address !== null && typeof address === 'object');
+    try {
+      await assert.rejects(
+        postJson(`http://127.0.0.1:${String(address.port)}/model`, {}, { token: 'test-token' }),
+        (error: unknown) => error instanceof EngineError,
+      );
+    } finally {
+      server.closeAllConnections();
+      await new Promise<void>((resolve, reject) =>
+        server.close((error) => (error === undefined ? resolve() : reject(error))),
+      );
+    }
   });
 });
