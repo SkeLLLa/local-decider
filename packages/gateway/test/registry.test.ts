@@ -52,7 +52,8 @@ describe('engine registry', () => {
 
   it('keeps the current device list available on Linux', () => {
     for (const engine of ENGINES.filter((candidate) => candidate.selectable)) {
-      assert.deepEqual(engine.devices?.(linuxHost), DEVICES, engine.id);
+      const devices = engine.id === 'fastflowlm' ? [] : DEVICES;
+      assert.deepEqual(engine.devices?.(linuxHost), devices, engine.id);
       assert.deepEqual(engine.supports(linuxHost), { ok: true }, engine.id);
     }
   });

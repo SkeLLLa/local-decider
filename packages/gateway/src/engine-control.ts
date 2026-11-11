@@ -603,24 +603,20 @@ export class EngineControl {
     const details: Record<string, unknown>[] = [
       {
         id: 'strands-decider',
-        label: 'Strands Decider (PyTorch)',
         installed: strandsInstalled,
         available: strandsInstalled,
         detail: strandsInstalled
           ? this.#tools.strandsDecider
           : 'not installed; run `local-decider engine install`',
-        devices: [...DEVICES],
         validation: null,
       },
       {
         id: 'fastflowlm',
-        label: 'FastFlowLM (AMD NPU)',
         installed: flmInstalled,
         available: flmInstalled && validation?.ok !== false,
         detail: flmInstalled
           ? (cachedFlmVersion(this.#tools.flm) ?? this.#tools.flm)
           : 'not installed; run `local-decider engine install --engine fastflowlm`',
-        devices: [],
         validation,
       },
     ];
@@ -628,7 +624,13 @@ export class EngineControl {
       const support = engine.supports(this.#host);
       const existing = details.find((entry) => entry['id'] === engine.id);
       return {
-        ...(existing ?? { id: engine.id, label: engine.label }),
+        id: engine.id,
+        label: engine.label,
+        installed: existing?.['installed'] ?? false,
+        available: existing?.['available'] ?? false,
+        detail: existing?.['detail'] ?? null,
+        devices: [...(engine.devices?.(this.#host) ?? [])],
+        validation: existing?.['validation'] ?? null,
         supported: support.ok,
         ...(support.ok ? {} : { unsupportedReason: support.reason }),
       };

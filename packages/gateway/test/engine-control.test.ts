@@ -490,6 +490,7 @@ describe('EngineControl state', () => {
     const darwinEngines = darwinStatus['engines'] as {
       id: string;
       label: string;
+      devices: string[];
       supported: boolean;
       unsupportedReason?: string;
     }[];
@@ -501,12 +502,29 @@ describe('EngineControl state', () => {
     assert.ok(darwinFlm);
     assert.equal(darwinFlm.supported, false);
     assert.equal(darwinFlm.unsupportedReason, 'FastFlowLM is supported only on Linux');
+    assert.equal(darwinFlm.label, 'FastFlowLM (AMD NPU)');
+    assert.deepEqual(darwinFlm.devices, []);
+    const darwinStrands = darwinEngines.find(({ id }) => id === 'strands-decider');
+    assert.ok(darwinStrands);
+    assert.equal(darwinStrands.label, 'Strands Decider (PyTorch)');
+    assert.deepEqual(darwinStrands.devices, ['auto', 'cpu', 'mlx', 'mps', 'cuda']);
 
     const linuxStatus = await setup({ host: LINUX_HOST }).control.status();
-    const linuxEngines = linuxStatus['engines'] as { id: string; supported: boolean }[];
+    const linuxEngines = linuxStatus['engines'] as {
+      id: string;
+      label: string;
+      devices: string[];
+      supported: boolean;
+    }[];
     const linuxFlm = linuxEngines.find(({ id }) => id === 'fastflowlm');
     assert.ok(linuxFlm);
     assert.equal(linuxFlm.supported, true);
+    assert.equal(linuxFlm.label, 'FastFlowLM (AMD NPU)');
+    assert.deepEqual(linuxFlm.devices, []);
+    const linuxStrands = linuxEngines.find(({ id }) => id === 'strands-decider');
+    assert.ok(linuxStrands);
+    assert.equal(linuxStrands.label, 'Strands Decider (PyTorch)');
+    assert.deepEqual(linuxStrands.devices, ['auto', 'cpu', 'mlx', 'mps', 'cuda']);
   });
 
   it('dispatches validation using the selected engine descriptor', async () => {

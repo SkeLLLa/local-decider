@@ -1,6 +1,6 @@
 import { z } from 'zod';
 
-import { DEVICES, defineEngine } from '../descriptor.ts';
+import { defineEngine } from '../descriptor.ts';
 import { MODELS } from './models.ts';
 import { FastFlowLMEngine } from './server.ts';
 import { flmModelsPresent, validateFlm } from './status.ts';
@@ -27,7 +27,7 @@ export type FlmEngineConfig = z.infer<typeof flmSchema>;
 
 export const fastflowlmEngine = defineEngine({
   id: 'fastflowlm',
-  label: 'FastFlowLM',
+  label: 'FastFlowLM (AMD NPU)',
   description: 'FastFlowLM decision engine for AMD XDNA NPU systems',
   configSchema: flmSchema,
   selectable: true,
@@ -36,7 +36,7 @@ export const fastflowlmEngine = defineEngine({
       ? { ok: true }
       : { ok: false, reason: 'FastFlowLM is supported only on Linux' },
   tag: () => 'NPU',
-  devices: () => DEVICES,
+  devices: () => [],
   calibrated: true,
   models: MODELS,
   modelsPresent: flmModelsPresent,

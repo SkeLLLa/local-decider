@@ -70,7 +70,7 @@ function strandsDownloadSteps(
 
 export const strandsEngine = defineEngine({
   id: 'strands-decider',
-  label: 'Strands Decider',
+  label: 'Strands Decider (PyTorch)',
   description: 'strands-decider decision engine',
   configSchema: strandsSchema,
   selectable: true,
