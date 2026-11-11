@@ -83,6 +83,7 @@ interface Setup {
 
 interface SetupOptions {
   readonly engine?: Record<string, unknown>;
+  readonly engines?: Record<string, unknown>;
   readonly totalMemory?: number;
   readonly installed?: boolean;
   readonly paths?: Paths;
@@ -112,6 +113,14 @@ function setup(options: SetupOptions = {}): Setup {
       : new MemoryConfigStore(
           parseConfig({ engine: { type: 'strands-decider', ...options.engine } }),
         );
+  if (options.engines !== undefined) {
+    store.update(
+      Object.entries(options.engines).map(([id, value]) => ({
+        path: ['engines', id],
+        value,
+      })),
+    );
+  }
   const config = store.current;
   const created: ModelEngine[] = [];
   const control = new EngineControl({
@@ -168,6 +177,33 @@ describe('EngineControl switching', () => {
     assert.deepEqual(result, { engine: 'fastflowlm', model: 'd3:nano', device: null });
     assert.equal(created.at(-1)?.config.type, 'fastflowlm');
     assert.equal(decider.engine.id, 'fastflowlm');
+  });
+
+  it('uses and reapplies per-engine options when switching to FastFlowLM', async () => {
+    const paths = tempPaths();
+    const { control, created } = setup({
+      paths,
+      persist: true,
+      host: LINUX_HOST,
+      engines: { fastflowlm: { pmode: 'balanced' } },
+    });
+    assert.equal(created[0]?.config.type, 'strands-decider');
+    await control.select({ engine: 'fastflowlm', model: 'd3:nano' });
+    const balanced = created.at(-1)?.config;
+    assert.equal(balanced?.type, 'fastflowlm');
+    if (balanced?.type === 'fastflowlm') {
+      assert.equal(balanced.pmode, 'balanced');
+    }
+
+    ConfigFile.open(paths).update([{ path: ['engines', 'fastflowlm', 'pmode'], value: 'turbo' }]);
+    await control.reloadConfig();
+    assert.equal(created.length, 3);
+    assert.equal(created[1]?.stopped, 1);
+    const turbo = created.at(-1)?.config;
+    assert.equal(turbo?.type, 'fastflowlm');
+    if (turbo?.type === 'fastflowlm') {
+      assert.equal(turbo.pmode, 'turbo');
+    }
   });
 
   it('refuses a model of another engine, unknown models and undownloaded ones', async () => {

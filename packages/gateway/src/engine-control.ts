@@ -484,14 +484,7 @@ export class EngineControl {
     if (toolsChanged) {
       this.#retool();
     }
-    const wanted = this.switchable ? this.#initialSelection() : null;
-    if (wanted !== null && !this.#same(wanted)) {
-      await this.select({
-        engine: wanted.engine,
-        model: wanted.model,
-        ...(wanted.device === null ? {} : { device: wanted.device }),
-      });
-    }
+    await this.#applySelectionConfig(previous, config);
     return startupKey(previous) === startupKey(config)
       ? notes
       : [...notes, 'host, port, engine or decisionTimeoutMs changed: restart the gateway to apply'];
@@ -668,11 +661,36 @@ export class EngineControl {
 
   #engineConfig(sel: EngineSelection): EngineConfig {
     const base =
-      this.#config.engine.type === sel.engine ? this.#config.engine : engineDefaults(sel.engine);
+      this.#config.engine.type === sel.engine
+        ? this.#config.engine
+        : engineDefaults(sel.engine, sel.model, this.#config.engines?.[sel.engine]);
     if (base.type === 'strands-decider') {
       return { ...base, model: sel.model, device: sel.device ?? base.device };
     }
     return { ...base, model: sel.model };
+  }
+
+  async #applySelectionConfig(previous: GatewayConfig, config: GatewayConfig): Promise<void> {
+    const wanted = this.switchable ? this.#initialSelection() : null;
+    if (wanted === null) {
+      return;
+    }
+    if (!this.#same(wanted)) {
+      await this.select({
+        engine: wanted.engine,
+        model: wanted.model,
+        ...(wanted.device === null ? {} : { device: wanted.device }),
+      });
+      return;
+    }
+    const optionsChanged =
+      JSON.stringify(previous.engines?.[wanted.engine]) !==
+      JSON.stringify(config.engines?.[wanted.engine]);
+    if (optionsChanged) {
+      const run = this.#pending.then(() => this.#apply(wanted, true));
+      this.#pending = run.catch(() => undefined);
+      await run;
+    }
   }
 
   #build(sel: EngineSelection | null): ManagedEngine {
