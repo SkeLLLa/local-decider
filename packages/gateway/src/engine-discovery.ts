@@ -9,6 +9,8 @@ export type OpenAILikeEngine = (typeof OPENAI_LIKE_ENGINES)[number];
 
 const DISCOVERY_TIMEOUT_MS = 2000;
 const DISCOVERY_MAX_BYTES = 256 * 1024;
+/** How long a refresh, successful or not, counts as fresh for background refreshes. */
+const DISCOVERY_TTL_MS = 30_000;
 
 export function isOpenAILike(id: string): id is OpenAILikeEngine {
   return (OPENAI_LIKE_ENGINES as readonly string[]).includes(id);
@@ -113,6 +115,7 @@ function endpointKey(id: string, endpoint: DiscoveryEndpoint): string {
 
 interface Discovered {
   readonly key: string;
+  readonly at: number;
   readonly models: readonly string[];
   /** `MLX`, `GGUF · runtime`…, by model id; only from LM Studio's native API. */
   readonly details: ReadonlyMap<string, string>;
@@ -129,10 +132,46 @@ export class ModelDiscovery {
   readonly #env: NodeJS.ProcessEnv;
   readonly #fetch: typeof fetch | undefined;
   readonly #found = new Map<string, Discovered>();
+  readonly #inflight = new Map<string, { readonly key: string; readonly done: Promise<void> }>();
+  readonly #now: () => number;
 
-  constructor(env: NodeJS.ProcessEnv, doFetch?: typeof fetch) {
+  constructor(env: NodeJS.ProcessEnv, doFetch?: typeof fetch, now: () => number = Date.now) {
     this.#env = env;
     this.#fetch = doFetch;
+    this.#now = now;
+  }
+
+  /**
+   * Refresh in the background unless this exact endpoint config was read in the last 30 s or is
+   * being read now. Never waits and never throws: for status and catalog reads, which only use
+   * what is cached.
+   */
+  kick(id: OpenAILikeEngine, endpoint: DiscoveryEndpoint | undefined): void {
+    if (endpoint === undefined) {
+      this.#found.delete(id);
+      return;
+    }
+    const key = endpointKey(id, endpoint);
+    const found = this.#found.get(id);
+    if (found?.key === key && this.#now() - found.at < DISCOVERY_TTL_MS) {
+      return;
+    }
+    if (this.#inflight.get(id)?.key === key) {
+      return;
+    }
+    const done = this.refresh(id, endpoint)
+      .catch(() => undefined)
+      .finally(() => {
+        if (this.#inflight.get(id)?.done === done) {
+          this.#inflight.delete(id);
+        }
+      });
+    this.#inflight.set(id, { key, done });
+  }
+
+  /** Resolves once the background refreshes started by {@link kick} have finished. */
+  async settled(): Promise<void> {
+    await Promise.all([...this.#inflight.values()].map((entry) => entry.done));
   }
 
   /** What the last refresh found for this exact endpoint config; empty when stale or unknown. */
@@ -161,7 +200,7 @@ export class ModelDiscovery {
     }
     const native = id === 'lmstudio' ? await this.#listNative(endpoint) : undefined;
     const found = native ?? { models: await this.#list(endpoint), details: NONE };
-    this.#found.set(id, { key: endpointKey(id, endpoint), ...found });
+    this.#found.set(id, { key: endpointKey(id, endpoint), at: this.#now(), ...found });
   }
 
   #get(url: string, endpoint: DiscoveryEndpoint): Promise<unknown> {

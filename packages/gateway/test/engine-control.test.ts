@@ -270,6 +270,8 @@ describe('EngineControl switching', () => {
             'openai-compatible': { url, model: 'configured-model' },
           },
         });
+        await control.status();
+        await control.refreshDiscovery();
         const status = await control.status();
         const models = (status['models'] as Record<string, unknown>[]).filter(
           (model) => model['engine'] === 'openai-compatible',
@@ -302,6 +304,8 @@ describe('EngineControl switching', () => {
           const { control } = setup({
             engines: { 'openai-compatible': { url, model: 'configured-only' } },
           });
+          await control.status();
+          await control.refreshDiscovery();
           const statusBody = await control.status();
           const models = (statusBody['models'] as Record<string, unknown>[]).filter(
             (model) => model['engine'] === 'openai-compatible',
@@ -1005,6 +1009,8 @@ describe('OpenAI-like persisted selection', () => {
         ),
     });
     assert.equal(control.current()?.model, 'discovered-only');
+    await control.status();
+    await control.refreshDiscovery();
     const status = (await control.status()) as { models: { id: string; label: string }[] };
     assert.equal(
       status.models.find((m) => m.id === 'discovered-only')?.label,

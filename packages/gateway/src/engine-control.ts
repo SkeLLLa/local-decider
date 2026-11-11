@@ -25,6 +25,7 @@ import {
   type DiscoveryEndpoint,
   type OpenAILikeEngine,
 } from './engine-discovery.ts';
+import { ServerProbe, type DiscoverRequest } from './engine-probe.ts';
 import type {
   EngineContext,
   EngineDescriptor,
@@ -260,6 +261,7 @@ export class EngineControl {
   #selected: EngineSelection | null;
   #engine: ManagedEngine;
   readonly #discovery: ModelDiscovery;
+  readonly #probe: ServerProbe;
   #decider: Decider | undefined;
   #pending: Promise<void> = Promise.resolve();
 
@@ -271,6 +273,7 @@ export class EngineControl {
     this.#paths = paths;
     this.#env = options.env ?? process.env;
     this.#discovery = new ModelDiscovery(this.#env, options.fetch);
+    this.#probe = new ServerProbe({ fetch: options.fetch });
     this.#host = options.host ?? hostInfo();
     this.#create = options.create ?? ((c, p, t) => createEngine(c, p, t));
     this.#memory = options.totalMemory ?? totalmem();
@@ -649,7 +652,7 @@ export class EngineControl {
 
   /** The `GET /v1/engines` view. */
   async status(): Promise<Record<string, unknown>> {
-    await this.#discoverAll();
+    this.#discoverAll();
     const models = this.#catalogModels();
     const installed = await this.#installed(models);
     const health = this.#engine.health();
@@ -829,8 +832,25 @@ export class EngineControl {
     return models;
   }
 
-  async #discoverAll(): Promise<void> {
-    await Promise.all(OPENAI_LIKE_ENGINES.map(async (id) => this.#discover(id)));
+  /** Starts due refreshes in the background; status and catalog reads use only what is cached. */
+  #discoverAll(): void {
+    for (const id of OPENAI_LIKE_ENGINES) {
+      this.#discovery.kick(id, this.#endpoint(id));
+    }
+  }
+
+  /** Resolves when background model discovery has finished; for tests and callers that need it. */
+  refreshDiscovery(): Promise<void> {
+    return this.#discovery.settled();
+  }
+
+  /** `POST /v1/engines/discover`: nearby servers, or the models of one URL. Persists nothing. */
+  // fallow-ignore-next-line unused-class-member -- called through the settings-routes table
+  async discoverServers(request: DiscoverRequest): Promise<Record<string, unknown>> {
+    if (!this.pathsEditable) {
+      throw new EngineSwitchError(403, 'server discovery is only available on a loopback gateway');
+    }
+    return this.#probe.discover(request);
   }
 
   async #discover(id: OpenAILikeEngine): Promise<void> {

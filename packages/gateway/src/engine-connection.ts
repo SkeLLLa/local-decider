@@ -40,7 +40,7 @@ function hasControlChar(text: string): boolean {
 }
 
 /** HTTP(S) base URL without credentials, query or fragment; trailing slashes dropped. */
-function normalizeUrl(raw: string): string | undefined {
+export function normalizeUrl(raw: string): string | undefined {
   if (raw.length > MAX_URL_CHARS || /[\s?#]/u.test(raw) || hasControlChar(raw)) {
     return undefined;
   }
