@@ -24,6 +24,7 @@ import {
   parseSelection,
   parseThresholds,
 } from '../src/engine-control.ts';
+import type { HostInfo } from '../src/engines/descriptor.ts';
 import type { Engine, EngineHealth } from '../src/engines/types.ts';
 import type { Paths } from '../src/paths.ts';
 import { defaultPolicyDir, loadPolicies, policyDirs } from '../src/policies.ts';
@@ -86,7 +87,20 @@ interface SetupOptions {
   readonly installed?: boolean;
   readonly paths?: Paths;
   readonly persist?: boolean;
+  readonly host?: HostInfo;
 }
+
+const LINUX_HOST: HostInfo = {
+  platform: 'linux',
+  arch: 'x64',
+  totalMemoryBytes: 64e9,
+};
+
+const DARWIN_HOST: HostInfo = {
+  platform: 'darwin',
+  arch: 'arm64',
+  totalMemoryBytes: 64e9,
+};
 
 function setup(options: SetupOptions = {}): Setup {
   const paths = options.paths ?? tempPaths();
@@ -104,6 +118,7 @@ function setup(options: SetupOptions = {}): Setup {
     store,
     paths,
     env: { PATH: '' },
+    ...(options.host === undefined ? {} : { host: options.host }),
     totalMemory: options.totalMemory ?? 1e12,
     installed: async (ids) => new Map(ids.map((id) => [id, options.installed ?? true])),
     create: (c) => {
@@ -468,6 +483,30 @@ describe('EngineControl state', () => {
     assert.ok(models.some((m) => m.id === 'd3:mini' && m.recommended));
     assert.ok(Array.isArray(status['paths']));
     assert.equal((status['active'] as { lifecycle: string }).lifecycle, 'lazy');
+  });
+
+  it('lists each engine and reports host support from its descriptor', async () => {
+    const darwinStatus = await setup({ host: DARWIN_HOST }).control.status();
+    const darwinEngines = darwinStatus['engines'] as {
+      id: string;
+      label: string;
+      supported: boolean;
+      unsupportedReason?: string;
+    }[];
+    assert.deepEqual(
+      darwinEngines.map(({ id }) => id),
+      ['strands-decider', 'fastflowlm'],
+    );
+    const darwinFlm = darwinEngines.find(({ id }) => id === 'fastflowlm');
+    assert.ok(darwinFlm);
+    assert.equal(darwinFlm.supported, false);
+    assert.equal(darwinFlm.unsupportedReason, 'FastFlowLM is supported only on Linux');
+
+    const linuxStatus = await setup({ host: LINUX_HOST }).control.status();
+    const linuxEngines = linuxStatus['engines'] as { id: string; supported: boolean }[];
+    const linuxFlm = linuxEngines.find(({ id }) => id === 'fastflowlm');
+    assert.ok(linuxFlm);
+    assert.equal(linuxFlm.supported, true);
   });
 
   it('dispatches validation using the selected engine descriptor', async () => {

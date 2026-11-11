@@ -16,12 +16,12 @@ import {
 } from './config.ts';
 import type { Decider } from './decider.ts';
 import { DownloadError, Downloads, type Download } from './downloads.ts';
-import type { EngineContext, ModelDescriptor } from './engines/descriptor.ts';
+import type { EngineContext, HostInfo, ModelDescriptor } from './engines/descriptor.ts';
 import { cachedFlmVersion } from './engines/fastflowlm/status.ts';
 import { hostInfo } from './engines/host.ts';
 import { createEngine } from './engines/index.ts';
 import { ManagedEngine, type LifecycleOptions } from './engines/lazy.ts';
-import { allModels, engineDescriptor, type EngineId } from './engines/registry.ts';
+import { allModels, ENGINES, engineDescriptor, type EngineId } from './engines/registry.ts';
 import type { Engine } from './engines/types.ts';
 import { catalogModel, MEMORY_BUDGET, modelFits, modelMemoryGb } from './models.ts';
 import type { Paths } from './paths.ts';
@@ -179,6 +179,7 @@ export interface EngineControlOptions {
   readonly store: ConfigStore;
   readonly paths: Paths;
   readonly env?: NodeJS.ProcessEnv;
+  readonly host?: HostInfo;
   /** False behind a token (remote mode): tool paths can't be changed over the network. */
   readonly pathsEditable?: boolean;
   /** Injected in tests. */
@@ -216,7 +217,7 @@ export class EngineControl {
   readonly #store: ConfigStore;
   readonly #paths: Paths;
   readonly #env: NodeJS.ProcessEnv;
-  readonly #host = hostInfo();
+  readonly #host: HostInfo;
   readonly #create: NonNullable<EngineControlOptions['create']>;
   readonly #memory: number;
   readonly #installedOverride: EngineControlOptions['installed'];
@@ -237,6 +238,7 @@ export class EngineControl {
     this.#applied = config;
     this.#paths = paths;
     this.#env = options.env ?? process.env;
+    this.#host = options.host ?? hostInfo();
     this.#create = options.create ?? ((c, p, t) => createEngine(c, p, t));
     this.#memory = options.totalMemory ?? totalmem();
     this.#installedOverride = options.installed;
@@ -598,7 +600,7 @@ export class EngineControl {
     const validation = this.#status.validation ?? null;
     const flmInstalled = this.#tools.flm !== undefined;
     const strandsInstalled = this.#tools.strandsDecider !== undefined;
-    return [
+    const details: Record<string, unknown>[] = [
       {
         id: 'strands-decider',
         label: 'Strands Decider (PyTorch)',
@@ -622,6 +624,15 @@ export class EngineControl {
         validation,
       },
     ];
+    return ENGINES.filter((engine) => engine.selectable).map((engine) => {
+      const support = engine.supports(this.#host);
+      const existing = details.find((entry) => entry['id'] === engine.id);
+      return {
+        ...(existing ?? { id: engine.id, label: engine.label }),
+        supported: support.ok,
+        ...(support.ok ? {} : { unsupportedReason: support.reason }),
+      };
+    });
   }
 
   #initialSelection(): EngineSelection {

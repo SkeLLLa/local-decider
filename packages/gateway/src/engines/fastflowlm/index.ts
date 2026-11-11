@@ -31,7 +31,10 @@ export const fastflowlmEngine = defineEngine({
   description: 'FastFlowLM decision engine for AMD XDNA NPU systems',
   configSchema: flmSchema,
   selectable: true,
-  supports: () => ({ ok: true }),
+  supports: (host) =>
+    host.platform === 'linux'
+      ? { ok: true }
+      : { ok: false, reason: 'FastFlowLM is supported only on Linux' },
   tag: () => 'NPU',
   devices: () => DEVICES,
   calibrated: true,
