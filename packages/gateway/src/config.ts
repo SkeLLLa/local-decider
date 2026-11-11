@@ -7,7 +7,7 @@ import { z } from 'zod';
 
 import { DEVICES } from './engines/descriptor.ts';
 import { DEFAULT_FLM_MODEL } from './engines/fastflowlm/index.ts';
-import { engineSchema, SELECTABLE_IDS } from './engines/registry.ts';
+import { engineOptionsSchema, engineSchema, SELECTABLE_IDS } from './engines/registry.ts';
 import { DEFAULT_MODEL } from './engines/strands/index.ts';
 import type { Paths } from './paths.ts';
 import { pricingSchema } from './savings.ts';
@@ -153,6 +153,7 @@ export const configSchema = z
       .describe(
         'The decision-model engine and its options. `selection` picks engine and model at runtime.',
       ),
+    engines: engineOptionsSchema.optional().describe('Per-engine options for switching engines.'),
     selection: z
       .strictObject({
         engine: z.enum(SELECTABLE_IDS),

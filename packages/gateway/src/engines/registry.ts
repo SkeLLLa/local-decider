@@ -21,6 +21,8 @@ export type AnyEngine = (typeof ENGINES)[number];
 export type EngineId = AnyEngine['id'];
 export type SelectableEngineId = Extract<AnyEngine, { readonly selectable: true }>['id'];
 export type EngineConfig = z.output<AnyEngine['configSchema']>;
+type OptionsFor<E> = E extends AnyEngine ? Omit<z.output<E['configSchema']>, 'type'> : never;
+export type EngineOptions = { [E in AnyEngine as E['id']]?: OptionsFor<E> };
 
 type Schemas<T extends readonly unknown[]> = {
   [K in keyof T]: T[K] extends EngineDescriptor<infer _C, infer S> ? S : never;
@@ -30,6 +32,16 @@ export const engineSchema = z.discriminatedUnion(
   'type',
   ENGINES.map((engine) => engine.configSchema) as unknown as Schemas<typeof ENGINES>,
 );
+
+function engineOptionsField(engine: AnyEngine): z.ZodType {
+  const schema = engine.configSchema as unknown as z.ZodObject<z.ZodRawShape>;
+  return schema.omit({ type: true }).optional();
+}
+
+const engineOptionsShape = Object.fromEntries(
+  ENGINES.map((engine) => [engine.id, engineOptionsField(engine)]),
+);
+export const engineOptionsSchema = z.strictObject(engineOptionsShape) as z.ZodType<EngineOptions>;
 
 export function allModels(engines: readonly AnyEngine[] = ENGINES): ModelDescriptor<EngineId>[] {
   const models: ModelDescriptor<EngineId>[] = [];

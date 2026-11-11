@@ -17,6 +17,33 @@ describe('config', () => {
     assert.equal(config.engine.type, 'strands-decider');
     assert.equal(config.engine.model, DEFAULT_MODEL);
     assert.deepEqual(config.logs, { retainDays: 365, store: 'jsonl' });
+    assert.equal(config.engines, undefined);
+  });
+
+  it('parses per-engine options with descriptor defaults', () => {
+    const config = parseConfig({
+      engines: { 'openai-compatible': { url: 'http://127.0.0.1:1234/v1', model: 'local-model' } },
+    });
+    assert.deepEqual(config.engines?.['openai-compatible'], {
+      url: 'http://127.0.0.1:1234/v1',
+      model: 'local-model',
+      api: 'chat',
+      maxTokens: 1,
+      topLogprobs: 10,
+      maxOptions: 10,
+      minCoverage: 0.5,
+      temperature: 1,
+      maxStateChars: 24_000,
+      extraBody: {},
+      requestTimeoutMs: 20_000,
+    });
+  });
+
+  it('rejects unknown per-engine option keys', () => {
+    assert.throws(
+      () => parseConfig({ engines: { 'not-an-engine': { model: 'x' } } }),
+      /invalid config/,
+    );
   });
 
   it('validates the decision log retention window', () => {

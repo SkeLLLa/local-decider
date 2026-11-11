@@ -223,6 +223,185 @@
         }
       ]
     },
+    "engines": {
+      "description": "Per-engine options for switching engines.",
+      "type": "object",
+      "properties": {
+        "strands-decider": {
+          "type": "object",
+          "properties": {
+            "model": {
+              "default": "StrandsAgents/strands-decider-2B-qwen3.5-v1-2610",
+              "type": "string",
+              "minLength": 1
+            },
+            "device": {
+              "default": "auto",
+              "type": "string",
+              "enum": ["auto", "cpu", "mlx", "mps", "cuda"]
+            },
+            "url": {
+              "type": "string",
+              "format": "uri"
+            },
+            "maxBatch": {
+              "default": 8,
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 64
+            },
+            "extraArgs": {
+              "default": [],
+              "type": "array",
+              "items": {
+                "type": "string",
+                "pattern": "^--[a-z][a-z0-9-]*(?:=[\\w./:-]+)?$|^[\\w./:-]+$"
+              }
+            },
+            "startTimeoutSeconds": {
+              "default": 900,
+              "type": "integer",
+              "minimum": 10,
+              "maximum": 3600
+            }
+          },
+          "additionalProperties": false
+        },
+        "systemone-remote": {
+          "type": "object",
+          "properties": {
+            "url": {
+              "type": "string",
+              "format": "uri"
+            },
+            "model": {
+              "default": "remote",
+              "type": "string"
+            },
+            "tokenEnv": {
+              "type": "string",
+              "pattern": "^[A-Z_][A-Z0-9_]*$"
+            }
+          },
+          "required": ["url"],
+          "additionalProperties": false
+        },
+        "fastflowlm": {
+          "type": "object",
+          "properties": {
+            "model": {
+              "default": "d3:nano",
+              "type": "string",
+              "pattern": "^[a-z0-9][a-z0-9.-]*:[a-z0-9][a-z0-9.-]*$"
+            },
+            "binary": {
+              "type": "string",
+              "minLength": 1
+            },
+            "url": {
+              "type": "string",
+              "format": "uri"
+            },
+            "pmode": {
+              "default": "performance",
+              "type": "string",
+              "enum": ["powersaver", "balanced", "performance", "turbo"]
+            },
+            "startTimeoutSeconds": {
+              "default": 300,
+              "type": "integer",
+              "minimum": 10,
+              "maximum": 3600
+            }
+          },
+          "additionalProperties": false
+        },
+        "openai-compatible": {
+          "type": "object",
+          "properties": {
+            "url": {
+              "default": "http://127.0.0.1:1234/v1",
+              "type": "string",
+              "format": "uri"
+            },
+            "model": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 300,
+              "pattern": "^[^-\\s][^\\s]*$"
+            },
+            "api": {
+              "default": "chat",
+              "type": "string",
+              "enum": ["chat", "completions"]
+            },
+            "maxTokens": {
+              "default": 1,
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 32
+            },
+            "promptSuffix": {
+              "type": "string",
+              "maxLength": 64
+            },
+            "tokenEnv": {
+              "type": "string",
+              "pattern": "^[A-Z_][A-Z0-9_]*$"
+            },
+            "topLogprobs": {
+              "default": 10,
+              "type": "integer",
+              "minimum": 2,
+              "maximum": 20
+            },
+            "maxOptions": {
+              "default": 10,
+              "type": "integer",
+              "minimum": 2,
+              "maximum": 20
+            },
+            "minCoverage": {
+              "default": 0.5,
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1
+            },
+            "temperature": {
+              "default": 1,
+              "type": "number",
+              "minimum": 0.1,
+              "maximum": 10
+            },
+            "maxStateChars": {
+              "default": 24000,
+              "type": "integer",
+              "minimum": 1000,
+              "maximum": 400000
+            },
+            "extraBody": {
+              "default": {},
+              "type": "object",
+              "propertyNames": {
+                "type": "string"
+              },
+              "additionalProperties": {
+                "$ref": "#/$defs/__schema0"
+              }
+            },
+            "requestTimeoutMs": {
+              "default": 20000,
+              "type": "integer",
+              "minimum": 1000,
+              "maximum": 120000
+            }
+          },
+          "required": ["model"],
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
     "selection": {
       "description": "Engine and model in use, set by the settings pages; beats `engine.type` and `engine.model`.",
       "type": "object",
