@@ -4,6 +4,7 @@ import { describe, it } from 'node:test';
 import type { RemoteEngineConfig } from '../src/config.ts';
 import { DEVICES, type HostInfo } from '../src/engines/descriptor.ts';
 import {
+  allModels,
   engineDefaults,
   engineDescriptor,
   ENGINES,
@@ -54,5 +55,20 @@ describe('engine registry', () => {
       assert.deepEqual(engine.devices?.(linuxHost), DEVICES, engine.id);
       assert.deepEqual(engine.supports(linuxHost), { ok: true }, engine.id);
     }
+  });
+
+  it('keeps model ids unique per engine and matches each model to its descriptor', () => {
+    for (const engine of ENGINES) {
+      const models = engine.models;
+      const ids = models.map((model) => model.id);
+      assert.equal(new Set(ids).size, ids.length, `${engine.id} model ids are unique`);
+      for (const model of models) {
+        assert.equal(model.engine, engine.id, `${model.id} belongs to ${engine.id}`);
+      }
+    }
+    assert.equal(
+      allModels().length,
+      ENGINES.reduce((count, engine) => count + engine.models.length, 0),
+    );
   });
 });

@@ -1,6 +1,6 @@
 import { z } from 'zod';
 
-import type { EngineContext, EngineDescriptor } from './descriptor.ts';
+import type { EngineContext, EngineDescriptor, ModelDescriptor } from './descriptor.ts';
 import { fastflowlmEngine } from './fastflowlm/index.ts';
 import { remoteEngine } from './remote.ts';
 import { strandsEngine } from './strands/index.ts';
@@ -24,6 +24,14 @@ export const engineSchema = z.discriminatedUnion(
   'type',
   ENGINES.map((engine) => engine.configSchema) as unknown as Schemas<typeof ENGINES>,
 );
+
+export function allModels(engines: readonly AnyEngine[] = ENGINES): ModelDescriptor<EngineId>[] {
+  const models: ModelDescriptor<EngineId>[] = [];
+  for (const engine of engines) {
+    models.push(...engine.models);
+  }
+  return models;
+}
 
 export const SELECTABLE_IDS = ENGINES.filter((engine) => engine.selectable).map(
   (engine) => engine.id,

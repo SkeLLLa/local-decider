@@ -29,6 +29,7 @@ export const remoteEngine = defineEngine({
   tag: () => 'Remote',
   devices: () => [],
   calibrated: true,
+  models: [],
   create: (config, ctx) => new SystemOneRemoteEngine(config, ctx.env),
 });
 

@@ -1,7 +1,8 @@
 import { existsSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 
-import type { CatalogEngine, KnownModel } from './models.ts';
+import type { ModelDescriptor } from './engines/descriptor.ts';
+import type { EngineId } from './engines/registry.ts';
 import { probe, type Toolchain } from './toolchain.ts';
 
 export interface Validation {
@@ -88,7 +89,7 @@ export class CatalogStatus {
     return this.#flmVersion;
   }
 
-  async installed(models: readonly KnownModel[]): Promise<Map<string, boolean>> {
+  async installed(models: readonly ModelDescriptor[]): Promise<Map<string, boolean>> {
     const flm = models.some((m) => m.engine === 'fastflowlm')
       ? await this.#flmTags()
       : new Set<string>();
@@ -97,7 +98,7 @@ export class CatalogStatus {
         m.id,
         m.engine === 'fastflowlm'
           ? flm.has(m.id)
-          : (m.hf ?? []).every((repo) => hfCached(this.#hfCache, repo)),
+          : (m.artifacts ?? []).every((artifact) => hfCached(this.#hfCache, artifact)),
       ]),
     );
   }
@@ -129,7 +130,7 @@ export class CatalogStatus {
   }
 
   /** Run `flm validate` (one at a time); the result is cached for GET /v1/engines. */
-  validate(engine: CatalogEngine): Promise<Validation> {
+  validate(engine: EngineId): Promise<Validation> {
     const flm = this.#tools.flm;
     if (engine !== 'fastflowlm' || flm === undefined) {
       return Promise.resolve(this.#store(false, ['FastFlowLM is not installed']));

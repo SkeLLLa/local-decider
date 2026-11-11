@@ -23,6 +23,25 @@ export interface EngineContext {
 
 export type Support = { readonly ok: true } | { readonly ok: false; readonly reason: string };
 
+export interface ModelDescriptor<E extends string = string> {
+  readonly id: string;
+  readonly engine: E;
+  readonly label: string;
+  readonly downloadGb: number | null;
+  readonly memoryGb: number | null;
+  readonly gpuMemoryGb?: number;
+  readonly latencyHint: string | null;
+  readonly recommended?: boolean;
+  readonly quality?: {
+    readonly jevBench?: number;
+    readonly brier?: number;
+    readonly decisionIndex?: number;
+  };
+  readonly source?: string;
+  /** Engine-interpreted artifacts to download; strands uses Hugging Face repos, adapter first. */
+  readonly artifacts?: readonly string[];
+}
+
 export interface EngineDescriptor<
   C extends { readonly type: string; readonly model: string },
   S = z.ZodType<C>,
@@ -38,6 +57,7 @@ export interface EngineDescriptor<
   tag(config: C, host: HostInfo): string;
   devices?(host: HostInfo): readonly Device[];
   readonly calibrated: boolean;
+  readonly models: readonly ModelDescriptor<C['type']>[];
   create(config: C, ctx: EngineContext): Engine;
 }
 
@@ -55,6 +75,7 @@ export function defineEngine<
   tag(config: z.output<S>, host: HostInfo): string;
   devices?(host: HostInfo): readonly Device[];
   readonly calibrated: boolean;
+  readonly models: readonly ModelDescriptor<z.output<S>['type']>[];
   create(config: z.output<S>, ctx: EngineContext): Engine;
 }): EngineDescriptor<z.output<S>, S, Selectable> {
   return descriptor;

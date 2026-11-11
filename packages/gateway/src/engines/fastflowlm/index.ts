@@ -1,6 +1,7 @@
 import { z } from 'zod';
 
 import { DEVICES, defineEngine } from '../descriptor.ts';
+import { MODELS } from './models.ts';
 import { FastFlowLMEngine } from './server.ts';
 
 export const DEFAULT_FLM_MODEL = 'd3:nano';
@@ -33,5 +34,6 @@ export const fastflowlmEngine = defineEngine({
   tag: () => 'NPU',
   devices: () => DEVICES,
   calibrated: true,
+  models: MODELS,
   create: (config, ctx) => new FastFlowLMEngine(config, ctx.paths, ctx.tools),
 });

@@ -27,8 +27,9 @@ import {
   parseVariant,
   type EngineControl,
 } from './engine-control.ts';
+import { allModels } from './engines/registry.ts';
 import { handleMcpHttp } from './mcp.ts';
-import { KNOWN_MODELS, modelFits } from './models.ts';
+import { modelFits } from './models.ts';
 import { withConfiguredRoutes, withRoute } from './routing.ts';
 import type { Pricing } from './savings.ts';
 import { settingsHandler } from './settings-routes.ts';
@@ -484,7 +485,10 @@ function route(method: string, path: string): Handler | undefined {
         device: engineControl?.current()?.device ?? null,
         switchable: engineControl?.switchable ?? false,
         totalMemoryGb: Math.round(totalmem() / 1e9),
-        models: KNOWN_MODELS.map((m) => ({ ...m, fits: modelFits(m.id, totalmem()) })),
+        models: allModels().map((model) => ({
+          ...model,
+          fits: modelFits(model.id, totalmem(), undefined, model.engine),
+        })),
       });
   }
   const control = controlRoute(key, path);

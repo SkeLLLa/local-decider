@@ -1,6 +1,7 @@
 import { z } from 'zod';
 
 import { DEVICES, defineEngine } from '../descriptor.ts';
+import { MODELS } from './models.ts';
 import { StrandsDeciderEngine } from './server.ts';
 
 export const DEFAULT_MODEL = 'StrandsAgents/strands-decider-2B-qwen3.5-v1-2610';
@@ -31,5 +32,6 @@ export const strandsEngine = defineEngine({
   tag: () => 'PyTorch',
   devices: () => DEVICES,
   calibrated: true,
+  models: MODELS,
   create: (config, ctx) => new StrandsDeciderEngine(config, ctx.paths, ctx.tools),
 });

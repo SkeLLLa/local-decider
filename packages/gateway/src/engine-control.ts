@@ -16,17 +16,12 @@ import {
 } from './config.ts';
 import type { Decider } from './decider.ts';
 import { DownloadError, Downloads, type Download } from './downloads.ts';
+import type { ModelDescriptor } from './engines/descriptor.ts';
 import { createEngine } from './engines/index.ts';
 import { ManagedEngine, type LifecycleOptions } from './engines/lazy.ts';
+import { allModels, type EngineId } from './engines/registry.ts';
 import type { Engine } from './engines/types.ts';
-import {
-  catalogModel,
-  KNOWN_MODELS,
-  MEMORY_BUDGET,
-  modelFits,
-  modelMemoryGb,
-  type CatalogEngine,
-} from './models.ts';
+import { catalogModel, MEMORY_BUDGET, modelFits, modelMemoryGb } from './models.ts';
 import type { Paths } from './paths.ts';
 import { loadPolicies, policyDirs, scopeModes, type LoadedPolicy } from './policies.ts';
 import {
@@ -41,10 +36,10 @@ import {
   type Toolchain,
 } from './toolchain.ts';
 
-const SWITCHABLE_ENGINES: readonly CatalogEngine[] = ['strands-decider', 'fastflowlm'];
+const SWITCHABLE_ENGINES: readonly EngineId[] = ['strands-decider', 'fastflowlm'];
 
 export interface EngineSelection {
-  readonly engine: CatalogEngine;
+  readonly engine: EngineId;
   readonly model: string;
   /** strands-decider only; null for engines without devices. */
   readonly device: Device | null;
@@ -52,7 +47,7 @@ export interface EngineSelection {
 
 /** A switch request; without an engine or device the current ones are kept. */
 export interface EngineRequest {
-  readonly engine?: CatalogEngine | undefined;
+  readonly engine?: EngineId | undefined;
   readonly model: string;
   readonly device?: Device | undefined;
 }
@@ -84,7 +79,7 @@ export function parseSelection(body: unknown): EngineRequest {
   }
   return {
     model,
-    ...(engine === undefined ? {} : { engine: engine as CatalogEngine }),
+    ...(engine === undefined ? {} : { engine: engine as EngineId }),
     ...(device === undefined ? {} : { device: device as Device }),
   };
 }
@@ -276,14 +271,14 @@ export class EngineControl {
     return this.#selected;
   }
 
-  allowedModels(engine?: CatalogEngine): string[] {
+  allowedModels(engine?: EngineId): string[] {
     const configured =
       engine === undefined || engine === this.#config.engine.type
         ? [this.#config.engine.model]
         : [];
-    const known = KNOWN_MODELS.filter((m) => engine === undefined || m.engine === engine).map(
-      (m) => m.id,
-    );
+    const known = allModels()
+      .filter((model) => engine === undefined || model.engine === engine)
+      .map((model) => model.id);
     return [...new Set([...known, ...configured])];
   }
 
@@ -540,8 +535,8 @@ export class EngineControl {
   }
 
   download(engine: string, model: string): Download {
-    const entry = catalogModel(model);
-    if (entry === undefined || entry.engine !== engine) {
+    const entry = catalogModel(model, engine as EngineId);
+    if (entry === undefined) {
       throw new DownloadError(400, `unknown ${engine} model "${model}"`);
     }
     return this.#downloads.start(entry, this.#tools, () => this.#status.invalidate());
@@ -556,7 +551,8 @@ export class EngineControl {
 
   /** The `GET /v1/engines` view. */
   async status(): Promise<Record<string, unknown>> {
-    const installed = await this.#installed(KNOWN_MODELS.map((m) => m.id));
+    const models = allModels();
+    const installed = await this.#installed(models);
     const health = this.#engine.health();
     const life = this.#engine.lifecycle;
     return {
@@ -573,7 +569,7 @@ export class EngineControl {
       switchable: this.switchable,
       totalMemoryGb: Math.round(this.#memory / 1e9),
       engines: this.#engines(),
-      models: KNOWN_MODELS.map((m) => ({
+      models: models.map((m) => ({
         id: m.id,
         engine: m.engine,
         label: m.label,
@@ -581,7 +577,7 @@ export class EngineControl {
         memoryGb: modelMemoryGb(m, this.#selected?.device),
         cpuMemoryGb: m.memoryGb,
         gpuMemoryGb: m.gpuMemoryGb ?? null,
-        fits: modelFits(m.id, this.#memory, this.#selected?.device),
+        fits: modelFits(m.id, this.#memory, this.#selected?.device, m.engine),
         quality: m.quality ?? null,
         source: m.source ?? null,
         installed: installed.get(m.id) ?? false,
@@ -627,7 +623,7 @@ export class EngineControl {
   #initialSelection(): EngineSelection {
     const engine = this.#config.engine;
     const fromConfig: EngineSelection = {
-      engine: engine.type as CatalogEngine,
+      engine: engine.type,
       model: engine.model,
       device: engine.type === 'strands-decider' ? engine.device : null,
     };
@@ -683,9 +679,9 @@ export class EngineControl {
     if (!this.allowedModels(next.engine).includes(next.model)) {
       throw new EngineSwitchError(400, `unknown ${next.engine} model "${next.model}"`);
     }
-    if (!modelFits(next.model, this.#memory, next.device)) {
-      const known = catalogModel(next.model);
-      const needs = known === undefined ? 0 : modelMemoryGb(known, next.device);
+    if (!modelFits(next.model, this.#memory, next.device, next.engine)) {
+      const known = catalogModel(next.model, next.engine);
+      const needs = known === undefined ? 0 : (modelMemoryGb(known, next.device) ?? 0);
       const budget = Math.floor((this.#memory * MEMORY_BUDGET) / 1e9);
       throw new EngineSwitchError(
         409,
@@ -700,8 +696,10 @@ export class EngineControl {
       );
     }
     const unchanged = this.#same(next);
-    const installed = (await this.#installed([next.model])).get(next.model) ?? false;
-    if (!unchanged && catalogModel(next.model) !== undefined && !installed) {
+    const model = catalogModel(next.model, next.engine);
+    const installed =
+      model === undefined ? false : ((await this.#installed([model])).get(model.id) ?? false);
+    if (!unchanged && model !== undefined && !installed) {
       throw new EngineSwitchError(400, `${next.model} is not downloaded yet`);
     }
   }
@@ -739,12 +737,11 @@ export class EngineControl {
     void engine.start();
   }
 
-  async #installed(models: readonly string[]): Promise<Map<string, boolean>> {
+  async #installed(models: readonly ModelDescriptor[]): Promise<Map<string, boolean>> {
     if (this.#installedOverride !== undefined) {
-      return this.#installedOverride(models);
+      return this.#installedOverride(models.map((model) => model.id));
     }
-    const entries = models.map((id) => catalogModel(id)).filter((m) => m !== undefined);
-    return this.#status.installed(entries);
+    return this.#status.installed(models);
   }
 
   async #checkPathValue(key: PathKey, value: string): Promise<void> {

@@ -2,7 +2,7 @@ import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 
-import type { KnownModel } from './models.ts';
+import type { ModelDescriptor } from './engines/descriptor.ts';
 import { stripAnsi, type Toolchain } from './toolchain.ts';
 
 export interface Download {
@@ -27,7 +27,7 @@ export class DownloadError extends Error {
 }
 
 /** Fixed argv per step. Model ids and repos come from the catalogue, never from a request. */
-export function downloadSteps(model: KnownModel, tools: Toolchain): [string, string[]][] {
+export function downloadSteps(model: ModelDescriptor, tools: Toolchain): [string, string[]][] {
   if (model.engine === 'fastflowlm') {
     if (tools.flm === undefined) {
       throw new DownloadError(409, 'FastFlowLM is not installed');
@@ -42,7 +42,10 @@ export function downloadSteps(model: KnownModel, tools: Toolchain): [string, str
       'the strands-decider engine is not installed; run `local-decider engine install`',
     );
   }
-  return (model.hf ?? []).map((repo): [string, string[]] => [hf, ['download', repo]]);
+  return (model.artifacts ?? []).map((artifact): [string, string[]] => [
+    hf,
+    ['download', artifact],
+  ]);
 }
 
 const PERCENT = /(\d{1,3}(?:\.\d+)?)\s*%/g;
@@ -105,7 +108,7 @@ export class Downloads {
     return this.list().some((d) => d.model === model && d.state === 'running');
   }
 
-  start(model: KnownModel, tools: Toolchain, onDone: () => void): Download {
+  start(model: ModelDescriptor, tools: Toolchain, onDone: () => void): Download {
     if (this.running(model.id)) {
       throw new DownloadError(409, `${model.id} is already downloading`);
     }
