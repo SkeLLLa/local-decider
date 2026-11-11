@@ -54,7 +54,19 @@ var GatewayClient = class {
   async health() {
     return this.#request("GET", "/health");
   }
+  /** List engines and models; null when the gateway is unreachable or returns an error. */
+  async engines() {
+    return this.#request("GET", "/v1/engines");
+  }
+  /** Select a model and retain its HTTP status and body for CLI error reporting. */
+  async selectEngine(selection) {
+    return this.#requestWithStatus("POST", "/v1/engine", selection);
+  }
   async #request(method, path, body) {
+    const result = await this.#requestWithStatus(method, path, body);
+    return result !== null && result.status >= 200 && result.status < 300 ? result.body : null;
+  }
+  async #requestWithStatus(method, path, body) {
     const headers = { accept: "application/json" };
     if (body !== void 0) {
       headers["content-type"] = "application/json";
@@ -69,10 +81,7 @@ var GatewayClient = class {
         signal: AbortSignal.timeout(this.#timeoutMs),
         ...body === void 0 ? {} : { body: JSON.stringify(body) }
       });
-      if (!res.ok) {
-        return null;
-      }
-      return await res.json();
+      return { status: res.status, body: await res.json().catch(() => null) };
     } catch {
       return null;
     }
