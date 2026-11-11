@@ -9,6 +9,7 @@ import {
   symlinkSync,
   writeFileSync,
 } from 'node:fs';
+import { createServer, type Server, type ServerResponse } from 'node:http';
 import { join } from 'node:path';
 import { describe, it } from 'node:test';
 
@@ -72,6 +73,27 @@ function fakeStrands(paths: Paths): void {
   mkdirSync(dir, { recursive: true });
   writeFileSync(join(dir, 'strands-decider'), `#!${process.execPath}\n`);
   chmodSync(join(dir, 'strands-decider'), 0o755);
+}
+
+async function withModelServer(
+  respond: (response: ServerResponse) => void,
+  run: (url: string) => Promise<void>,
+): Promise<void> {
+  const server: Server = createServer((_request, response) => respond(response));
+  await new Promise<void>((resolve, reject) => {
+    server.once('error', reject);
+    server.listen(0, '127.0.0.1', resolve);
+  });
+  const address = server.address();
+  assert.ok(address !== null && typeof address === 'object');
+  try {
+    await run(`http://127.0.0.1:${String(address.port)}/v1`);
+  } finally {
+    server.closeAllConnections();
+    await new Promise<void>((resolve, reject) =>
+      server.close((error) => (error === undefined ? resolve() : reject(error))),
+    );
+  }
 }
 
 interface Setup {
@@ -223,6 +245,74 @@ describe('EngineControl switching', () => {
       control.select({ engine: 'openai-compatible', model: 'other-model' }),
       (error: unknown) => error instanceof EngineSwitchError && error.status === 400,
     );
+  });
+
+  it('lists discovered OpenAI models with the configured model first and selects them', async () => {
+    await withModelServer(
+      (response) => {
+        response.writeHead(200, { 'content-type': 'application/json' });
+        response.end(
+          JSON.stringify({
+            data: [
+              { id: 'discovered-model' },
+              { id: 12 },
+              null,
+              { name: 'missing-id' },
+              { id: 'configured-model' },
+              { id: 'discovered-model' },
+            ],
+          }),
+        );
+      },
+      async (url) => {
+        const { control, created } = setup({
+          engines: {
+            'openai-compatible': { url, model: 'configured-model' },
+          },
+        });
+        const status = await control.status();
+        const models = (status['models'] as Record<string, unknown>[]).filter(
+          (model) => model['engine'] === 'openai-compatible',
+        );
+        assert.deepEqual(
+          models.map((model) => model['id']),
+          ['configured-model', 'discovered-model'],
+        );
+        assert.ok(
+          models.every((model) => model['downloadGb'] === null && model['installed'] === true),
+        );
+
+        await control.select({ engine: 'openai-compatible', model: 'discovered-model' });
+        assert.equal(created.at(-1)?.model, 'discovered-model');
+      },
+    );
+  });
+
+  it('falls back to the configured OpenAI model on 404 and malformed model lists', async () => {
+    for (const [status, body] of [
+      [404, '{"error":"not found"}'],
+      [200, 'not-json'],
+    ] as const) {
+      await withModelServer(
+        (response) => {
+          response.writeHead(status, { 'content-type': 'application/json' });
+          response.end(body);
+        },
+        async (url) => {
+          const { control } = setup({
+            engines: { 'openai-compatible': { url, model: 'configured-only' } },
+          });
+          const statusBody = await control.status();
+          const models = (statusBody['models'] as Record<string, unknown>[]).filter(
+            (model) => model['engine'] === 'openai-compatible',
+          );
+          assert.deepEqual(
+            models.map((model) => model['id']),
+            ['configured-only'],
+          );
+        },
+      );
+    }
   });
 
   it('uses and reapplies per-engine options when switching to FastFlowLM', async () => {

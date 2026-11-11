@@ -1,4 +1,10 @@
-import { MODES, PolicyError, type Mode, type PolicyThreshold } from '@local-decider/core';
+import {
+  MODES,
+  PolicyError,
+  tokenAllowed,
+  type Mode,
+  type PolicyThreshold,
+} from '@local-decider/core';
 import { mkdirSync } from 'node:fs';
 import { totalmem } from 'node:os';
 import { join } from 'node:path';
@@ -19,6 +25,7 @@ import { DownloadError, Downloads, type Download } from './downloads.ts';
 import type { EngineContext, HostInfo, ModelDescriptor } from './engines/descriptor.ts';
 import { cachedFlmVersion } from './engines/fastflowlm/status.ts';
 import { hostInfo } from './engines/host.ts';
+import { getJson } from './engines/http.ts';
 import { createEngine } from './engines/index.ts';
 import { ManagedEngine, type LifecycleOptions } from './engines/lazy.ts';
 import {
@@ -71,6 +78,20 @@ export class EngineSwitchError extends Error {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function modelIds(value: unknown): string[] {
+  const data = isRecord(value) ? value['data'] : undefined;
+  if (!Array.isArray(data)) {
+    return [];
+  }
+  const ids = data.flatMap((entry) => {
+    const id = isRecord(entry) ? entry['id'] : undefined;
+    return typeof id === 'string' && id.length > 0 && id.length <= 300 && /^[^-\s][^\s]*$/.test(id)
+      ? [id]
+      : [];
+  });
+  return [...new Set(ids)];
 }
 
 export function parseSelection(body: unknown): EngineRequest {
@@ -234,6 +255,7 @@ export class EngineControl {
   #tools: Toolchain;
   #selected: EngineSelection | null;
   #engine: ManagedEngine;
+  #discoveredOpenAIModels: string[] = [];
   #decider: Decider | undefined;
   #pending: Promise<void> = Promise.resolve();
 
@@ -293,6 +315,9 @@ export class EngineControl {
       const openai = this.#openAIConfig();
       if (openai !== undefined) {
         configured.add(openai.model);
+        for (const model of this.#discoveredOpenAIModels) {
+          configured.add(model);
+        }
       }
     }
     const known = allModels()
@@ -564,6 +589,7 @@ export class EngineControl {
 
   /** The `GET /v1/engines` view. */
   async status(): Promise<Record<string, unknown>> {
+    await this.#discoverOpenAIModels();
     const models = this.#catalogModels();
     const installed = await this.#installed(models);
     const health = this.#engine.health();
@@ -696,16 +722,45 @@ export class EngineControl {
     const models = allModels();
     const openai = this.#openAIConfig();
     if (openai !== undefined) {
-      models.push({
-        id: openai.model,
-        engine: 'openai-compatible',
-        label: openai.model,
-        downloadGb: null,
-        memoryGb: null,
-        latencyHint: null,
-      });
+      const ids =
+        this.#discoveredOpenAIModels.length > 0 ? this.#discoveredOpenAIModels : [openai.model];
+      models.push(
+        ...ids.map((id) => ({
+          id,
+          engine: 'openai-compatible' as const,
+          label: id,
+          downloadGb: null,
+          memoryGb: null,
+          latencyHint: null,
+        })),
+      );
     }
     return models;
+  }
+
+  async #discoverOpenAIModels(): Promise<void> {
+    const config = this.#openAIConfig();
+    if (config === undefined) {
+      this.#discoveredOpenAIModels = [];
+      return;
+    }
+    const token =
+      config.tokenEnv !== undefined && tokenAllowed(config.url)
+        ? this.#env[config.tokenEnv]
+        : undefined;
+    try {
+      const response = await getJson(`${config.url.replace(/\/+$/, '')}/models`, {
+        token,
+        signal: AbortSignal.timeout(2000),
+        maxBytes: 256 * 1024,
+      });
+      this.#discoveredOpenAIModels = [
+        config.model,
+        ...modelIds(response).filter((id) => id !== config.model),
+      ];
+    } catch {
+      this.#discoveredOpenAIModels = [config.model];
+    }
   }
 
   #engineConfig(sel: EngineSelection): EngineConfig {
@@ -760,6 +815,9 @@ export class EngineControl {
   }
 
   async #checkSelectable(next: EngineSelection): Promise<void> {
+    if (next.engine === 'openai-compatible') {
+      await this.#discoverOpenAIModels();
+    }
     if (!this.allowedModels(next.engine).includes(next.model)) {
       throw new EngineSwitchError(400, `unknown ${next.engine} model "${next.model}"`);
     }
