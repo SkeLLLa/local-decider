@@ -314,7 +314,7 @@ function requestSignal(res: ServerResponse): AbortSignal {
 }
 
 function health(decider: Decider, engineControl?: EngineControl): Record<string, unknown> {
-  const engine = decider.engine.health();
+  const engine = engineControl?.activeHealth() ?? decider.engine.health();
   // A lazily unloaded engine is healthy: it loads on the next decision.
   const status =
     engine.state === 'ready' || engine.onDemand === true

@@ -201,6 +201,22 @@ function writeUserVariant(paths: Paths, id: string): void {
 const E2B = 'StrandsAgents/strands-decider-E2B-gemma4-v1-2610';
 
 describe('EngineControl switching', () => {
+  it('reports starting while the previous engine is stopping', async () => {
+    const { control, created } = setup();
+    const stopping = deferred<void>();
+    created[0]!.stop = () => stopping.promise;
+    const switching = control.select({ model: E2B, device: 'cpu' });
+    await settleEventLoop();
+    assert.equal(control.activeHealth().state, 'starting');
+    assert.equal(
+      (await control.status())['active'] &&
+        ((await control.status())['active'] as Record<string, unknown>)['state'],
+      'starting',
+    );
+    stopping.resolve();
+    await switching;
+  });
+
   it('swaps in a new engine for an allowed model and stops the old one', async () => {
     const { control, decider, created } = setup();
     const result = await control.select({ model: E2B, device: 'cpu' });

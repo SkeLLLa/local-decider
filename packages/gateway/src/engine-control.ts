@@ -314,6 +314,7 @@ export class EngineControl {
   #tools: Toolchain;
   #selected: EngineSelection | null;
   #engine: ManagedEngine;
+  #switching = false;
   readonly #discovery: ModelDiscovery;
   readonly #probe: ServerProbe;
   #decider: Decider | undefined;
@@ -395,6 +396,11 @@ export class EngineControl {
 
   activeTag(): string {
     return this.#tag(this.#engine.id as EngineId);
+  }
+
+  activeHealth(): ReturnType<ManagedEngine['health']> {
+    const health = this.#engine.health();
+    return this.#switching ? { ...health, state: 'starting' } : health;
   }
 
   allowedModels(engine?: EngineId): string[] {
@@ -769,7 +775,7 @@ export class EngineControl {
     this.#discoverAll();
     const models = this.#catalogModels();
     const installed = await this.#installed(models);
-    const health = this.#engine.health();
+    const health = this.activeHealth();
     const life = this.#engine.lifecycle;
     const device = this.#deviceResolution();
     const memoryDevice = device?.resolved ?? this.#selected?.device;
@@ -1185,6 +1191,7 @@ export class EngineControl {
     const engine = this.#build(next);
     const previous = this.#engine;
     this.#engine = engine;
+    this.#switching = true;
     this.#selected = next;
     this.#decider?.replaceEngine(engine);
     const selection = persistedSelection(next);
@@ -1193,6 +1200,7 @@ export class EngineControl {
       this.#applied = this.#config;
     }
     await previous.stop().catch(() => undefined);
+    this.#switching = false;
     this.#startTracked(engine);
   }
 
