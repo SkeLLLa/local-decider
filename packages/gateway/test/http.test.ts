@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
-import { postSystemOne } from '../src/engines/http.ts';
+import { getJson, postJson, postSystemOne } from '../src/engines/http.ts';
 import { EngineError } from '../src/engines/types.ts';
 
 const request = { questions: {}, state: '' };
@@ -54,6 +54,45 @@ describe('postSystemOne', () => {
         request,
         signal,
       ),
+      /engine HTTP 503: model not loaded/,
+    );
+  });
+});
+
+describe('JSON HTTP helpers', () => {
+  it('GETs and parses JSON', async () => {
+    const result = await getJson('http://example.test/health', {
+      fetch: fakeFetch('{"status":"ok"}'),
+    });
+    assert.deepEqual(result, { status: 'ok' });
+  });
+
+  it('sends the bearer authorization header', async () => {
+    let authorization: string | null = null;
+    await postJson(
+      'http://example.test/model',
+      { prompt: 'hello' },
+      {
+        token: 'secret-token',
+        fetch: async (_url, init) => {
+          authorization = new Headers(init?.headers).get('authorization');
+          return new Response('{"ok":true}');
+        },
+      },
+    );
+    assert.equal(authorization, 'Bearer secret-token');
+  });
+
+  it('enforces the response size limit', async () => {
+    await assert.rejects(
+      postJson('http://example.test/model', {}, { maxBytes: 4, fetch: fakeFetch('{"ok":true}') }),
+      (error: unknown) => error instanceof EngineError && /too large/.test(error.message),
+    );
+  });
+
+  it('preserves HTTP error text', async () => {
+    await assert.rejects(
+      postJson('http://example.test/model', {}, { fetch: fakeFetch('model not loaded', 1, 503) }),
       /engine HTTP 503: model not loaded/,
     );
   });

@@ -10,11 +10,10 @@ export interface HttpEngineOptions {
   readonly fetch?: typeof fetch;
 }
 
-function headers(token: string | undefined): Record<string, string> {
-  const out: Record<string, string> = {
-    'content-type': 'application/json',
-    'accept': 'application/json',
-  };
+function headers(token: string | undefined, hasBody: boolean): Record<string, string> {
+  const out: Record<string, string> = hasBody
+    ? { 'content-type': 'application/json', 'accept': 'application/json' }
+    : { accept: 'application/json' };
   if (token !== undefined && token !== '') {
     out['authorization'] = `Bearer ${token}`;
   }
@@ -47,34 +46,72 @@ async function readLimited(res: Response, max: number): Promise<string> {
   return Buffer.concat(chunks).toString('utf8');
 }
 
+export interface JsonRequestOptions {
+  readonly token?: string | undefined;
+  readonly signal?: AbortSignal | undefined;
+  readonly maxBytes?: number | undefined;
+  /** Injected in tests. */
+  readonly fetch?: typeof fetch | undefined;
+}
+
+async function requestJson(
+  url: string,
+  init: RequestInit,
+  options: JsonRequestOptions,
+): Promise<unknown> {
+  const doFetch = options.fetch ?? globalThis.fetch;
+  let res: Response;
+  try {
+    res = await doFetch(url, {
+      ...init,
+      headers: headers(options.token, init.body !== undefined),
+      ...(options.signal === undefined ? {} : { signal: options.signal }),
+    });
+  } catch (error) {
+    throw new EngineError(`engine unreachable: ${(error as Error).message}`);
+  }
+  const text = await readLimited(res, options.maxBytes ?? MAX_RESPONSE_BYTES);
+  if (!res.ok) {
+    throw new EngineError(`engine HTTP ${String(res.status)}: ${text.slice(0, 300)}`);
+  }
+  try {
+    return JSON.parse(text) as unknown;
+  } catch {
+    throw new EngineError('engine returned invalid JSON');
+  }
+}
+
+/** POST JSON and parse a size-limited JSON response. */
+export function postJson(
+  url: string,
+  body: unknown,
+  options: JsonRequestOptions = {},
+): Promise<unknown> {
+  const serialized = JSON.stringify(body);
+  return requestJson(
+    url,
+    { method: 'POST', ...(serialized === undefined ? {} : { body: serialized }) },
+    options,
+  );
+}
+
+/** GET and parse a size-limited JSON response. */
+export function getJson(url: string, options: JsonRequestOptions = {}): Promise<unknown> {
+  return requestJson(url, { method: 'GET' }, options);
+}
+
 /** POST a request to `<baseUrl>/v1/systemone`. Throws {@link EngineError} on any failure. */
 export async function postSystemOne(
   options: HttpEngineOptions,
   request: SystemOneRequest,
   signal: AbortSignal,
 ): Promise<SystemOneResponse> {
-  const doFetch = options.fetch ?? globalThis.fetch;
-  let res: Response;
-  try {
-    res = await doFetch(`${options.baseUrl.replace(/\/+$/, '')}/v1/systemone`, {
-      method: 'POST',
-      headers: headers(options.token),
-      body: JSON.stringify(request),
-      signal,
-    });
-  } catch (error) {
-    throw new EngineError(`engine unreachable: ${(error as Error).message}`);
-  }
-  const text = await readLimited(res, MAX_RESPONSE_BYTES);
-  if (!res.ok) {
-    throw new EngineError(`engine HTTP ${String(res.status)}: ${text.slice(0, 300)}`);
-  }
-  let body: unknown;
-  try {
-    body = JSON.parse(text);
-  } catch {
-    throw new EngineError('engine returned invalid JSON');
-  }
+  const body = await postJson(`${options.baseUrl.replace(/\/+$/, '')}/v1/systemone`, request, {
+    token: options.token,
+    signal,
+    maxBytes: MAX_RESPONSE_BYTES,
+    fetch: options.fetch,
+  });
   if (!isResponse(body)) {
     throw new EngineError('engine response has no answers');
   }
