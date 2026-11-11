@@ -38,7 +38,7 @@ const STRANDS: readonly KnownModel[] = [
     label: 'Strands 2B · Qwen3.5 (reference)',
     downloadGb: 4.8,
     memoryGb: 8,
-    latencyHint: '~2.4 s on CPU, ~0.1 s on MLX',
+    latencyHint: '~1.1 s CPU, ~180 ms MPS, ~66 ms MLX (M5 Pro, warm p50, 256-token target)',
     recommended: true,
     hf: ['StrandsAgents/strands-decider-2B-qwen3.5-v1-2610', 'Qwen/Qwen3.5-2B-Base'],
   },
