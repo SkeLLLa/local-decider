@@ -25,18 +25,21 @@ describe('engine registry', () => {
     assert.equal(new Set(ids).size, ids.length);
     assert.deepEqual(SELECTABLE_IDS, ['strands-decider', 'fastflowlm']);
     assert.equal(engineDescriptor('fastflowlm')?.id, 'fastflowlm');
+    assert.equal(engineDescriptor('openai-compatible')?.selectable, false);
     assert.equal(engineDescriptor('missing'), undefined);
     assert.ok(isSelectableEngine('strands-decider'));
     assert.ok(!isSelectableEngine('systemone-remote'));
+    assert.ok(!isSelectableEngine('openai-compatible'));
   });
 
   it('parses default model configs for every engine', () => {
     for (const engine of ENGINES) {
-      // The remote engine has no default URL; supply its required attach target.
-      const config =
-        engine.id === 'systemone-remote'
-          ? engineDefaults(engine.id, undefined, { url: 'http://127.0.0.1:8765' })
-          : engineDefaults(engine.id);
+      // Attach-only engines need their target; OpenAI-compatible also needs a server model id.
+      const config = engineDefaults(
+        engine.id,
+        engine.id === 'openai-compatible' ? 'test-model' : undefined,
+        engine.id === 'systemone-remote' ? { url: 'http://127.0.0.1:8765' } : {},
+      );
       assert.equal(config.type, engine.id);
       assert.ok(config.model.length > 0, `${engine.id} has a default model`);
     }

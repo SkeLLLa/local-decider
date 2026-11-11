@@ -2,11 +2,17 @@ import { z } from 'zod';
 
 import type { EngineContext, EngineDescriptor, ModelDescriptor } from './descriptor.ts';
 import { fastflowlmEngine } from './fastflowlm/index.ts';
+import { openaiCompatibleEngine } from './openai/index.ts';
 import { remoteEngine } from './remote.ts';
 import { strandsEngine } from './strands/index.ts';
 import type { Engine } from './types.ts';
 
-export const ENGINES = [strandsEngine, remoteEngine, fastflowlmEngine] as const;
+export const ENGINES = [
+  strandsEngine,
+  remoteEngine,
+  fastflowlmEngine,
+  openaiCompatibleEngine,
+] as const;
 const ENGINE_BY_ID = new Map<string, AnyEngine>(
   ENGINES.map((engine): [string, AnyEngine] => [engine.id, engine]),
 );
