@@ -67,6 +67,22 @@ describe('engine ranking', () => {
     assert.deepEqual(ladder(r), ['strands-decider:MLX', 'strands-decider:CPU']);
   });
 
+  it('Apple Silicon with MLX and a confirmed MPS: MLX, MPS, CPU', () => {
+    const r = rank(MAC, caps({ apple: { ...YES('mlx'), mps: true } }));
+    assert.deepEqual(ladder(r), [
+      'strands-decider:MLX',
+      'strands-decider:MPS',
+      'strands-decider:CPU',
+    ]);
+  });
+
+  it('flags engines that can never run on this host as unsupported', () => {
+    const r = rank(MAC, caps({ apple: YES('mlx') }));
+    const flm = r.candidates.find((c) => c.engine === 'fastflowlm');
+    assert.equal(flm?.supported, false);
+    assert.ok(r.candidates.filter((c) => c.engine !== 'fastflowlm').every((c) => c.supported));
+  });
+
   it('Apple Silicon without MLX: MPS then CPU', () => {
     const r = rank(MAC, caps({ apple: YES('mps') }));
     assert.deepEqual(ladder(r), ['strands-decider:MPS', 'strands-decider:CPU']);

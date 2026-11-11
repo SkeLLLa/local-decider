@@ -191,6 +191,7 @@ describe('host capability probes', () => {
     const caps = await probeHostCapabilities(options);
     assert.equal(caps.apple.status, 'available');
     assert.equal(caps.apple.evidence, 'MLX with Metal');
+    assert.equal(caps.apple.mps, true);
   });
 
   it('falls back to MPS, then reports unknown without an environment', async () => {

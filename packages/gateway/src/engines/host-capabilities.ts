@@ -12,6 +12,8 @@ export interface CapabilityResult {
   readonly evidence: string;
   /** Apple only: which stack was confirmed. */
   readonly variant?: 'mlx' | 'mps';
+  /** Apple only: PyTorch MPS also works, even when `variant` is `mlx`. */
+  readonly mps?: boolean;
 }
 
 export interface HostCapabilities {
@@ -200,10 +202,14 @@ function parseApple(output: string): CapabilityResult {
     return unknown('python probe output not understood');
   }
   if (parsed.mlx === true && parsed.metal === true) {
-    return { ...available('MLX with Metal'), variant: 'mlx' };
+    return {
+      ...available('MLX with Metal'),
+      variant: 'mlx',
+      ...(parsed.mps === true ? { mps: true } : {}),
+    };
   }
   return parsed.mps === true
-    ? { ...available('PyTorch MPS'), variant: 'mps' }
+    ? { ...available('PyTorch MPS'), variant: 'mps', mps: true }
     : unavailable('no MLX/Metal or MPS');
 }
 

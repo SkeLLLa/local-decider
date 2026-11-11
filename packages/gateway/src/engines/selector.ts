@@ -19,6 +19,8 @@ export interface Candidate {
   readonly model: string;
   /** May be chosen automatically. */
   readonly eligible: boolean;
+  /** False when the engine can never run on this host (e.g. FastFlowLM off Linux). */
+  readonly supported: boolean;
   /** The engine is installed; false means it would need installing first. */
   readonly ready: boolean;
   readonly reason: string;
@@ -90,10 +92,12 @@ const LADDER: readonly Rung[] = [
 ];
 
 function appleVariant(want: 'mlx' | 'mps'): (c: HostCapabilities) => CapabilityResult {
-  return (c) =>
-    c.apple.status === 'available' && c.apple.variant !== want
+  return (c) => {
+    const confirmed = c.apple.variant === want || (want === 'mps' && c.apple.mps === true);
+    return c.apple.status === 'available' && !confirmed
       ? { status: 'unknown', evidence: `${want.toUpperCase()} not confirmed` }
       : c.apple;
+  };
 }
 
 /** The model we recommend for an engine: the catalogue's `recommended` entry. */
@@ -134,13 +138,18 @@ function rungCandidate(
   };
   const support = engine.supports(input.host);
   if (!support.ok) {
-    return { ...base, eligible: false, reason: support.reason };
+    return { ...base, eligible: false, supported: false, reason: support.reason };
   }
   if (!modelFits(model.id, input.host.totalMemoryBytes, rung.device, rung.engine as EngineId)) {
-    return { ...base, eligible: false, reason: `${model.id} does not fit in memory` };
+    return {
+      ...base,
+      eligible: false,
+      supported: true,
+      reason: `${model.id} does not fit in memory`,
+    };
   }
   const { ok, reason } = verdict(rung, input.capabilities);
-  return { ...base, eligible: ok, reason };
+  return { ...base, eligible: ok, supported: true, reason };
 }
 
 function uncalibrated(
@@ -157,6 +166,7 @@ function uncalibrated(
     backend: null,
     model: model?.id ?? '',
     eligible: false,
+    supported: true,
     ready: installed.has(engine.id),
     reason: 'uncalibrated: explicit choice only',
   };

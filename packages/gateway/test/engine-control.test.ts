@@ -705,7 +705,7 @@ describe('EngineControl state', () => {
     assert.deepEqual(darwinFlm.devices, []);
     const darwinStrands = darwinEngines.find(({ id }) => id === 'strands-decider');
     assert.ok(darwinStrands);
-    assert.equal(darwinStrands.label, 'Strands Decider (PyTorch)');
+    assert.equal(darwinStrands.label, 'Strands Decider');
     assert.deepEqual(darwinStrands.devices, ['auto', 'cpu', 'mlx', 'mps']);
     assert.equal(darwinEngines.find(({ id }) => id === 'openai-compatible')?.supported, true);
 
@@ -731,7 +731,7 @@ describe('EngineControl state', () => {
     assert.deepEqual(linuxFlm.devices, []);
     const linuxStrands = linuxEngines.find(({ id }) => id === 'strands-decider');
     assert.ok(linuxStrands);
-    assert.equal(linuxStrands.label, 'Strands Decider (PyTorch)');
+    assert.equal(linuxStrands.label, 'Strands Decider');
     assert.equal(linuxStrands.description, 'strands-decider decision engine');
     assert.equal(linuxStrands.tag, 'PyTorch');
     assert.equal(linuxStrands.calibrated, true);
