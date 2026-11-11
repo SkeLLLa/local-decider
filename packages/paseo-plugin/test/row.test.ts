@@ -184,13 +184,14 @@ describe('polling', () => {
   });
 
   it('names the engine in the sidebar label when it fits', () => {
-    const npu = { up: true, engine: 'fastflowlm', model: 'd3:nano', p50Ms: 300 };
+    const npu = { up: true, engine: 'fastflowlm', engineTag: 'NPU', model: 'd3:nano', p50Ms: 300 };
     assert.equal(statusLabel(npu), 'd3:nano · NPU · 300ms');
     assert.equal(statusLabel(npu, 'model'), 'd3:nano · NPU');
     assert.equal(statusLabel(npu, 'latency'), '300ms');
     const strands = {
       up: true,
       engine: 'strands-decider',
+      engineTag: 'PyTorch',
       model: 'StrandsAgents/strands-decider-2B-qwen3.5-v1-2610',
       p50Ms: 8487,
     };

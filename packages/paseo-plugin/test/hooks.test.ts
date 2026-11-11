@@ -619,6 +619,7 @@ describe('rpc handlers', () => {
       up: true,
       status: 'ok',
       engine: null,
+      engineTag: null,
       engineState: null,
       detail: null,
       model: 'm',

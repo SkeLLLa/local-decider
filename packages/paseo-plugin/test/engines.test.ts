@@ -12,6 +12,7 @@ import {
   deviceOptions,
   engineOptions,
   enginesPollInterval,
+  activeEngineTag,
   engineTag,
   ENGINES_POLL_MS,
   initialEngine,
@@ -185,6 +186,12 @@ describe('GET /v1/engines parsing', () => {
       detail: null,
       devices: [],
       validation: null,
+      tag: 'x',
+      description: '',
+      calibrated: true,
+      capabilities: { validate: false },
+      supported: true,
+      unsupportedReason: null,
     });
     assert.equal(catalog.engines[1]?.available, true);
     assert.deepEqual(catalog.models[0], {
@@ -352,9 +359,67 @@ describe('engine selection helpers', () => {
       { label: 'tpu', value: 'tpu' },
     ]);
     assert.equal(deviceOptions(['cpu'])[0]?.value, 'auto');
-    assert.equal(engineTag('fastflowlm'), 'NPU');
+    assert.equal(engineTag('fastflowlm', 'NPU'), 'NPU');
     assert.equal(engineTag('other'), 'other');
-    assert.equal(engineTag(null), null);
+    assert.equal(engineTag('other', ''), 'other');
+    assert.equal(engineTag(null, 'NPU'), null);
+  });
+
+  it('reads the new engine fields and defaults them for an old gateway', () => {
+    const { engines } = parseEngineCatalog({
+      engines: [
+        {
+          id: 'a',
+          label: 'A',
+          tag: 'NPU',
+          description: 'Fast',
+          calibrated: false,
+          capabilities: { validate: true },
+          supported: false,
+          unsupportedReason: 'Windows only',
+        },
+        { id: 'b', validation: { ok: true, lines: [] } },
+        { id: 'c' },
+      ],
+    });
+    assert.equal(engines[0]?.tag, 'NPU');
+    assert.equal(engines[0]?.description, 'Fast');
+    assert.equal(engines[0]?.calibrated, false);
+    assert.equal(engines[0]?.capabilities.validate, true);
+    assert.equal(engines[0]?.supported, false);
+    assert.equal(engines[0]?.unsupportedReason, 'Windows only');
+    assert.equal(engines[1]?.capabilities.validate, true);
+    assert.equal(engines[2]?.capabilities.validate, false);
+    assert.deepEqual(
+      [engines[2]?.tag, engines[2]?.description, engines[2]?.supported, engines[2]?.calibrated],
+      ['c', '', true, true],
+    );
+  });
+
+  it('hides unsupported engines unless active and falls back to the id for the tag', () => {
+    const catalog = parseEngineCatalog({
+      active: { engine: 'b', model: 'm' },
+      engines: [
+        { id: 'a', label: 'A', installed: true, supported: false },
+        { id: 'b', label: 'B', installed: true, supported: false, tag: 'Bee' },
+        { id: 'c', label: 'C', installed: true },
+      ],
+    });
+    assert.deepEqual(
+      engineOptions(catalog.engines).map((o) => o.value),
+      ['c'],
+    );
+    assert.deepEqual(
+      engineOptions(catalog.engines, 'b').map((o) => o.value),
+      ['b', 'c'],
+    );
+    assert.equal(activeEngineTag(catalog), 'Bee');
+    assert.equal(activeEngineTag({ ...catalog, active: { ...catalog.active!, engine: 'c' } }), 'c');
+  });
+
+  it('does not offer to download discovered models with unknown sizes', () => {
+    const found = model({ downloadGb: null, memoryGb: null, installed: false });
+    assert.equal(modelRowState(found, ctx()).kind, 'use');
   });
 });
 

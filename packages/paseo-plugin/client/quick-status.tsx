@@ -137,7 +137,7 @@ function subtitle(data: Status | undefined, hasService: boolean): string | null 
     state: data.engineState ?? (data.status === 'ok' ? 'ready' : 'starting'),
     detail: data.detail,
     model: data.model,
-    engineTag: engineTag(data.engine),
+    engineTag: engineTag(data.engine, data.engineTag),
   });
 }
 

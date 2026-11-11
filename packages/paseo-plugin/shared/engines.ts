@@ -23,6 +23,14 @@ const engineSchema = z.object({
   detail: text,
   devices: z.array(z.string()),
   validation: validationSchema.nullable(),
+  /** Short name for the sidebar and popover, e.g. `NPU`; the id when the gateway has none. */
+  tag: z.string(),
+  description: z.string(),
+  /** False when the engine's output is not calibrated against the policy thresholds. */
+  calibrated: z.boolean(),
+  capabilities: z.object({ validate: z.boolean() }),
+  supported: z.boolean(),
+  unsupportedReason: text,
 });
 
 const modelSchema = z.object({
@@ -141,6 +149,8 @@ function parseEngine(value: unknown): EngineInfo | null {
     return null;
   }
   const installed = bool(v['installed'], false);
+  const validation = parseValidation(v['validation']);
+  const caps = fields(v['capabilities']);
   return {
     id,
     label: str(v['label']) ?? id,
@@ -148,7 +158,13 @@ function parseEngine(value: unknown): EngineInfo | null {
     available: bool(v['available'], installed),
     detail: str(v['detail']),
     devices: list(v['devices'], str),
-    validation: parseValidation(v['validation']),
+    validation,
+    tag: str(v['tag']) ?? id,
+    description: str(v['description']) ?? '',
+    calibrated: bool(v['calibrated'], true),
+    capabilities: { validate: bool(caps?.['validate'], validation !== null) },
+    supported: bool(v['supported'], true),
+    unsupportedReason: str(v['unsupportedReason']),
   };
 }
 
@@ -303,7 +319,8 @@ export function modelRowState(model: EngineModel, ctx: ModelRowContext): ModelRo
   if (!model.fits) {
     return { kind: 'no-fit' };
   }
-  if (!model.installed) {
+  // A model with no download size is discovered on the endpoint, not fetched by the gateway.
+  if (!model.installed && model.downloadGb !== null) {
     return {
       kind: 'download',
       failed: download?.state === 'failed' ? (download.error ?? 'failed') : null,
@@ -424,23 +441,37 @@ export function deviceOptions(devices: readonly string[]): { label: string; valu
   return ids.map((d) => ({ label: deviceLabel(d), value: d }));
 }
 
-const ENGINE_TAGS: Record<string, string> = {
-  'fastflowlm': 'NPU',
-  'strands-decider': 'PyTorch',
-};
-
-/** A few characters naming the engine, for the sidebar and popover: `NPU`, `PyTorch`. */
-export function engineTag(engine: string | null): string | null {
+/**
+ * A few characters naming the engine, for the sidebar and popover: `NPU`, `PyTorch`. The tag
+ * comes from the gateway (`/health` `engineTag`); an old gateway sends none, so use the id.
+ */
+export function engineTag(engine: string | null, tag: string | null = null): string | null {
   if (engine === null || engine === '') {
     return null;
   }
-  return ENGINE_TAGS[engine] ?? engine;
+  return tag === null || tag === '' ? engine : tag;
 }
 
-/** Engine select options; an unavailable engine says so in its label. */
-export function engineOptions(engines: readonly EngineInfo[]): { label: string; value: string }[] {
-  return engines.map((e) => ({
-    label: e.available ? e.label : `${e.label} (${e.installed ? 'unavailable' : 'not installed'})`,
-    value: e.id,
-  }));
+/** The active engine's tag from the catalog, for callers without a `/health` answer. */
+export function activeEngineTag(catalog: EngineCatalog): string | null {
+  const id = catalog.active?.engine ?? null;
+  return engineTag(id, catalog.engines.find((e) => e.id === id)?.tag ?? null);
+}
+
+/**
+ * Engine select options; an unavailable engine says so in its label. An unsupported engine is
+ * hidden unless it is the active one.
+ */
+export function engineOptions(
+  engines: readonly EngineInfo[],
+  activeId: string | null = null,
+): { label: string; value: string }[] {
+  return engines
+    .filter((e) => e.supported || e.id === activeId)
+    .map((e) => ({
+      label: e.available
+        ? e.label
+        : `${e.label} (${e.installed ? 'unavailable' : 'not installed'})`,
+      value: e.id,
+    }));
 }

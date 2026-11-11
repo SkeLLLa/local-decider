@@ -1,6 +1,6 @@
 /**
  * Settings: pick an engine, then a model for it. Rows download models, switch the gateway to one
- * (the gateway persists it) and show FastFlowLM's `flm validate` result.
+ * (the gateway persists it) and show an engine's validation result when it has one.
  */
 import { useRpc } from '@getpaseo/plugin/client';
 import {
@@ -30,17 +30,17 @@ import { Badge, InlineMessage, Mono, Progress, type Theme, Value } from './ui.ts
 
 type Action = ReturnType<typeof useAction>;
 
-const FASTFLOWLM = 'fastflowlm';
-
 function engineHint(engine: EngineInfo | null): string {
   if (engine === null) {
     return 'The gateway lists no engines.';
   }
   const detail = engine.detail ?? '';
-  if (engine.available) {
-    return detail;
+  const note = engine.supported ? '' : (engine.unsupportedReason ?? 'Not supported here.');
+  let state = detail;
+  if (!engine.available) {
+    state = engine.installed ? `Unavailable here. ${detail}` : `Not installed. ${detail}`;
   }
-  return engine.installed ? `Unavailable here. ${detail}` : `Not installed. ${detail}`;
+  return [engine.description, note, state].filter((p) => p !== '').join(' ');
 }
 
 interface RowProps {
@@ -140,16 +140,21 @@ function ValidationOutput({ theme, lines }: { theme: Theme; lines: string[] }): 
 
 function ValidationResult({
   theme,
+  label,
   validation: v,
 }: {
   theme: Theme;
+  label: string;
   validation: Validation | null;
 }): ReactNode {
   const lines = v?.lines ?? [];
   const checkedAt = v?.checkedAt ?? null;
   return (
     <>
-      <SettingsRow label="flm validate" hint={v === null ? 'Not checked yet.' : (v.summary ?? '')}>
+      <SettingsRow
+        label={`${label} validation`}
+        hint={v === null ? 'Not checked yet.' : (v.summary ?? '')}
+      >
         {v === null ? null : (
           <Badge theme={theme} tone={v.ok ? 'success' : 'error'} text={v.ok ? 'ok' : 'failed'} />
         )}
@@ -172,10 +177,10 @@ function ValidationCard({ theme, engine }: { theme: Theme; engine: EngineInfo })
   const v = engine.validation;
   return (
     <SettingsCard>
-      <ValidationResult theme={theme} validation={v} />
+      <ValidationResult theme={theme} label={engine.label} validation={v} />
       <SettingsAction
-        label="Check the NPU and driver"
-        hint="Runs flm validate on the gateway machine; takes a few seconds."
+        label={`Check ${engine.label}`}
+        hint="Runs the engine's own check on the gateway machine; takes a few seconds."
         actionLabel={action.busy === null ? 'Re-validate' : 'Checking…'}
         disabled={action.busy !== null}
         onPress={() =>
@@ -217,7 +222,6 @@ function EnginePicker({ theme, catalog }: { theme: Theme; catalog: EngineCatalog
   const [device, setDevice] = useState('auto');
   const id = picked ?? initialEngine(catalog);
   const engine = catalog.engines.find((e) => e.id === id) ?? null;
-  const flm = catalog.engines.find((e) => e.id === FASTFLOWLM) ?? null;
   return (
     <>
       <SettingsCard>
@@ -225,7 +229,7 @@ function EnginePicker({ theme, catalog }: { theme: Theme; catalog: EngineCatalog
           label="Engine"
           hint={engineHint(engine)}
           value={id ?? ''}
-          options={engineOptions(catalog.engines)}
+          options={engineOptions(catalog.engines, catalog.active?.engine ?? null)}
           disabled={catalog.engines.length === 0}
           onValueChange={(next) => {
             setPicked(next);
@@ -233,6 +237,14 @@ function EnginePicker({ theme, catalog }: { theme: Theme; catalog: EngineCatalog
             action.clear();
           }}
         />
+        {engine === null || engine.calibrated ? null : (
+          <SettingsRow
+            label="Calibration"
+            hint="This engine's confidence is not calibrated against the policy thresholds."
+          >
+            <Badge theme={theme} tone="info" text="uncalibrated" />
+          </SettingsRow>
+        )}
         {engine === null || engine.devices.length === 0 ? null : (
           <SettingsSelect
             label="Device"
@@ -252,7 +264,9 @@ function EnginePicker({ theme, catalog }: { theme: Theme; catalog: EngineCatalog
           action={action}
         />
       )}
-      {flm === null ? null : <ValidationCard theme={theme} engine={flm} />}
+      {engine?.capabilities.validate === true ? (
+        <ValidationCard theme={theme} engine={engine} />
+      ) : null}
     </>
   );
 }

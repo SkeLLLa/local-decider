@@ -20,6 +20,7 @@ export interface StatusLike {
   readonly up: boolean;
   readonly status?: 'ok' | 'degraded' | 'down';
   readonly engine?: string | null;
+  readonly engineTag?: string | null;
   readonly model: string | null;
   readonly p50Ms: number | null;
 }
@@ -74,7 +75,7 @@ function labelParts(
   const hasModel = status.model !== null && status.model !== '';
   return {
     model: withModel && hasModel ? compactModel(status.model) : null,
-    tag: withModel ? engineTag(status.engine ?? null) : null,
+    tag: withModel ? engineTag(status.engine ?? null, status.engineTag ?? null) : null,
     latency: withLatency && status.p50Ms !== null ? compactMs(status.p50Ms) : null,
   };
 }

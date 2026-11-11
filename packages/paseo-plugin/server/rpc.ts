@@ -13,6 +13,7 @@ export interface StatusResult {
   up: boolean;
   status: GatewayHealth['status'];
   engine: string | null;
+  engineTag: string | null;
   engineState: string | null;
   detail: string | null;
   model: string | null;
@@ -24,13 +25,14 @@ export interface StatusResult {
 
 type HealthFields = Pick<
   StatusResult,
-  'status' | 'engine' | 'engineState' | 'detail' | 'model' | 'p50Ms'
+  'status' | 'engine' | 'engineTag' | 'engineState' | 'detail' | 'model' | 'p50Ms'
 >;
 
 function healthFields(health: GatewayHealth | null): HealthFields {
   return {
     status: health?.status ?? 'down',
     engine: health?.engine ?? null,
+    engineTag: typeof health?.engineTag === 'string' ? health.engineTag.slice(0, 40) : null,
     engineState: health?.engineState ?? null,
     detail: typeof health?.detail === 'string' ? health.detail.slice(0, 300) : null,
     model: health?.model ?? null,

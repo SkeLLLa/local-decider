@@ -22,6 +22,7 @@ export const statusRpc = defineRpc({
     up: z.boolean(),
     status: z.enum(['ok', 'degraded', 'down']),
     engine: z.string().nullable(),
+    engineTag: z.string().nullable(),
     /** `stopped|starting|ready|failed`, and why when not ready. */
     engineState: z.string().nullable(),
     detail: z.string().nullable(),

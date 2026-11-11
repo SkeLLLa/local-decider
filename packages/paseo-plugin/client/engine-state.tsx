@@ -40,7 +40,7 @@ function stateNote(status: Status | undefined, active: ActiveEngine | null): str
     state: status.engineState,
     detail: status.detail,
     model: status.model,
-    engineTag: engineTag(status.engine),
+    engineTag: engineTag(status.engine, status.engineTag),
     lifecycle: active?.lifecycle ?? null,
   });
 }
