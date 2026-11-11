@@ -84,16 +84,25 @@ jobs:
         run: mise run lint:fallow
 
   build:
-    name: Build and test (${{ matrix.os }})
+    name: Build and test (${{ matrix.os }}, Node ${{ matrix.node }})
     runs-on: ${{ matrix.os }}
     timeout-minutes: 20
+    env:
+      MISE_NODE_VERSION: ${{ matrix.node }}
     permissions:
       contents: read
     strategy:
       fail-fast: false
       matrix:
-        # Linux (the AMD Ryzen AI target) and Apple Silicon (the MLX target).
-        os: [ubuntu-latest, macos-latest]
+        # Keep 26.13.0 aligned with mise.toml; 24 is the previous major, matching engines.node >=24.
+        # Linux covers both Node majors; macOS covers the current Node and Apple Silicon/MLX.
+        include:
+          - os: ubuntu-latest
+            node: '26.13.0'
+          - os: ubuntu-latest
+            node: '24'
+          - os: macos-latest
+            node: '26.13.0'
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:

@@ -1,8 +1,8 @@
 name: Release
 
 # release-please keeps one release PR per package (conventional commits decide the bump). Merging
-# it tags the release; the publish job then builds and publishes the npm packages with provenance
-# through npm trusted publishing (OIDC), so no NPM_TOKEN secret exists.
+# it tags the release; CI tests the master push while this job builds and publishes the npm packages
+# with provenance through npm trusted publishing (OIDC), so no NPM_TOKEN secret exists.
 on:
   push:
     branches: [master]
@@ -53,10 +53,8 @@ jobs:
           cache: false
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
-      - name: Build
-        run: pnpm -r build
-      - name: Test
-        run: pnpm -r test
+      - name: Build publishable packages
+        run: pnpm -r --filter '!@local-decider/hooks' build
       # Publishes only package versions not yet on the registry; private packages are skipped.
       - name: Publish
         run: pnpm -r publish --access public --provenance --no-git-checks
