@@ -10,7 +10,7 @@ import {
   type DecideCall,
   type HookInput,
   type PermissionMode,
-} from '@local-decider/core';
+} from '@ziptie-soft/local-decider-core';
 
 import { permissionInput, projectLabel } from './permission-input.ts';
 import { parseTurns, type TranscriptSlice } from './transcript.ts';

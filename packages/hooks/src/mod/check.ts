@@ -2,7 +2,7 @@
  * The mod's pure decisions: when a plain `ask` may be upgraded, which calls the local decider
  * never gets to allow, and how a refused call reads. No I/O, no `node:` imports.
  */
-import { asRecord, resolveSegments, type DecideResponse } from '@local-decider/core';
+import { asRecord, resolveSegments, type DecideResponse } from '@ziptie-soft/local-decider-core';
 
 import { baseName, commandWords, splitShell, type Segment } from '../shell.ts';
 import type { ToolCallResult, ToolCheckEvent, ToolCheckResult } from './types.ts';

@@ -6,7 +6,7 @@ import {
   type SystemOneRequest,
   type SystemOneResponse,
   type WireAnswer,
-} from '@local-decider/core';
+} from '@ziptie-soft/local-decider-core';
 import { z } from 'zod';
 
 import { defineEngine } from '../descriptor.ts';

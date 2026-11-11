@@ -47,14 +47,14 @@ See [docs/architecture.md](docs/architecture.md) for the full pipeline.
 
 | Path | What it is |
 |---|---|
-| [`packages/core`](packages/core) | `@local-decider/core`: `/v1/systemone` types, policy schema and rules, redaction, truncation, gateway client |
-| [`packages/gateway`](packages/gateway) | `local-decider`: the local HTTP service, engine adapters, MCP server and CLI |
+| [`packages/core`](packages/core) | `@ziptie-soft/local-decider-core`: `/v1/systemone` types, policy schema and rules, redaction, truncation, gateway client |
+| [`packages/gateway`](packages/gateway) | `@ziptie-soft/local-decider`: the local HTTP service, engine adapters, MCP server and CLI |
 | [`packages/hooks`](packages/hooks) | The Claude Code and Codex hook runner, bundled into `plugins/local-decider/dist/hook.mjs` at release and published to npm |
-| [`packages/paseo-plugin`](packages/paseo-plugin) | `paseo-plugin-local-decider`: the Paseo plugin, with settings, chat rows and sidebar status |
+| [`packages/paseo-plugin`](packages/paseo-plugin) | `@ziptie-soft/paseo-plugin-local-decider`: the Paseo plugin, with settings, chat rows and sidebar status |
 | [`plugins/local-decider`](plugins/local-decider) | One plugin directory for both Claude Code and Codex (both manifests) |
 | [`policies/`](policies) | Default policies: `turn-outcome`, `permission`, `routing` (plus two variants), `command-risk`; fixtures in `policies/fixtures/` |
 | [`schemas/`](schemas) | JSON Schemas for `config.yaml` and policy files |
-| [`docs/`](docs) | Architecture, install, policies, security, benchmarks, ADRs, research notes |
+| [`docs/`](docs) | Architecture, install, policies, security, benchmarks, ADRs |
 
 ## Benefits
 
@@ -118,12 +118,8 @@ The commands below are fish-compatible. [docs/install.md](docs/install.md) has e
 
 ### 1. Gateway and engine
 
-From a checkout (`mise install` provides Node, pnpm and uv):
-
 ```sh
-git clone https://github.com/SkeLLLa/local-decider.git; and cd local-decider
-mise trust; and mise install; and mise run setup; and mise run build
-alias local-decider "node $PWD/packages/gateway/dist/cli.js"
+npm install --global @ziptie-soft/local-decider
 local-decider engine install      # uv venv + weights; cpu on Linux, mlx on Apple Silicon
 local-decider gateway start       # systemd user unit (Linux) or launchd agent (macOS)
 local-decider gateway status
@@ -147,9 +143,7 @@ local-decider decide turn-outcome lastMessage="All tests pass; the PR is open."
 Enable plugins on the daemon first (**Settings → Plugins → Enable plugins**), then:
 
 ```sh
-paseo plugin install github:SkeLLLa/local-decider:packages/paseo-plugin
-# or from your checkout (the plugin directory, not the repo root)
-paseo plugin install (pwd)/packages/paseo-plugin
+paseo plugin install npm:@ziptie-soft/paseo-plugin-local-decider
 paseo plugin ls                   # local-decider should show "running"
 ```
 
@@ -158,8 +152,8 @@ Open **Settings → Local decider** to pick the engine and model, and set each p
 ### 3. Claude Code and Codex
 
 ```sh
-claude plugin marketplace add SkeLLLa/local-decider; and claude plugin install local-decider@local-decider
-codex plugin marketplace add SkeLLLa/local-decider; and codex plugin add local-decider@local-decider
+claude plugin marketplace add ziptie-soft/local-decider; and claude plugin install local-decider@ziptie-soft
+codex plugin marketplace add ziptie-soft/local-decider; and codex plugin add local-decider@ziptie-soft
 ```
 
 For Codex, open the TUI and run `/hooks` to review and trust the hooks; Codex does not run
@@ -315,7 +309,7 @@ Latency of one 4-option question, measured at the client (p50):
 
 - Through the gateway, a short decision took 250 ms on `d3:nano` and about 600 ms on `d3:mini`.
   `d3:mini` answered all six integration cases correctly with p ≥ 0.91 and is the recommended
-  FastFlowLM model ([research notes](docs/research/flm-decision-models.md)).
+  FastFlowLM model.
 - End-to-end, all four hooks fired in Claude Code 2.1.311 and Codex CLI 0.164.0, and the Paseo
   plugin classified a turn in Paseo 0.15.3. On CPU every decision exceeded the 1.5 s hook budget,
   so the hooks failed open while the gateway still logged the shadow decisions.
@@ -330,7 +324,6 @@ Latency of one 4-option question, measured at the client (p50):
 - [Supervised child agents](docs/supervised-subagents.md)
 - [Benchmarks](docs/benchmarks.md) and [end-to-end demos](docs/demos.md)
 - [Architecture decision records](docs/adr/)
-- [Research notes](docs/research/): engines, hooks, Paseo plugin API, FastFlowLM models
 - [Paseo plugin](packages/paseo-plugin/README.md) and its [settings overview](packages/paseo-plugin/OVERVIEW.md)
 - [Claude Code and Codex plugin](plugins/local-decider/README.md)
 

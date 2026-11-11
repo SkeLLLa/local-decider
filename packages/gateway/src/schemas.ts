@@ -3,7 +3,7 @@
  * drift. Editors (yaml-language-server) and agents use them; the repo keeps a copy in `schemas/`
  * that a test compares with this output.
  */
-import { policySchema } from '@local-decider/core';
+import { policySchema } from '@ziptie-soft/local-decider-core';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { z } from 'zod';
@@ -11,7 +11,7 @@ import { z } from 'zod';
 import { configSchema } from './config.ts';
 
 /** `$id`s point at the repository copy, so a schema can be fetched as well as written locally. */
-const BASE = 'https://raw.githubusercontent.com/SkeLLLa/local-decider/main/schemas';
+const BASE = 'https://raw.githubusercontent.com/ziptie-soft/local-decider/main/schemas';
 
 function schemaOf(schema: z.ZodType, name: string, title: string): Record<string, unknown> {
   return {

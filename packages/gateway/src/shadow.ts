@@ -1,4 +1,4 @@
-import type { LogRecord } from '@local-decider/core';
+import type { LogRecord } from '@ziptie-soft/local-decider-core';
 import {
   appendFileSync,
   closeSync,

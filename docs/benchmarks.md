@@ -44,8 +44,7 @@ performance`), measured directly against FLM's `/v1/systemone`.
 - d3:mini answered all six integration cases correctly with p ≥ 0.91 (turn outcome done and
   needs_input, command risk dangerous and safe, permission allow and deny). That includes
   `cat README.md` at p(allow) = 0.97, above the 0.95 auto-allow bar the 2B missed (0.93).
-- d3:mini is the recommended FastFlowLM model and d3:nano the fast one; see
-  [research/flm-decision-models.md](research/flm-decision-models.md).
+- d3:mini is the recommended FastFlowLM model and d3:nano the fast one.
 
 ## Other paths
 
@@ -53,4 +52,3 @@ performance`), measured directly against FLM's `/v1/systemone`.
   on an M4 Pro.
 - **Encoder models:** GLiClass measured 99 ms on a short state and 455 ms at about 600 tokens on
   this CPU. There is no engine adapter for it; it can be reached as a `systemone-remote` server.
-  See [research/engines.md](research/engines.md), which also covers the llama.cpp Vulkan route.

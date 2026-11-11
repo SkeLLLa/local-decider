@@ -25,7 +25,7 @@ import {
   type ShadowRecord,
   type SystemOneRequest,
   type SystemOneResponse,
-} from '@local-decider/core';
+} from '@ziptie-soft/local-decider-core';
 import { randomUUID } from 'node:crypto';
 
 import { CallStore, type CallDecision } from './call-store.ts';

@@ -1,4 +1,9 @@
-import type { LogRecord, OutcomeRecord, ShadowRecord, UsageRecord } from '@local-decider/core';
+import type {
+  LogRecord,
+  OutcomeRecord,
+  ShadowRecord,
+  UsageRecord,
+} from '@ziptie-soft/local-decider-core';
 import { createHash } from 'node:crypto';
 import {
   chmodSync,

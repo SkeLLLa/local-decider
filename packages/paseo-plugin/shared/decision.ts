@@ -1,6 +1,6 @@
 // fallow-ignore-file code-duplication
 /**
- * Wire types of the local-decider gateway, copied from `@local-decider/core` (decision.ts,
+ * Wire types of the local-decider gateway, copied from `@ziptie-soft/local-decider-core` (decision.ts,
  * policy.ts, systemone.ts, client.ts). Paseo's bundler applies its runtime-boundary rules to type
  * imports too, and the published plugin does not ship the workspace package, so the plugin keeps
  * its own copy. `test/types.test.ts` fails the typecheck when the two drift apart.

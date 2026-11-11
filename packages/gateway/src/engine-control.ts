@@ -1,4 +1,9 @@
-import { MODES, PolicyError, type Mode, type PolicyThreshold } from '@local-decider/core';
+import {
+  MODES,
+  PolicyError,
+  type Mode,
+  type PolicyThreshold,
+} from '@ziptie-soft/local-decider-core';
 import { mkdirSync } from 'node:fs';
 import { totalmem } from 'node:os';
 import { join } from 'node:path';

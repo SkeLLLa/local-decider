@@ -1,11 +1,15 @@
 {
-  "name": "local-decider",
-  "owner": { "name": "SkeLLLa" },
+  "name": "ziptie-soft",
+  "owner": { "name": "ziptie-soft" },
   "description": "local-decider plugins for Claude Code",
   "plugins": [
     {
       "name": "local-decider",
-      "source": { "source": "npm", "package": "@local-decider/agent-plugin", "version": "0.1.0" },
+      "source": {
+        "source": "npm",
+        "package": "@ziptie-soft/local-decider-agent-plugin",
+        "version": "1.0.0"
+      },
       "description": "Local decision-model hooks: command guard, permission triage, routing hints, turn outcomes (fail-open)"
     }
   ]

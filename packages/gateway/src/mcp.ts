@@ -1,7 +1,7 @@
-import type { DecideRequest, DecideResponse } from '@local-decider/core';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
+import type { DecideRequest, DecideResponse } from '@ziptie-soft/local-decider-core';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { z } from 'zod';
 
@@ -26,7 +26,7 @@ export function deciderBackend(decider: Decider): McpBackend {
   };
 }
 
-const VERSION = '0.0.0';
+const VERSION = '1.0.0'; // x-release-please-version
 
 function toolResult(value: unknown): { content: { type: 'text'; text: string }[] } {
   return { content: [{ type: 'text', text: JSON.stringify(value, null, 2) }] };

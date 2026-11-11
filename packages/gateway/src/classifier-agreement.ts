@@ -1,4 +1,4 @@
-import type { OutcomeRecord, ShadowRecord } from '@local-decider/core';
+import type { OutcomeRecord, ShadowRecord } from '@ziptie-soft/local-decider-core';
 
 import { percentile, sortedLatencies, wilsonLower } from './numbers.ts';
 

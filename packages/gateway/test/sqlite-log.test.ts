@@ -1,4 +1,4 @@
-import type { LogRecord, Policy } from '@local-decider/core';
+import type { LogRecord, Policy } from '@ziptie-soft/local-decider-core';
 import assert from 'node:assert/strict';
 import { mkdirSync, mkdtempSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';

@@ -1,4 +1,4 @@
-# paseo-plugin-local-decider
+# @ziptie-soft/paseo-plugin-local-decider
 
 A [Paseo](https://paseo.sh) plugin that uses a small **local decision model** for routine,
 fixed-choice calls: did an agent's turn finish, get stuck, need you, or fail; can a tool
@@ -21,16 +21,14 @@ until you switch a policy to `act`.
 Plugins are trusted, unsandboxed code, so read the source before you install.
 
 ```sh
-paseo plugin install github:SkeLLLa/local-decider:packages/paseo-plugin
-# pin a branch, tag or commit
-paseo plugin install github:SkeLLLa/local-decider:packages/paseo-plugin --ref main
+paseo plugin install npm:@ziptie-soft/paseo-plugin-local-decider
+# or straight from GitHub, optionally pinned to a branch, tag or commit
+paseo plugin install github:ziptie-soft/local-decider:packages/paseo-plugin --ref master
 # or from a local checkout: the plugin directory, not the repository root
 paseo plugin install (pwd)/local-decider/packages/paseo-plugin
 ```
 
-Once the package is published to npm, `paseo plugin install npm:paseo-plugin-local-decider`
-works too. The plugin imports only modules Paseo provides, so no install step or build is
-needed.
+The plugin imports only modules Paseo provides, so no install step or build is needed.
 
 Run `paseo plugin ls` and check that `local-decider` shows `running`. Upgrade with
 `paseo plugin update local-decider`; after pulling a local checkout, use

@@ -1,5 +1,5 @@
 {
-  "$id": "https://raw.githubusercontent.com/SkeLLLa/local-decider/main/schemas/policy.schema.json",
+  "$id": "https://raw.githubusercontent.com/ziptie-soft/local-decider/main/schemas/policy.schema.json",
   "title": "local-decider policy",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "type": "object",

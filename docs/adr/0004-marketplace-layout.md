@@ -8,7 +8,7 @@ Codex reads `.codex-plugin/plugin.json` before `.claude-plugin/plugin.json` and
 `.agents/plugins/marketplace.json` before `.claude-plugin/marketplace.json`, uses a
 Claude-compatible hooks file format, and exports `CLAUDE_PLUGIN_ROOT`. Claude's
 `plugin validate --strict` rejects Codex-only marketplace keys. Installs copy only the plugin
-directory. (See [../research/claude-codex-hooks.md](../research/claude-codex-hooks.md).)
+directory.
 
 ## Decision
 
@@ -28,5 +28,5 @@ no dependencies. It is no longer committed; ADR-0009 builds it at release.
 
 ## Consequences
 
-One repo, `claude plugin marketplace add SkeLLLa/local-decider` and
-`codex plugin marketplace add SkeLLLa/local-decider`. The bundle is not in git (see ADR-0009).
+One repo, `claude plugin marketplace add ziptie-soft/local-decider` and
+`codex plugin marketplace add ziptie-soft/local-decider`. The bundle is not in git (see ADR-0009).

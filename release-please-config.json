@@ -15,7 +15,13 @@
       "component": "core"
     },
     "packages/gateway": {
-      "component": "local-decider"
+      "component": "local-decider",
+      "extra-files": [
+        {
+          "type": "generic",
+          "path": "src/mcp.ts"
+        }
+      ]
     },
     "packages/paseo-plugin": {
       "component": "paseo-plugin"
@@ -23,8 +29,16 @@
     "plugins/local-decider": {
       "component": "agent-plugin",
       "extra-files": [
-        { "type": "json", "path": ".claude-plugin/plugin.json", "jsonpath": "$.version" },
-        { "type": "json", "path": ".codex-plugin/plugin.json", "jsonpath": "$.version" },
+        {
+          "type": "json",
+          "path": ".claude-plugin/plugin.json",
+          "jsonpath": "$.version"
+        },
+        {
+          "type": "json",
+          "path": ".codex-plugin/plugin.json",
+          "jsonpath": "$.version"
+        },
         {
           "type": "json",
           "path": "/.claude-plugin/marketplace.json",

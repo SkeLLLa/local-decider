@@ -1,4 +1,4 @@
-import type { DecideRequest, DecideResponse } from '@local-decider/core';
+import type { DecideRequest, DecideResponse } from '@ziptie-soft/local-decider-core';
 
 export interface PolicyEvalCase {
   readonly input: DecideRequest['input'];

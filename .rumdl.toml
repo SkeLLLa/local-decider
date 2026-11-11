@@ -1,15 +1,20 @@
 [global]
-exclude = ["node_modules", "**/node_modules", ".claude", ".serena", "**/CHANGELOG.md", "dist"]
+exclude = [
+  "node_modules",
+  "**/node_modules",
+  ".claude",
+  ".serena",
+  "**/CHANGELOG.md",
+  "dist",
+  "docs/research",
+  "docs/review", # local-only notes, git-ignored
+]
 
 # Prose is hand-wrapped at 100 columns; tables and code blocks carry long literal lines.
 [MD013]
 line-length = 100
 tables = false
 code-blocks = false
-
-# Research notes quote schemas, URLs and CLI output verbatim.
-[per-file-ignores]
-"docs/research/*.md" = ["MD013"]
 
 # Collapsible sections, e.g. the README screenshots.
 [MD033]

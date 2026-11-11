@@ -1,4 +1,4 @@
-import type { OutcomeRecord, Policy, ShadowRecord } from '@local-decider/core';
+import type { OutcomeRecord, Policy, ShadowRecord } from '@ziptie-soft/local-decider-core';
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 

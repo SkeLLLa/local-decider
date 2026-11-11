@@ -1,4 +1,4 @@
-import { tokenAllowed } from '@local-decider/core';
+import { tokenAllowed } from '@ziptie-soft/local-decider-core';
 
 import type { GatewayConfig } from './config.ts';
 import { getJson } from './engines/http.ts';

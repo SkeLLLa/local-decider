@@ -1,6 +1,6 @@
 {
-  "name": "@local-decider/hooks",
-  "version": "0.0.0",
+  "name": "@ziptie-soft/local-decider-hooks",
+  "version": "1.0.0",
   "private": true,
   "description": "Claude Code and Codex hook runner for local-decider, bundled into plugins/local-decider/dist/hook.mjs.",
   "license": "Apache-2.0",
@@ -11,7 +11,7 @@
     "typecheck": "tsc -p tsconfig.json"
   },
   "devDependencies": {
-    "@local-decider/core": "workspace:*",
+    "@ziptie-soft/local-decider-core": "workspace:*",
     "esbuild": "^0.28.0"
   },
   "engines": {

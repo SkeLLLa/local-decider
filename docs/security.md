@@ -82,20 +82,9 @@ Engine HTTP clients refuse redirects, so a configured URL cannot bounce the stat
 elsewhere. The gateway does not run anything for these engines: it starts no LM Studio, Ollama or
 llama-server process, and model ids from `/models` are used as data only.
 
-Configure these connections in Paseo by entering the API base URL, optionally using **Find local
-servers** and **Find models**, then saving. Choose **Use** separately to activate the connection.
-The CLI equivalent is `local-decider engine configure <openai-compatible|lmstudio> --url URL
---model ID [--token-env NAME]`; it writes directly to the effective config file even when the
-gateway is stopped. That file defaults to `~/.config/local-decider/config.yaml` and can be moved
-with `LOCAL_DECIDER_CONFIG_DIR`. Only the token environment variable's name is stored. The token
-value remains in the environment and is never accepted by the configure command or Paseo form.
-
-When the configured id matches `engine.type`, that primary `engine:` block wins over
-`engines.<id>:`. Otherwise the connection is stored under `engines.<id>:`. The active engine and
-model come from `selection`; save does not activate a connection. A running gateway watches the
-config file and applies valid connection edits live, so changing a URL, model, or token variable
-name does not require a restart. Keep the configured server trusted: it receives the redacted
-decision state sent to the selected engine.
+Only the name of the token's environment variable is stored in `config.yaml`. Neither the Paseo
+form nor `local-decider engine configure` accepts the token value itself. Setup steps are in
+[install.md](install.md#openai-compatible-servers).
 
 ## What it does not protect against
 
@@ -104,12 +93,9 @@ decision state sent to the selected engine.
   make the label right.
 - **Redaction gaps.** Redaction is pattern matching. Unusual secret formats reach the local
   engine (still never the log).
-- **Outcome reports.** Only reports carrying the gateway's private `report-token` count toward
-  precedent or calibration hints. Other reports are retained as `unverified` for agreement and
-  reliability stats. The token is stored in `<config dir>/report-token` with mode 0600 and is sent
-  by the Paseo plugin server. An agent running as the same user without a sandbox can read this
-  file and forge verified reports. Claude Code and Codex sandboxes block reads outside the
-  workspace, including this config path.
+- **Forged outcome reports.** An agent running as you without a sandbox can read the
+  `report-token` and forge verified outcomes (see [Outcomes](#outcomes)). So can a compromised
+  Paseo plugin process.
 - **Bad supervision.** A `supervised` outcome inherits the parent agent's judgement. Inconsistent
   parent answers teach inconsistent precedent.
 - **Model drift.** Calibration is per model. Thresholds tuned on one model do not transfer;
@@ -118,10 +104,6 @@ decision state sent to the selected engine.
   policies.
 
 ## Known limits
-
-The outcome token protects against sandboxed agents and unrelated local processes. It does not
-protect against code running as the same user without a sandbox, or against a compromised Paseo
-plugin process.
 
 - **CPU latency.** On CPU the 2B model takes seconds per decision, longer than the hooks' 1.5 s
   budget. There it suits shadow logging, turn outcomes and routing hints.

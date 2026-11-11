@@ -5,7 +5,7 @@ import {
   SCOPES,
   type DecideRequest,
   type Scope,
-} from '@local-decider/core';
+} from '@ziptie-soft/local-decider-core';
 import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { parseArgs } from 'node:util';

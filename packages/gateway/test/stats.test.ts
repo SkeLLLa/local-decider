@@ -3,7 +3,7 @@ import {
   type LogRecord,
   type ShadowRecord,
   type UsageRecord,
-} from '@local-decider/core';
+} from '@ziptie-soft/local-decider-core';
 import assert from 'node:assert/strict';
 import { appendFileSync, mkdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';

@@ -1,11 +1,11 @@
 {
-  "name": "@local-decider/agent-plugin",
-  "version": "0.1.0",
+  "name": "@ziptie-soft/local-decider-agent-plugin",
+  "version": "1.0.0",
   "description": "local-decider hooks for Claude Code and Codex (built plugin directory)",
   "license": "Apache-2.0",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/SkeLLLa/local-decider.git",
+    "url": "git+https://github.com/ziptie-soft/local-decider.git",
     "directory": "plugins/local-decider"
   },
   "files": [
@@ -14,7 +14,9 @@
     "hooks",
     "dist",
     "skills",
-    "README.md"
+    "README.md",
+    "LICENSE",
+    "NOTICE"
   ],
   "publishConfig": {
     "access": "public",

@@ -2,7 +2,7 @@
  * DecideResponse → harness stdout. An empty string means "abstain": exit 0 with no output, so the
  * harness runs its normal flow. Only enforced decisions produce output (ADR-0005).
  */
-import type { DecideResponse } from '@local-decider/core';
+import type { DecideResponse } from '@ziptie-soft/local-decider-core';
 
 import type { GuardHit } from './guard.ts';
 import type { HookEvent, HookHarness } from './mapping.ts';

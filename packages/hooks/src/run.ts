@@ -11,7 +11,7 @@ import {
   type DecideRequest,
   type DecideResponse,
   type HookInput,
-} from '@local-decider/core';
+} from '@ziptie-soft/local-decider-core';
 
 import { guardCommand } from './guard.ts';
 import {

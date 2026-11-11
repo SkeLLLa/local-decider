@@ -1,4 +1,4 @@
-import type { Question } from '@local-decider/core';
+import type { Question } from '@ziptie-soft/local-decider-core';
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 

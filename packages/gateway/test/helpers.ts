@@ -1,4 +1,4 @@
-import type { SystemOneRequest, SystemOneResponse } from '@local-decider/core';
+import type { SystemOneRequest, SystemOneResponse } from '@ziptie-soft/local-decider-core';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';

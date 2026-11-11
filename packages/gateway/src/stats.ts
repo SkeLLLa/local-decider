@@ -7,7 +7,7 @@ import type {
   Scope,
   ShadowRecord,
   UsageRecord,
-} from '@local-decider/core';
+} from '@ziptie-soft/local-decider-core';
 
 import { classifierAgreement, type ClassifierAgreement } from './classifier-agreement.ts';
 import { percentile, sortedLatencies, wilsonUpper } from './numbers.ts';

@@ -1,4 +1,4 @@
-import type { Action, PermissionMode } from '@local-decider/core';
+import type { Action, PermissionMode } from '@ziptie-soft/local-decider-core';
 
 const CALL_STORE_MAX = 2000;
 const CALL_STORE_TTL_MS = 10 * 60 * 1000;

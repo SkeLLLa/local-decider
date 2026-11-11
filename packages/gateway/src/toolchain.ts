@@ -85,7 +85,7 @@ const DEFS: Readonly<Record<PathKey, PathDef>> = {
     label: 'strands-decider',
     kind: 'executable',
     tool: 'strands-decider',
-    installUrl: 'https://github.com/SkeLLLa/local-decider/blob/master/docs/install.md#2-engine',
+    installUrl: 'https://github.com/ziptie-soft/local-decider/blob/master/docs/install.md#2-engine',
     auto: (paths, env) => [
       ['managed', strandsBinary(paths)],
       ['path', onPath('strands-decider', env)],

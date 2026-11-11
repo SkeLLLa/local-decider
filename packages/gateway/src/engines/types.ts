@@ -1,4 +1,4 @@
-import type { SystemOneRequest, SystemOneResponse } from '@local-decider/core';
+import type { SystemOneRequest, SystemOneResponse } from '@ziptie-soft/local-decider-core';
 
 export type EngineState = 'stopped' | 'starting' | 'ready' | 'failed';
 

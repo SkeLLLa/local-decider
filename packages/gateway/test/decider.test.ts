@@ -1,4 +1,4 @@
-import { parsePolicy, type Mode } from '@local-decider/core';
+import { parsePolicy, type Mode } from '@ziptie-soft/local-decider-core';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';

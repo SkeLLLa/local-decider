@@ -2,7 +2,7 @@
  * `local-decider config|routing|policies use|mode`: settings commands. They edit config.yaml
  * directly, so they work while the gateway is down; a running gateway applies the edit itself.
  */
-import { HARNESSES, MODES, SCOPES } from '@local-decider/core';
+import { HARNESSES, MODES, SCOPES } from '@ziptie-soft/local-decider-core';
 import { join } from 'node:path';
 import { parseArgs } from 'node:util';
 

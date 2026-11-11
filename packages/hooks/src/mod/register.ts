@@ -5,7 +5,7 @@
  * every other path returns what Claude Code decided. A failure skips the hook, so the classifier
  * decides as if the mod were not installed.
  */
-import type { DecideResponse } from '@local-decider/core';
+import type { DecideResponse } from '@ziptie-soft/local-decider-core';
 
 import {
   callAllows,

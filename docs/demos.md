@@ -8,7 +8,7 @@ are from that machine only.
 
 ```text
 $ local-decider gateway start
-systemd user unit /home/m03geek/.config/systemd/user/local-decider.service started
+systemd user unit ~/.config/systemd/user/local-decider.service started
 $ local-decider gateway status
 service (systemd): active
 gateway http://127.0.0.1:8765: {"status":"ok","engine":"strands-decider","engineState":"ready",
@@ -45,8 +45,8 @@ All four hooks fired. Shadow-log records, summarised:
 Installed from the local marketplace, hooks trusted in the TUI, then:
 
 ```sh
-codex plugin marketplace add /home/m03geek/Dev/os/local-decider
-codex plugin add local-decider@local-decider
+codex plugin marketplace add ~/src/local-decider
+codex plugin add local-decider@ziptie-soft
 # codex → /hooks → trust the four local-decider hooks
 codex exec --skip-git-repo-check -s read-only "Run the shell command: cat notes.txt. Then reply with its content and the word DONE."
 ```
@@ -62,8 +62,8 @@ codex exec --skip-git-repo-check -s read-only "Run the shell command: cat notes.
 ## Paseo 0.15.3
 
 ```text
-$ paseo plugin install /home/m03geek/Dev/os/local-decider/packages/paseo-plugin
-local-decider   running   yes   /home/m03geek/Dev/os/local-decider/packages/paseo-plugin
+$ paseo plugin install ~/src/local-decider/packages/paseo-plugin
+local-decider   running   yes   ~/src/local-decider/packages/paseo-plugin
 $ paseo plugin logs local-decider
 2026-11-10T12:49:22.114Z  stdout  [paseo] Loading plugin
 2026-11-10T12:49:22.960Z  stdout  [paseo] Plugin ready

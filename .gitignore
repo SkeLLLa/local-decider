@@ -20,8 +20,9 @@ lcov.info
 .local-decider/
 packages/gateway/policies/
 packages/gateway/schemas/
-# Built at release and published in @local-decider/agent-plugin (dist/ is covered above).
+# Built at release and published in @ziptie-soft/local-decider-agent-plugin (dist/ is covered above).
 plugins/local-decider/hooks/register.mjs
 
-# Agent review/scratch docs
+# Agent research, review and scratch docs (kept locally, not in git)
+docs/research/
 docs/review/

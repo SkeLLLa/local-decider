@@ -1,10 +1,10 @@
 {
   "name": "local-decider",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "description": "Routes routine permission, command-risk, routing and turn-outcome decisions through a local decision-model gateway. Shadow by default; fails open.",
-  "author": { "name": "SkeLLLa" },
-  "homepage": "https://github.com/SkeLLLa/local-decider",
-  "repository": "https://github.com/SkeLLLa/local-decider",
+  "author": { "name": "ziptie-soft" },
+  "homepage": "https://github.com/ziptie-soft/local-decider",
+  "repository": "https://github.com/ziptie-soft/local-decider",
   "license": "Apache-2.0",
   "keywords": ["permissions", "hooks", "decision-model", "local"],
   "hooks": "./hooks/codex-hooks.json",
@@ -12,7 +12,7 @@
   "interface": {
     "displayName": "Local Decider",
     "shortDescription": "Local decision-model approvals and command guard",
-    "developerName": "SkeLLLa",
+    "developerName": "ziptie-soft",
     "category": "Productivity",
     "capabilities": []
   }

@@ -1,4 +1,4 @@
-import type { DecideResponse } from '@local-decider/core';
+import type { DecideResponse } from '@ziptie-soft/local-decider-core';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { describe, it } from 'node:test';

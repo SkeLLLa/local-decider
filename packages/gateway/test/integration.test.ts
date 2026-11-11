@@ -1,4 +1,4 @@
-import type { DecideResponse } from '@local-decider/core';
+import type { DecideResponse } from '@ziptie-soft/local-decider-core';
 /**
  * Real-model integration test. Opt in with LOCAL_DECIDER_IT_ENGINE_URL pointing at a running
  * `strands-decider serve` (see `mise run test:integration`); skipped otherwise.

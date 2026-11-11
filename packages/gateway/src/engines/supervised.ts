@@ -1,4 +1,4 @@
-import type { SystemOneRequest, SystemOneResponse } from '@local-decider/core';
+import type { SystemOneRequest, SystemOneResponse } from '@ziptie-soft/local-decider-core';
 import { spawn, type ChildProcess } from 'node:child_process';
 import { createWriteStream, existsSync, mkdirSync, renameSync, rmSync, statSync } from 'node:fs';
 import { createServer } from 'node:net';

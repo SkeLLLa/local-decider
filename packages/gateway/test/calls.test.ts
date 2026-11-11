@@ -1,4 +1,4 @@
-import type { ShadowRecord } from '@local-decider/core';
+import type { ShadowRecord } from '@ziptie-soft/local-decider-core';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';

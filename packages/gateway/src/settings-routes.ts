@@ -2,7 +2,7 @@
  * Settings routes over config.yaml: read it, reload it after an outside edit, map routing
  * presets per harness, and fetch the prompt that has an agent write a policy variant.
  */
-import { HARNESSES } from '@local-decider/core';
+import { HARNESSES } from '@ziptie-soft/local-decider-core';
 
 import type { PresetTarget } from './config.ts';
 import type { Decider } from './decider.ts';

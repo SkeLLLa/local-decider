@@ -1,7 +1,7 @@
-import type * as core from '@local-decider/core';
+import type * as core from '@ziptie-soft/local-decider-core';
 /**
  * The plugin copies the gateway wire types (shared/decision.ts) instead of importing them; this
- * file fails `tsc` when they drift from `@local-decider/core`.
+ * file fails `tsc` when they drift from `@ziptie-soft/local-decider-core`.
  */
 import assert from 'node:assert/strict';
 import { it } from 'node:test';
@@ -23,6 +23,6 @@ export type Checks = [
   Assert<Same<local.UsageReport, Omit<core.UsageRecord, 'kind' | 'ts'>>>,
 ];
 
-it('shared/decision.ts matches @local-decider/core (checked by tsc)', () => {
+it('shared/decision.ts matches @ziptie-soft/local-decider-core (checked by tsc)', () => {
   assert.ok(true);
 });

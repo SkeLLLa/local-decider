@@ -8,7 +8,7 @@ import { jsonSchemas, schemaText } from '../src/schemas.ts';
 const REPO_SCHEMAS = join(import.meta.dirname, '..', '..', '..', 'schemas');
 
 describe('JSON Schemas', () => {
-  it('match the committed copies (run `pnpm --filter local-decider schemas`)', () => {
+  it('match the committed copies (run `pnpm --filter @ziptie-soft/local-decider schemas`)', () => {
     for (const [name, schema] of Object.entries(jsonSchemas())) {
       // Compared as data: a formatter may reflow the committed file.
       const committed: unknown = JSON.parse(readFileSync(join(REPO_SCHEMAS, name), 'utf8'));

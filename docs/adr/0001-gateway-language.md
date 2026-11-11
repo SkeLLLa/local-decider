@@ -11,7 +11,7 @@ The reference engine (strands-decider) is Python with torch; other engines are n
 
 ## Decision
 
-The gateway is Node/TypeScript and shares `@local-decider/core` (types, policy schema, client)
+The gateway is Node/TypeScript and shares `@ziptie-soft/local-decider-core` (types, policy schema, client)
 with the adapters. Python engines run as child processes from a uv-managed venv under
 `~/.local/share/local-decider/venvs/<engine>`, synced from a pinned uv project shipped in the
 gateway package.

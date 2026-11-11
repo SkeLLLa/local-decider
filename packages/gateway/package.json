@@ -1,11 +1,11 @@
 {
-  "name": "local-decider",
-  "version": "0.0.0",
+  "name": "@ziptie-soft/local-decider",
+  "version": "1.0.0",
   "description": "Local decision-model gateway for Paseo, Claude Code and Codex: /v1/systemone, policies, shadow log, MCP.",
   "license": "Apache-2.0",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/SkeLLLa/local-decider.git",
+    "url": "git+https://github.com/ziptie-soft/local-decider.git",
     "directory": "packages/gateway"
   },
   "bin": {
@@ -36,8 +36,8 @@
     "typecheck": "tsc -p tsconfig.json"
   },
   "dependencies": {
-    "@local-decider/core": "workspace:*",
     "@modelcontextprotocol/sdk": "^1.32.2",
+    "@ziptie-soft/local-decider-core": "workspace:*",
     "yaml": "^2.9.1",
     "zod": "^4.6.7"
   },

@@ -1,11 +1,11 @@
 {
-  "name": "paseo-plugin-local-decider",
-  "version": "0.0.0",
+  "name": "@ziptie-soft/paseo-plugin-local-decider",
+  "version": "1.0.0",
   "description": "Paseo plugin for local-decider: turn outcomes, permission triage and model routing through a local System One gateway.",
   "license": "Apache-2.0",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/SkeLLLa/local-decider.git",
+    "url": "git+https://github.com/ziptie-soft/local-decider.git",
     "directory": "packages/paseo-plugin"
   },
   "files": [
@@ -34,9 +34,9 @@
     "@getpaseo/client": "0.15.3",
     "@getpaseo/plugin": "0.15.3",
     "@getpaseo/protocol": "0.15.3",
-    "@local-decider/core": "workspace:*",
     "@tanstack/react-query": "^5.107.1",
     "@types/react": "~19.2.18",
+    "@ziptie-soft/local-decider-core": "workspace:*",
     "react": "19.1.0",
     "react-native": "0.81.5",
     "zod": "^4.6.7"

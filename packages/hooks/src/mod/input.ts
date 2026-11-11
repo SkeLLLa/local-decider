@@ -3,7 +3,7 @@
  * itself. Subagent calls get the tool and request only: `messages()` is the main conversation,
  * which is not the subagent's task.
  */
-import { asRecord, firstString, subjectLine } from '@local-decider/core';
+import { asRecord, firstString, subjectLine } from '@ziptie-soft/local-decider-core';
 
 import { permissionInput } from '../permission-input.ts';
 import type { Turn } from '../turns.ts';

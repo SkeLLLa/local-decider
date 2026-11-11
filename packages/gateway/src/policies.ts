@@ -1,4 +1,10 @@
-import { parsePolicy, SCOPES, type Mode, type Policy, type Scope } from '@local-decider/core';
+import {
+  parsePolicy,
+  SCOPES,
+  type Mode,
+  type Policy,
+  type Scope,
+} from '@ziptie-soft/local-decider-core';
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';

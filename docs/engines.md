@@ -4,8 +4,7 @@ An engine turns a `/v1/systemone` request (state plus questions) into answer pro
 gateway has a registry of engine descriptors; the config schema, `GET /v1/engines`, the CLI and
 the Paseo settings page all read it. Decision architecture is in
 [architecture.md](architecture.md); the reasoning behind the registry is in
-[ADR-0008](adr/0008-engine-registry.md). Measurements behind the macOS notes are in
-[research/macos-engines.md](research/macos-engines.md).
+[ADR-0008](adr/0008-engine-registry.md).
 
 ## 1. Engines
 
@@ -84,7 +83,7 @@ new fields is read with defaults (tag = id, supported, calibrated).
 1. Create `engines/<id>/index.ts` exporting `defineEngine({...})`. The `configSchema` must be a
    `z.strictObject` with `type: z.literal('<id>')` and defaults for every field except `model`.
 2. Add it to `ENGINES` in `engines/registry.ts`.
-3. Run `pnpm --filter local-decider schemas` to regenerate the JSON Schemas.
+3. Run `pnpm --filter @ziptie-soft/local-decider schemas` to regenerate the JSON Schemas.
 4. Add a row to the table in section 1. A test fails if an `ENGINES` id is missing from it.
 5. Add tests next to `test/registry.test.ts` and `test/engines/`.
 

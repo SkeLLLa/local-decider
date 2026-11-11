@@ -1,5 +1,5 @@
 // fallow-ignore-file duplicate-export -- Keep GatewayConfig and the registry's public EngineConfig type.
-import { HARNESSES, MODES, SCOPES } from '@local-decider/core';
+import { HARNESSES, MODES, SCOPES } from '@ziptie-soft/local-decider-core';
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { parse as parseYaml } from 'yaml';

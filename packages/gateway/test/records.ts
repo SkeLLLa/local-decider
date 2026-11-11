@@ -1,4 +1,4 @@
-import type { ShadowRecord } from '@local-decider/core';
+import type { ShadowRecord } from '@ziptie-soft/local-decider-core';
 
 export function makeShadowRecord(
   decisionId: string,

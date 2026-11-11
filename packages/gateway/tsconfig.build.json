@@ -4,7 +4,9 @@
     "noEmit": false,
     "outDir": "dist",
     "rootDir": "src",
-    "customConditions": []
+    "customConditions": [],
+    "sourceMap": false,
+    "declarationMap": false
   },
   "include": ["src/**/*"]
 }

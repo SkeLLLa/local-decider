@@ -6,7 +6,7 @@
   "license": "Apache-2.0",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/SkeLLLa/local-decider.git"
+    "url": "git+https://github.com/ziptie-soft/local-decider.git"
   },
   "type": "module",
   "scripts": {

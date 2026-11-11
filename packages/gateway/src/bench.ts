@@ -3,7 +3,7 @@
  * tokens). State is synthetic, deterministic text sized by the gateway's 4-chars-per-token
  * estimate; the engine's own `usage.input_tokens` is reported alongside.
  */
-import type { SystemOneResponse } from '@local-decider/core';
+import type { SystemOneResponse } from '@ziptie-soft/local-decider-core';
 
 export interface BenchResult {
   readonly targetTokens: number;

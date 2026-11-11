@@ -1,4 +1,8 @@
-import { tokenAllowed, type SystemOneRequest, type SystemOneResponse } from '@local-decider/core';
+import {
+  tokenAllowed,
+  type SystemOneRequest,
+  type SystemOneResponse,
+} from '@ziptie-soft/local-decider-core';
 import { z } from 'zod';
 
 import { defineEngine } from './descriptor.ts';

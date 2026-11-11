@@ -1,4 +1,4 @@
-import type { Question } from '@local-decider/core';
+import type { Question } from '@ziptie-soft/local-decider-core';
 import assert from 'node:assert/strict';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import { describe, it } from 'node:test';

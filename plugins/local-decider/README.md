@@ -20,15 +20,15 @@ directory serves both harnesses ([ADR-0004](../../docs/adr/0004-marketplace-layo
 Claude Code:
 
 ```sh
-claude plugin marketplace add SkeLLLa/local-decider
-claude plugin install local-decider@local-decider
+claude plugin marketplace add ziptie-soft/local-decider
+claude plugin install local-decider@ziptie-soft
 ```
 
 Codex:
 
 ```sh
-codex plugin marketplace add SkeLLLa/local-decider
-codex plugin add local-decider@local-decider
+codex plugin marketplace add ziptie-soft/local-decider
+codex plugin add local-decider@ziptie-soft
 ```
 
 Then open the Codex TUI and run `/hooks` to review and trust the plugin hooks. Codex does not run
@@ -121,15 +121,16 @@ on the agents it launches, so there the hooks run only the guard and `command-ri
 also applies to a `claude -p` or `codex exec` the agent starts itself, since it inherits the
 environment.
 
-`dist/hook.mjs` is generated from `packages/hooks` by `pnpm --filter @local-decider/hooks build`.
-Do not edit it by hand. Neither generated file is committed: the release workflow builds them and
-publishes this directory to npm as `@local-decider/agent-plugin`, which both marketplaces install
+`dist/hook.mjs` is generated from `packages/hooks` by
+`pnpm --filter @ziptie-soft/local-decider-hooks build`. Do not edit it by hand. Neither generated
+file is committed: the release workflow builds them and publishes this directory to npm as
+`@ziptie-soft/local-decider-agent-plugin`, which both marketplaces install
 ([ADR-0009](../../docs/adr/0009-plugin-npm-distribution.md)). The `npm` CLI must be on `PATH`.
 
 ## Development
 
 ```sh
-pnpm --filter @local-decider/hooks build
+pnpm --filter @ziptie-soft/local-decider-hooks build
 claude --plugin-dir plugins/local-decider
 ```
 

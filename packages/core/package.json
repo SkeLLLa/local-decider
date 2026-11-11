@@ -1,11 +1,11 @@
 {
-  "name": "@local-decider/core",
-  "version": "0.0.0",
+  "name": "@ziptie-soft/local-decider-core",
+  "version": "1.0.0",
   "description": "Types, systemone client, policy schema and loader for local-decider.",
   "license": "Apache-2.0",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/SkeLLLa/local-decider.git",
+    "url": "git+https://github.com/ziptie-soft/local-decider.git",
     "directory": "packages/core"
   },
   "files": [

@@ -4,7 +4,7 @@ import type {
   Policy,
   PrecedentTally,
   ShadowRecord,
-} from '@local-decider/core';
+} from '@ziptie-soft/local-decider-core';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const MAX_KEYS = 10_000;

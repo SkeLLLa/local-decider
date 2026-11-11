@@ -7,7 +7,7 @@ import {
   tokenAllowed,
   type DecideRequest,
   type DecideResponse,
-} from '@local-decider/core';
+} from '@ziptie-soft/local-decider-core';
 
 import type { CallInfo } from './check.ts';
 import type { ModApi } from './types.ts';

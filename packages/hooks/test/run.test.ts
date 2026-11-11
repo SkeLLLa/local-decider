@@ -1,4 +1,4 @@
-import type { DecideRequest, DecideResponse } from '@local-decider/core';
+import type { DecideRequest, DecideResponse } from '@ziptie-soft/local-decider-core';
 import assert from 'node:assert/strict';
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';

@@ -20,7 +20,8 @@ workspace refuses versions younger than 3 days (`minimumReleaseAge`).
 - `packages/gateway` — the local service, engine adapters, MCP server, `local-decider` CLI.
 - `packages/paseo-plugin`, `packages/claude-plugin`, `packages/codex-plugin` — thin clients of
   the gateway. They never run models in-process.
-- `policies/` — default policy YAMLs. `docs/` — architecture, ADRs, research notes.
+- `policies/` — default policy YAMLs. `docs/` — human-facing docs and ADRs.
+  Research notes and reviews stay local in the git-ignored `docs/research/` and `docs/review/`.
 
 Workspace packages export a `source` condition pointing at `src/`; tests and `mise run gateway`
 run with `--conditions=source`, builds resolve `dist/`.

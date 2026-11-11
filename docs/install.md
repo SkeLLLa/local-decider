@@ -6,7 +6,7 @@ fish-compatible.
 
 ```mermaid
 flowchart TD
-  S["Clone, mise install, mise run setup, mise run build"] --> Q1{"Which hardware?"}
+  S["npm install --global @ziptie-soft/local-decider"] --> Q1{"Which hardware?"}
   Q1 -->|"AMD Ryzen AI NPU, Linux"| F["engine install --engine fastflowlm --model d3:mini"]
   Q1 -->|"Apple Silicon"| M["engine install (mlx flavour)"]
   Q1 -->|"NVIDIA GPU"| C["engine install --flavor cuda"]
@@ -26,11 +26,17 @@ flowchart TD
 
 ## 1. Gateway
 
-Requirements: Node >= 24 and [uv](https://docs.astral.sh/uv/). `mise install` provides both. The
-packages are not on npm yet, so install from a checkout:
+Requirements: Node >= 24, and [uv](https://docs.astral.sh/uv/) for the strands-decider engine.
 
 ```sh
-git clone https://github.com/SkeLLLa/local-decider.git; and cd local-decider
+npm install --global @ziptie-soft/local-decider
+local-decider --help
+```
+
+To run the latest code instead, build from a checkout (`mise install` provides Node, pnpm and uv):
+
+```sh
+git clone https://github.com/ziptie-soft/local-decider.git; and cd local-decider
 mise trust; and mise install; and mise run setup; and mise run build
 alias local-decider "node $PWD/packages/gateway/dist/cli.js"
 ```
@@ -103,13 +109,8 @@ local-decider engine use lmstudio qwen3-1.7b
 ```
 
 Use `openai-compatible` instead for a custom OpenAI-compatible server. Add `--token-env NAME` if
-it needs a bearer token; `NAME` is the environment variable name, never the token value. Both the
-Paseo form and CLI validate the URL and model before saving. Changes go to
-`~/.config/local-decider/config.yaml` (or the config directory selected by
-`LOCAL_DECIDER_CONFIG_DIR`) and a running gateway reloads them live; no gateway restart is needed.
-The matching `engine:` block takes precedence over `engines.<id>:`. Configure the primary engine
-in `engine:`; configure other engines under `engines.<id>:`. Use `local-decider engine use` to
-activate a saved connection.
+it needs a bearer token; `NAME` is the environment variable name, never the token value. The URL
+and model are checked before saving, and a running gateway picks up the change without a restart.
 
 For manual configuration, set the primary engine in `engine:`:
 
@@ -174,7 +175,7 @@ local-decider gateway status
 **Paseo.** Enable plugins on the daemon (**Settings → Plugins → Enable plugins**), then:
 
 ```sh
-paseo plugin install github:SkeLLLa/local-decider:packages/paseo-plugin
+paseo plugin install npm:@ziptie-soft/paseo-plugin-local-decider
 paseo plugin ls                   # local-decider should show "running"
 ```
 
@@ -183,17 +184,17 @@ Details: [Paseo plugin README](../packages/paseo-plugin/README.md).
 **Claude Code.**
 
 ```sh
-claude plugin marketplace add SkeLLLa/local-decider; and claude plugin install local-decider@local-decider
+claude plugin marketplace add ziptie-soft/local-decider; and claude plugin install local-decider@ziptie-soft
 ```
 
 **Codex.** Codex runs plugin hooks only after you trust them: open the TUI and run `/hooks`.
 
 ```sh
-codex plugin marketplace add SkeLLLa/local-decider; and codex plugin add local-decider@local-decider
+codex plugin marketplace add ziptie-soft/local-decider; and codex plugin add local-decider@ziptie-soft
 ```
 
-Both install the plugin from npm (`@local-decider/agent-plugin`, built at release), so the `npm`
-CLI must be on `PATH`.
+Both install the plugin from npm (`@ziptie-soft/local-decider-agent-plugin`, built at release), so
+the `npm` CLI must be on `PATH`.
 
 Details: [Claude Code and Codex plugin README](../plugins/local-decider/README.md).
 
@@ -202,12 +203,10 @@ Details: [Claude Code and Codex plugin README](../plugins/local-decider/README.m
 ```sh
 local-decider gateway status      # service active, gateway "status":"ok"
 local-decider decide turn-outcome lastMessage="All tests pass; the PR is open."
-local-decider policies eval permission policies/fixtures/permission.jsonl
 local-decider stats
 ```
 
 - `decide` prints the answers, the action and `"enforced": false` (shadow).
-- `policies eval` prints one line per fixture: expected action, returned action, probability.
 - `stats` shows one block per policy once a harness has sent decisions. Use a harness for a few
   minutes and run it again.
 

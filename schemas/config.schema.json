@@ -1,5 +1,5 @@
 {
-  "$id": "https://raw.githubusercontent.com/SkeLLLa/local-decider/main/schemas/config.schema.json",
+  "$id": "https://raw.githubusercontent.com/ziptie-soft/local-decider/main/schemas/config.schema.json",
   "title": "local-decider config.yaml",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "type": "object",

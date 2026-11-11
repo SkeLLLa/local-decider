@@ -1,5 +1,5 @@
 /** `routing.presets` in config.yaml: what `route:<preset>` means for each harness. */
-import type { DecideRequest, DecideResponse, RouteTarget } from '@local-decider/core';
+import type { DecideRequest, DecideResponse, RouteTarget } from '@ziptie-soft/local-decider-core';
 
 import type { GatewayConfig } from './config.ts';
 

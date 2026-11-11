@@ -3,7 +3,7 @@
  * routing, priced only when the user configured a price table, and time spent on permission
  * prompts a policy would have answered. Estimates: the counterfactual run never happens.
  */
-import type { OutcomeRecord, ShadowRecord, UsageRecord } from '@local-decider/core';
+import type { OutcomeRecord, ShadowRecord, UsageRecord } from '@ziptie-soft/local-decider-core';
 import { z } from 'zod';
 
 /** USD per million tokens. `cachedInput` defaults to `input`. */

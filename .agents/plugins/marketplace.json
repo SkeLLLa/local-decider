@@ -1,10 +1,14 @@
 {
-  "name": "local-decider",
+  "name": "ziptie-soft",
   "interface": { "displayName": "Local Decider" },
   "plugins": [
     {
       "name": "local-decider",
-      "source": { "source": "npm", "package": "@local-decider/agent-plugin", "version": "0.1.0" },
+      "source": {
+        "source": "npm",
+        "package": "@ziptie-soft/local-decider-agent-plugin",
+        "version": "1.0.0"
+      },
       "policy": { "installation": "AVAILABLE", "authentication": "ON_INSTALL" },
       "category": "Productivity"
     }
