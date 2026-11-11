@@ -1,8 +1,26 @@
 {
   "name": "@ziptie-soft/paseo-plugin-local-decider",
   "version": "1.0.1",
-  "description": "Paseo plugin for local-decider: turn outcomes, permission triage and model routing through a local System One gateway.",
+  "description": "Paseo plugin for local-decider: auto-allows routine permission prompts, routes new agents to models and flags turns that need you, using a local decision model.",
+  "keywords": [
+    "ai-agents",
+    "claude-code",
+    "codex",
+    "coding-agents",
+    "decision-model",
+    "local-decider",
+    "local-llm",
+    "model-routing",
+    "paseo",
+    "paseo-plugin",
+    "permissions"
+  ],
+  "homepage": "https://github.com/ziptie-soft/local-decider/tree/master/packages/paseo-plugin#readme",
+  "bugs": {
+    "url": "https://github.com/ziptie-soft/local-decider/issues"
+  },
   "license": "Apache-2.0",
+  "author": "ziptie-soft",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/ziptie-soft/local-decider.git",

@@ -1,8 +1,28 @@
 {
   "name": "@ziptie-soft/local-decider-agent-plugin",
   "version": "1.0.0",
-  "description": "local-decider hooks for Claude Code and Codex (built plugin directory)",
+  "description": "Claude Code and Codex plugin for local-decider: command guard, permission triage, routing hints and turn outcomes from a local decision model; fails open.",
+  "keywords": [
+    "ai-agents",
+    "claude-code",
+    "claude-code-plugin",
+    "codex",
+    "codex-plugin",
+    "coding-agents",
+    "command-guard",
+    "decision-model",
+    "hooks",
+    "local-decider",
+    "local-llm",
+    "paseo",
+    "permissions"
+  ],
+  "homepage": "https://github.com/ziptie-soft/local-decider/tree/master/plugins/local-decider#readme",
+  "bugs": {
+    "url": "https://github.com/ziptie-soft/local-decider/issues"
+  },
   "license": "Apache-2.0",
+  "author": "ziptie-soft",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/ziptie-soft/local-decider.git",

@@ -1,8 +1,26 @@
 {
   "name": "@ziptie-soft/local-decider-core",
   "version": "1.0.1",
-  "description": "Types, systemone client, policy schema and loader for local-decider.",
+  "description": "Shared core for local-decider: /v1/systemone types and client, policy schema and rules, secret redaction and truncation.",
+  "keywords": [
+    "ai-agents",
+    "claude-code",
+    "codex",
+    "coding-agents",
+    "decision-model",
+    "local-decider",
+    "local-llm",
+    "paseo",
+    "policy",
+    "redaction",
+    "systemone"
+  ],
+  "homepage": "https://github.com/ziptie-soft/local-decider/tree/master/packages/core#readme",
+  "bugs": {
+    "url": "https://github.com/ziptie-soft/local-decider/issues"
+  },
   "license": "Apache-2.0",
+  "author": "ziptie-soft",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/ziptie-soft/local-decider.git",
