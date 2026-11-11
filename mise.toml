@@ -9,6 +9,7 @@ pin = true
 [tools]
 node = "26.13.0"
 pnpm = "12.16.1"
+bats = "1.14.0"
 # Manages the Python engines' environments (strands-decider) under ~/.local/share/local-decider.
 uv = "0.13.7"
 # Workflow and dependabot.yml lint (`lint:actions`).
@@ -68,11 +69,17 @@ run = "zizmor --offline .github/workflows"
 
 [tasks."lint:shell"]
 description = "shellcheck the repository's shell scripts"
-run = "shellcheck -S info scripts/*.sh plugins/local-decider/hooks/*.sh plugins/local-decider/tests/*.sh"
+run = "shellcheck -S info scripts/*.sh plugins/local-decider/hooks/*.sh plugins/local-decider/tests/*.bats"
 
 [tasks."test:shim"]
 description = "The plugin's hook shim finds node on a bare PATH and fails open without it"
-run = "sh plugins/local-decider/tests/run-hook.test.sh"
+run = '''
+#!/usr/bin/env bash
+set -euo pipefail
+bats_bin=$(mise which bats)
+bats_root=$(cd -- "$(dirname "$bats_bin")/.." && pwd)
+PATH="$bats_root/libexec/bats-core:/bin:/usr/bin:$PATH" /bin/bash "$bats_bin" plugins/local-decider/tests
+'''
 
 [tasks."lint:complexity"]
 description = "cccc: cognitive and cyclomatic complexity ceilings (cccc.toml)"
