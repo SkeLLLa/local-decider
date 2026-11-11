@@ -161,6 +161,7 @@ describe('OpenAI-compatible logprob mapping', () => {
           logprobs: {
             content: [
               {
+                token: 'A',
                 top_logprobs: [
                   { token: 'A', logprob: -0.1 },
                   { token: 'B', logprob: -2 },
@@ -207,6 +208,29 @@ describe('OpenAI-compatible logprob mapping', () => {
     });
     assert.deepEqual(chat, entries);
 
+    const leadingBlank = parseTopLogprobs({
+      choices: [
+        {
+          logprobs: {
+            content: [
+              { token: '\n\n', top_logprobs: [{ token: '\n\n', logprob: 0 }] },
+              {
+                token: 'allow',
+                top_logprobs: [
+                  { token: 'allow', logprob: 0 },
+                  { token: 'deny', logprob: -18.2 },
+                ],
+              },
+            ],
+          },
+        },
+      ],
+    });
+    assert.deepEqual(leadingBlank, [
+      { token: 'allow', logprob: 0 },
+      { token: 'deny', logprob: -18.2 },
+    ]);
+
     const completions = parseTopLogprobs({
       choices: [
         {
@@ -228,7 +252,7 @@ describe('OpenAI-compatible logprob mapping', () => {
     ]);
   });
 
-  it('keeps the first-position behavior for a single generated token', () => {
+  it('skips a single generated whitespace token', () => {
     assert.deepEqual(
       parseTopLogprobs({
         choices: [
@@ -239,7 +263,7 @@ describe('OpenAI-compatible logprob mapping', () => {
           },
         ],
       }),
-      [{ token: 'A', logprob: -0.1 }],
+      [],
     );
   });
 });

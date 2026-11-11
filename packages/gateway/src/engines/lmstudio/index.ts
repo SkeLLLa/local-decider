@@ -18,6 +18,17 @@ export const lmStudioEngine = defineEngine({
       : { ok: false, reason: 'LM Studio is supported on macOS and Linux' },
   tag: () => 'LM Studio',
   calibrated: false,
-  models: [],
+  models: [
+    {
+      id: 'qwen3-4b-instruct-2507',
+      engine: 'lmstudio',
+      label: 'Qwen3 4B Instruct 2507 · GGUF Q4_K_M',
+      downloadGb: null,
+      memoryGb: null,
+      latencyHint: '~106 ms warm',
+      recommended: true,
+      source: 'https://huggingface.co/lmstudio-community/Qwen3-4B-Instruct-2507-GGUF',
+    },
+  ],
   create: (config, ctx) => new OpenAICompatibleEngine(config, ctx.env),
 });

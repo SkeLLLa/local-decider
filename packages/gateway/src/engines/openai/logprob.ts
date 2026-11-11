@@ -137,8 +137,10 @@ function parseChatPositions(value: unknown): TopLogprob[] {
   if (!Array.isArray(value)) {
     return [];
   }
-  if (value.length === 1) {
-    return parseEntryArray(asRecord(value[0])?.['top_logprobs']);
+  // A lone position without a sampled token (some servers omit it) is the answer position.
+  const lone = value.length === 1 ? asRecord(value[0]) : undefined;
+  if (lone !== undefined && typeof lone['token'] !== 'string') {
+    return parseEntryArray(lone['top_logprobs']);
   }
   const position = value.find((item) => usableSampledToken(asRecord(item)?.['token']));
   return parseEntryArray(asRecord(position)?.['top_logprobs']);

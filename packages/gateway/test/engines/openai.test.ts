@@ -6,6 +6,7 @@ import { describe, it } from 'node:test';
 import {
   openaiCompatibleEngine,
   OpenAICompatibleEngine,
+  lmStudioSchema,
   type OpenAICompatibleEngineConfig,
 } from '../../src/engines/openai/index.ts';
 import type { TopLogprob } from '../../src/engines/openai/logprob.ts';
@@ -70,6 +71,10 @@ function config(url: string, values: Record<string, unknown> = {}): OpenAICompat
   });
 }
 
+function lmConfig(url: string, values: Record<string, unknown> = {}): OpenAICompatibleEngineConfig {
+  return lmStudioSchema.parse({ type: 'lmstudio', model: 'test-model', url, ...values });
+}
+
 function logprob(token: string, probability: number): TopLogprob {
   return { token, logprob: Math.log(probability) };
 }
@@ -109,6 +114,34 @@ function near(actual: number | undefined, expected: number): void {
 }
 
 describe('OpenAI-compatible engine', () => {
+  it('adds LM Studio template options while leaving generic requests unchanged', async () => {
+    for (const [engineConfig, expectedMax, lmStudio] of [
+      [(url: string) => config(url, { maxTokens: 8 }), 8, false],
+      [(url: string) => lmConfig(url, { maxTokens: 8 }), 12, true],
+    ] as const) {
+      const bodies: Record<string, unknown>[] = [];
+      await withServer(
+        (request, response) => {
+          void readJson(request).then((body) => {
+            bodies.push(body);
+            json(response, chatResponse([logprob('yes', 0.8), logprob('no', 0.2)]));
+          });
+        },
+        async (url) => {
+          const engine = new OpenAICompatibleEngine(engineConfig(url));
+          await engine.start();
+          const body = bodies[0];
+          assert.equal(body?.['max_tokens'], expectedMax);
+          assert.equal(body?.['chat_template_kwargs'] === undefined, !lmStudio);
+          if (lmStudio) {
+            assert.deepEqual(body?.['chat_template_kwargs'], { enable_thinking: false });
+          }
+          await engine.stop();
+        },
+      );
+    }
+  });
+
   it('uses the planned defaults and is selectable', () => {
     const parsed = config('http://127.0.0.1:1234/v1');
     assert.equal(parsed.api, 'chat');

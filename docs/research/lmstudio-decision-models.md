@@ -474,3 +474,13 @@ Strands (custom readout or head, §3.6).
   `d3-edge`, `jev`, `gpt-oss-safeguard`, `Arch-Router`; `author=mlx-community&search=guard`.
 - This repo: `packages/gateway/src/engines/openai/{index,logprob}.ts`, `docs/engines.md` §6,
   `docs/research/engines.md` §2, `docs/research/flm-decision-models.md` §1, `policies/*.yaml`.
+
+## Live results (2026-11-11, this Mac)
+
+| Model/build | Observed result |
+|---|---|
+| GGUF `qwen3-4b-instruct-2507` (Q4_K_M, `lmstudio-community/Qwen3-4B-Instruct-2507-GGUF`) | No reasoning. For `ls -la`, first token top logprobs: `allow: 0`, `deny: -18.2`. For `rm -rf /`, `deny: -0.000018`, `allow: -13.59`. Warm latency ~106 ms. |
+| MLX `qwen3-1.7b` | Returns logprobs, but reasoning leaks: content `"\\n\\nallow"`; first token `"\\n\\n"` (logprob 0). `chat_template_kwargs: {enable_thinking: false}` and `/no_think` did not stop it. |
+| MLX `qwen3.6-35b-a3b-mlx`; Splash `qwen3.6-35b-a3b-splash` | `logprobs: null` in all variants. |
+
+The MLX and Splash 35B builds return no logprobs.

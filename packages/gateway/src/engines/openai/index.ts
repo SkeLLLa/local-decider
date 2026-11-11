@@ -89,7 +89,7 @@ function requestBody(config: OpenAICompatibleEngineConfig, prompt: RenderedPromp
   const common = {
     ...config.extraBody,
     model: config.model,
-    max_tokens: config.maxTokens,
+    max_tokens: config.type === 'lmstudio' ? config.maxTokens + 4 : config.maxTokens,
     temperature: 1,
     top_p: 1,
     stream: false,
@@ -103,6 +103,7 @@ function requestBody(config: OpenAICompatibleEngineConfig, prompt: RenderedPromp
         ],
         logprobs: true,
         top_logprobs: config.topLogprobs,
+        ...(config.type === 'lmstudio' ? { chat_template_kwargs: { enable_thinking: false } } : {}),
       }
     : {
         ...common,
