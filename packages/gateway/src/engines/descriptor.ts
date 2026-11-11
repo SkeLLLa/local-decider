@@ -13,6 +13,9 @@ export interface HostInfo {
   readonly totalMemoryBytes: number;
 }
 
+/** Optional locations a tag may inspect (cheap file checks only). */
+export type TagContext = Partial<Pick<EngineContext, 'paths' | 'tools'>>;
+
 export interface EngineContext {
   readonly paths: Paths;
   /** Existing callers may omit resolved tool paths. */
@@ -73,7 +76,7 @@ export interface EngineDescriptor<
   readonly selectable: Selectable;
   pinned?(config: C): boolean;
   supports(host: HostInfo): Support;
-  tag(config: C, host: HostInfo): string;
+  tag(config: C, host: HostInfo, ctx?: TagContext): string;
   devices?(host: HostInfo): readonly Device[];
   readonly calibrated: boolean;
   readonly models: readonly ModelDescriptor<C['type']>[];
@@ -104,7 +107,7 @@ export function defineEngine<
   readonly selectable: Selectable;
   pinned?(config: z.output<S>): boolean;
   supports(host: HostInfo): Support;
-  tag(config: z.output<S>, host: HostInfo): string;
+  tag(config: z.output<S>, host: HostInfo, ctx?: TagContext): string;
   devices?(host: HostInfo): readonly Device[];
   readonly calibrated: boolean;
   readonly models: readonly ModelDescriptor<z.output<S>['type']>[];

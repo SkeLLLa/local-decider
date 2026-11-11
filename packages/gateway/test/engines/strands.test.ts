@@ -6,6 +6,7 @@ import { describe, it } from 'node:test';
 import { downloadSteps } from '../../src/downloads.ts';
 import type { EngineContext, HostInfo } from '../../src/engines/descriptor.ts';
 import { strandsEngine, hfCached } from '../../src/engines/strands/index.ts';
+import { resolveStrandsDevice } from '../../src/engines/strands/mlx.ts';
 import { serveArgs } from '../../src/engines/strands/server.ts';
 import { tempPaths } from '../helpers.ts';
 
@@ -14,6 +15,12 @@ function executable(path: string): string {
   writeFileSync(path, '#!/bin/sh\n');
   chmodSync(path, 0o755);
   return path;
+}
+
+function mlxVenv(root: string): string {
+  mkdirSync(join(root, 'bin'), { recursive: true });
+  mkdirSync(join(root, 'lib', 'python3.13', 'site-packages', 'mlx_lm'), { recursive: true });
+  return join(root, 'bin', 'strands-decider');
 }
 
 function context(data: string, binary?: string, hfCache?: string): EngineContext {
@@ -77,33 +84,64 @@ describe('strands descriptor', () => {
     ]);
   });
 
-  it('uses MLX for auto only on Darwin arm64 when the venv has mlx_lm', () => {
-    const paths = tempPaths();
-    const config = strandsEngine.configSchema.parse({ type: 'strands-decider' });
-    const darwin: HostInfo = {
-      platform: 'darwin',
-      arch: 'arm64',
-      totalMemoryBytes: 64e9,
-    };
-    const linux: HostInfo = {
-      platform: 'linux',
-      arch: 'x64',
-      totalMemoryBytes: 64e9,
-    };
-    const mlxVenv = join(paths.venvs, 'with-mlx');
-    const darwinBeforeInstall = serveArgs(config, 9000, darwin, mlxVenv);
-    assert.ok(!darwinBeforeInstall.includes('--device'));
+  describe('device resolution', () => {
+    const darwin: HostInfo = { platform: 'darwin', arch: 'arm64', totalMemoryBytes: 64e9 };
+    const linux: HostInfo = { platform: 'linux', arch: 'x64', totalMemoryBytes: 64e9 };
 
-    mkdirSync(join(mlxVenv, 'lib', 'python3.13', 'site-packages', 'mlx_lm'), {
-      recursive: true,
+    it('resolves auto to MLX on darwin/arm64 with mlx_lm', () => {
+      const binary = mlxVenv(join(tempPaths().venvs, 'mlx'));
+      const r = resolveStrandsDevice('auto', darwin, binary);
+      assert.deepEqual(r, { requested: 'auto', resolved: 'mlx', backend: 'MLX' });
     });
-    const mlxArgs = serveArgs(config, 9000, darwin, mlxVenv);
-    assert.deepEqual(mlxArgs.slice(mlxArgs.indexOf('--device'), mlxArgs.indexOf('--device') + 2), [
-      '--device',
-      'mlx',
-    ]);
 
-    const linuxArgs = serveArgs(config, 9000, linux, mlxVenv);
-    assert.ok(!linuxArgs.includes('--device'));
+    it('leaves auto unknown without mlx_lm or off Apple Silicon', () => {
+      const plain = join(tempPaths().venvs, 'plain', 'bin', 'strands-decider');
+      assert.equal(resolveStrandsDevice('auto', darwin, plain).resolved, undefined);
+      assert.equal(resolveStrandsDevice('auto', darwin, plain).backend, undefined);
+      const binary = mlxVenv(join(tempPaths().venvs, 'mlx'));
+      assert.equal(resolveStrandsDevice('auto', linux, binary).resolved, undefined);
+    });
+
+    it('lets an explicit device win', () => {
+      const binary = mlxVenv(join(tempPaths().venvs, 'mlx'));
+      assert.deepEqual(resolveStrandsDevice('cpu', darwin, binary), {
+        requested: 'cpu',
+        resolved: 'cpu',
+        backend: 'CPU',
+      });
+      assert.equal(resolveStrandsDevice('cuda', linux, undefined).backend, 'CUDA');
+      assert.equal(resolveStrandsDevice('mps', darwin, undefined).backend, 'MPS');
+    });
+
+    it('checks the venv of a custom executable, not the managed one', () => {
+      const paths = tempPaths();
+      mlxVenv(join(paths.venvs, 'strands-decider')); // managed venv has mlx
+      const custom = executable(join(paths.data, 'custom', 'bin', 'strands-decider'));
+      assert.equal(resolveStrandsDevice('auto', darwin, custom).resolved, undefined);
+      const customMlx = mlxVenv(join(paths.data, 'custom-mlx'));
+      assert.equal(resolveStrandsDevice('auto', darwin, customMlx).resolved, 'mlx');
+    });
+
+    it('tags MLX under auto on Apple Silicon with mlx_lm, PyTorch when unknown', () => {
+      const paths = tempPaths();
+      const config = strandsEngine.configSchema.parse({ type: 'strands-decider' });
+      const ctx = { paths: context(paths.data).paths };
+      assert.equal(strandsEngine.tag(config, darwin, ctx), 'PyTorch');
+      mlxVenv(join(paths.venvs, 'strands-decider'));
+      assert.equal(strandsEngine.tag(config, darwin, ctx), 'MLX');
+      assert.equal(strandsEngine.tag({ ...config, device: 'mps' }, darwin, ctx), 'MPS');
+      assert.equal(strandsEngine.tag(config, linux, ctx), 'PyTorch');
+    });
+
+    it('builds argv from the single resolved device', () => {
+      const config = strandsEngine.configSchema.parse({ type: 'strands-decider' });
+      assert.ok(!serveArgs(config, 9000, undefined).includes('--device'));
+      const args = serveArgs(config, 9000, 'mlx');
+      assert.deepEqual(args.slice(args.indexOf('--device'), args.indexOf('--device') + 2), [
+        '--device',
+        'mlx',
+      ]);
+      assert.ok(serveArgs(config, 9000, 'cpu').includes('--no-warmup'));
+    });
   });
 });

@@ -3,9 +3,9 @@ import { join } from 'node:path';
 import type { StrandsEngineConfig } from '../../config.ts';
 import type { Paths } from '../../paths.ts';
 import type { Toolchain } from '../../toolchain.ts';
-import type { HostInfo } from '../descriptor.ts';
+import type { Device, HostInfo } from '../descriptor.ts';
 import { SupervisedEngine, type ServerSpec } from '../supervised.ts';
-import { resolveDevice } from './mlx.ts';
+import { resolveStrandsDevice, type DeviceResolution } from './mlx.ts';
 
 const STRANDS_VENV = 'strands-decider';
 
@@ -17,11 +17,12 @@ export function strandsBinary(paths: Paths): string {
 export function serveArgs(
   config: StrandsEngineConfig,
   port: number,
-  host?: HostInfo,
-  venv?: string,
+  /** The device resolved for this launch; an explicit config device when omitted. */
+  device: Exclude<Device, 'auto'> | undefined = config.device === 'auto'
+    ? undefined
+    : config.device,
 ): string[] {
   const args = ['serve', config.model, '--host', '127.0.0.1', '--port', String(port)];
-  const device = resolveDevice(config.device, host, venv);
   if (device !== undefined) {
     args.push('--device', device);
   }
@@ -42,6 +43,8 @@ function strandsSpec(
   host?: HostInfo,
 ): ServerSpec {
   const binary = tools?.strandsDecider ?? strandsBinary(paths);
+  // Resolved once per launch (refreshed in `binary()`), so argv and health agree.
+  let device: DeviceResolution = resolveStrandsDevice(config.device, host, binary);
   return {
     id: 'strands-decider',
     model: config.model,
@@ -49,11 +52,15 @@ function strandsSpec(
     startTimeoutSeconds: config.startTimeoutSeconds,
     healthPath: '/health',
     env: { PYTHONUNBUFFERED: '1', ...tools?.env },
-    binary: () => ({
-      path: binary,
-      missing: `${binary} not found; run \`local-decider engine install\``,
-    }),
-    args: (port) => serveArgs(config, port, host, join(paths.venvs, STRANDS_VENV)),
+    binary: () => {
+      device = resolveStrandsDevice(config.device, host, binary);
+      return {
+        path: binary,
+        missing: `${binary} not found; run \`local-decider engine install\``,
+      };
+    },
+    args: (port) => serveArgs(config, port, device.resolved),
+    deviceInfo: () => device,
     maxLength: (body) => (typeof body['max_length'] === 'number' ? body['max_length'] : undefined),
   };
 }

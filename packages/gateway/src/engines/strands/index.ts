@@ -4,8 +4,9 @@ import { dirname, join } from 'node:path';
 import { z } from 'zod';
 
 import { DEVICES, defineEngine, type EngineContext, type ModelDescriptor } from '../descriptor.ts';
+import { resolveStrandsDevice } from './mlx.ts';
 import { MODELS } from './models.ts';
-import { StrandsDeciderEngine } from './server.ts';
+import { StrandsDeciderEngine, strandsBinary } from './server.ts';
 
 export const DEFAULT_MODEL = 'StrandsAgents/strands-decider-2B-qwen3.5-v1-2610';
 
@@ -75,7 +76,10 @@ export const strandsEngine = defineEngine({
   configSchema: strandsSchema,
   selectable: true,
   supports: () => ({ ok: true }),
-  tag: () => 'PyTorch',
+  tag: (config, host, ctx) => {
+    const binary = ctx?.tools?.strandsDecider ?? (ctx?.paths && strandsBinary(ctx.paths));
+    return resolveStrandsDevice(config.device, host, binary).backend ?? 'PyTorch';
+  },
   devices: (host) => {
     if (host.platform === 'darwin' && host.arch === 'arm64') {
       return ['auto', 'cpu', 'mlx', 'mps'];

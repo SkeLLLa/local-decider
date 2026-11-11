@@ -42,6 +42,12 @@ export interface ServerSpec {
   /** argv after the binary. Every element comes from validated config, never from a request. */
   args(port: number): string[];
   readonly env?: Readonly<Record<string, string>>;
+  /** Device the last launch resolved, for health. */
+  deviceInfo?(): {
+    readonly requested: string;
+    readonly resolved: string | undefined;
+    readonly backend: string | undefined;
+  };
   /** Context window from the readiness body, when the server reports one. */
   maxLength?(body: Record<string, unknown>): number | undefined;
 }
@@ -86,11 +92,15 @@ export class SupervisedEngine implements Engine {
   }
 
   health(): EngineHealth {
+    const device = this.#spec.deviceInfo?.();
     return {
       state: this.#state,
       model: this.model,
       ...(this.#detail === undefined ? {} : { detail: this.#detail }),
       ...(this.#maxLength === undefined ? {} : { maxLength: this.#maxLength }),
+      ...(device === undefined ? {} : { requestedDevice: device.requested }),
+      ...(device?.resolved === undefined ? {} : { resolvedDevice: device.resolved }),
+      ...(device?.backend === undefined ? {} : { backend: device.backend }),
     };
   }
 

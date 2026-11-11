@@ -41,6 +41,8 @@ import {
   SELECTABLE_IDS,
   type EngineId,
 } from './engines/registry.ts';
+import { resolveStrandsDevice, type DeviceResolution } from './engines/strands/mlx.ts';
+import { strandsBinary } from './engines/strands/server.ts';
 import type { Engine } from './engines/types.ts';
 import { catalogModel, MEMORY_BUDGET, modelFits, modelMemoryGb } from './models.ts';
 import type { Paths } from './paths.ts';
@@ -596,11 +598,20 @@ export class EngineControl {
     const installed = await this.#installed(models);
     const health = this.#engine.health();
     const life = this.#engine.lifecycle;
+    const device = this.#deviceResolution();
+    const memoryDevice = device?.resolved ?? this.#selected?.device;
     return {
       active: {
         engine: this.#engine.id,
         model: this.#engine.model,
         device: this.#selected?.device ?? null,
+        ...(device === undefined
+          ? {}
+          : {
+              requestedDevice: device.requested,
+              ...(device.resolved === undefined ? {} : { resolvedDevice: device.resolved }),
+              ...(device.backend === undefined ? {} : { backend: device.backend }),
+            }),
         state: health.state,
         detail: health.detail ?? null,
         lifecycle: life.lifecycle,
@@ -615,10 +626,10 @@ export class EngineControl {
         engine: m.engine,
         label: m.label,
         downloadGb: m.downloadGb,
-        memoryGb: modelMemoryGb(m, this.#selected?.device),
+        memoryGb: modelMemoryGb(m, memoryDevice),
         cpuMemoryGb: m.memoryGb,
         gpuMemoryGb: m.gpuMemoryGb ?? null,
-        fits: modelFits(m.id, this.#memory, this.#selected?.device, m.engine),
+        fits: modelFits(m.id, this.#memory, memoryDevice, m.engine),
         quality: m.quality ?? null,
         source: m.source ?? null,
         installed: installed.get(m.id) ?? false,
@@ -629,6 +640,17 @@ export class EngineControl {
       paths: resolveAll(this.#config, this.#paths, this.#env, this.#host),
       pathsEditable: this.pathsEditable,
     };
+  }
+
+  /** `device: auto` resolved once for the selected Strands engine; undefined for other engines. */
+  #deviceResolution(
+    selected: EngineSelection | null = this.#selected,
+  ): DeviceResolution | undefined {
+    if (selected?.engine !== 'strands-decider') {
+      return undefined;
+    }
+    const binary = this.#tools.strandsDecider ?? strandsBinary(this.#paths);
+    return resolveStrandsDevice(selected.device ?? 'auto', this.#host, binary);
   }
 
   #engines(): Record<string, unknown>[] {
@@ -775,7 +797,10 @@ export class EngineControl {
         return id;
       }
       const typed = descriptor as EngineDescriptor<EngineConfig>;
-      return typed.tag(this.#engineConfigFor(id), this.#host);
+      return typed.tag(this.#engineConfigFor(id), this.#host, {
+        paths: this.#paths,
+        tools: this.#tools,
+      });
     } catch {
       return id;
     }
@@ -838,15 +863,7 @@ export class EngineControl {
     if (!this.allowedModels(next.engine).includes(next.model)) {
       throw new EngineSwitchError(400, `unknown ${next.engine} model "${next.model}"`);
     }
-    if (!modelFits(next.model, this.#memory, next.device, next.engine)) {
-      const known = catalogModel(next.model, next.engine);
-      const needs = known === undefined ? 0 : (modelMemoryGb(known, next.device) ?? 0);
-      const budget = Math.floor((this.#memory * MEMORY_BUDGET) / 1e9);
-      throw new EngineSwitchError(
-        409,
-        `${next.model} needs ~${String(needs)} GB; this machine allows ~${String(budget)} GB for the decision model`,
-      );
-    }
+    this.#checkFits(next);
     const engineInfo = this.#engines().find((e) => e['id'] === next.engine);
     if (engineInfo?.['available'] !== true) {
       throw new EngineSwitchError(
@@ -861,6 +878,21 @@ export class EngineControl {
     if (!unchanged && model !== undefined && !installed) {
       throw new EngineSwitchError(400, `${next.model} is not downloaded yet`);
     }
+  }
+
+  /** Rejects a model that would not fit the memory budget on its resolved device. */
+  #checkFits(next: EngineSelection): void {
+    const memoryDevice = this.#deviceResolution(next)?.resolved ?? next.device;
+    if (modelFits(next.model, this.#memory, memoryDevice, next.engine)) {
+      return;
+    }
+    const known = catalogModel(next.model, next.engine);
+    const needs = known === undefined ? 0 : (modelMemoryGb(known, memoryDevice) ?? 0);
+    const budget = Math.floor((this.#memory * MEMORY_BUDGET) / 1e9);
+    throw new EngineSwitchError(
+      409,
+      `${next.model} needs ~${String(needs)} GB; this machine allows ~${String(budget)} GB for the decision model`,
+    );
   }
 
   #same(next: EngineSelection): boolean {

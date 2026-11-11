@@ -10,6 +10,12 @@ export interface EngineHealth {
   readonly onDemand?: boolean;
   /** Context window reported by the engine, in tokens. */
   readonly maxLength?: number;
+  /** Device config as requested (`auto`, `cpu`, ...), for engines with devices. */
+  readonly requestedDevice?: string;
+  /** Concrete device after resolving `auto`; absent while unknown. */
+  readonly resolvedDevice?: string;
+  /** Backend tag: `MLX`, `MPS`, `CUDA` or `CPU`; absent while unknown. */
+  readonly backend?: string;
 }
 
 export interface Engine {
