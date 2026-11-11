@@ -1,6 +1,6 @@
 {
   "name": "@ziptie-soft/local-decider",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Local decision-model gateway for Paseo, Claude Code and Codex: /v1/systemone, policies, shadow log, MCP.",
   "license": "Apache-2.0",
   "repository": {
