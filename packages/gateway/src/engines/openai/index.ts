@@ -28,8 +28,7 @@ const START_HINT =
   'start LM Studio (lms server start), ollama serve, llama-server or mlx_lm.server';
 const PROBE_QUESTION: Question = { type: 'noul', instructions: 'Say yes to confirm logprobs.' };
 
-const openaiCompatibleSchema = z.strictObject({
-  type: z.literal('openai-compatible'),
+const sharedShape = {
   url: z.url().default('http://127.0.0.1:1234/v1'),
   model: z
     .string()
@@ -50,9 +49,27 @@ const openaiCompatibleSchema = z.strictObject({
   maxStateChars: z.number().int().min(1000).max(400_000).default(24_000),
   extraBody: z.record(z.string(), z.json()).default({}),
   requestTimeoutMs: z.number().int().min(1000).max(120_000).default(20_000),
+};
+
+const openaiCompatibleSchema = z.strictObject({
+  type: z.literal('openai-compatible'),
+  ...sharedShape,
 });
 
-export type OpenAICompatibleEngineConfig = z.infer<typeof openaiCompatibleSchema>;
+/**
+ * LM Studio returns logprobs only from chat completions with a few tokens, and a thinking model
+ * needs `/no_think`; those are this engine's defaults.
+ */
+const lmStudioSchema = z.strictObject({
+  type: z.literal('lmstudio'),
+  ...sharedShape,
+  maxTokens: z.number().int().min(1).max(32).default(8),
+  promptSuffix: z.string().max(64).default('/no_think'),
+});
+
+export type OpenAICompatibleEngineConfig =
+  | z.infer<typeof openaiCompatibleSchema>
+  | z.infer<typeof lmStudioSchema>;
 
 function endpoint(baseUrl: string, path: string): string {
   return `${baseUrl.replace(/\/+$/, '')}${path}`;
@@ -168,7 +185,7 @@ export const openaiCompatibleEngine = defineEngine({
 
 /** A chat-completions or completions endpoint scored by the probability of one option token. */
 export class OpenAICompatibleEngine implements Engine {
-  readonly id = 'openai-compatible';
+  readonly id: string;
   readonly model: string;
   readonly #config: OpenAICompatibleEngineConfig;
   readonly #url: string;
@@ -183,6 +200,7 @@ export class OpenAICompatibleEngine implements Engine {
     doFetch: typeof fetch = globalThis.fetch,
   ) {
     this.#config = config;
+    this.id = config.type;
     this.#url = config.url;
     this.model = config.model;
     this.#fetch = doFetch;

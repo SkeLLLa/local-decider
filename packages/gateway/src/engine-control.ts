@@ -1,10 +1,4 @@
-import {
-  MODES,
-  PolicyError,
-  tokenAllowed,
-  type Mode,
-  type PolicyThreshold,
-} from '@local-decider/core';
+import { MODES, PolicyError, type Mode, type PolicyThreshold } from '@local-decider/core';
 import { mkdirSync } from 'node:fs';
 import { totalmem } from 'node:os';
 import { join } from 'node:path';
@@ -22,6 +16,14 @@ import {
 } from './config.ts';
 import type { Decider } from './decider.ts';
 import { DownloadError, Downloads, type Download } from './downloads.ts';
+import {
+  discoveryEndpoint,
+  isOpenAILike,
+  ModelDiscovery,
+  OPENAI_LIKE_ENGINES,
+  type DiscoveryEndpoint,
+  type OpenAILikeEngine,
+} from './engine-discovery.ts';
 import type {
   EngineContext,
   EngineDescriptor,
@@ -30,7 +32,6 @@ import type {
 } from './engines/descriptor.ts';
 import { cachedFlmVersion } from './engines/fastflowlm/status.ts';
 import { hostInfo } from './engines/host.ts';
-import { getJson } from './engines/http.ts';
 import { createEngine } from './engines/index.ts';
 import { ManagedEngine, type LifecycleOptions } from './engines/lazy.ts';
 import {
@@ -83,20 +84,6 @@ export class EngineSwitchError extends Error {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-
-function modelIds(value: unknown): string[] {
-  const data = isRecord(value) ? value['data'] : undefined;
-  if (!Array.isArray(data)) {
-    return [];
-  }
-  const ids = data.flatMap((entry) => {
-    const id = isRecord(entry) ? entry['id'] : undefined;
-    return typeof id === 'string' && id.length > 0 && id.length <= 300 && /^[^-\s][^\s]*$/.test(id)
-      ? [id]
-      : [];
-  });
-  return [...new Set(ids)];
 }
 
 export function parseSelection(body: unknown): EngineRequest {
@@ -218,6 +205,8 @@ export interface EngineControlOptions {
   readonly create?: (config: EngineConfig, paths: Paths, tools: Toolchain) => Engine;
   readonly totalMemory?: number;
   readonly installed?: (models: readonly string[]) => Promise<Map<string, boolean>>;
+  /** Injected in tests: model discovery requests. */
+  readonly fetch?: typeof fetch;
 }
 
 function lifecycleFrom(config: GatewayConfig): LifecycleOptions {
@@ -260,7 +249,7 @@ export class EngineControl {
   #tools: Toolchain;
   #selected: EngineSelection | null;
   #engine: ManagedEngine;
-  #discoveredOpenAIModels: string[] = [];
+  readonly #discovery: ModelDiscovery;
   #decider: Decider | undefined;
   #pending: Promise<void> = Promise.resolve();
 
@@ -271,6 +260,7 @@ export class EngineControl {
     this.#applied = config;
     this.#paths = paths;
     this.#env = options.env ?? process.env;
+    this.#discovery = new ModelDiscovery(this.#env, options.fetch);
     this.#host = options.host ?? hostInfo();
     this.#create = options.create ?? ((c, p, t) => createEngine(c, p, t));
     this.#memory = options.totalMemory ?? totalmem();
@@ -280,7 +270,7 @@ export class EngineControl {
     this.#status = new CatalogStatus(this.#context());
     this.switchable =
       config.engine.type !== 'systemone-remote' &&
-      (config.engine.type === 'openai-compatible' || config.engine.url === undefined);
+      (isOpenAILike(config.engine.type) || config.engine.url === undefined);
     this.#selected = this.switchable ? this.#initialSelection() : null;
     this.#engine = this.#build(this.#selected);
   }
@@ -320,11 +310,14 @@ export class EngineControl {
     if (engine === undefined || engine === this.#config.engine.type) {
       configured.add(this.#config.engine.model);
     }
-    if (engine === undefined || engine === 'openai-compatible') {
-      const openai = this.#openAIConfig();
-      if (openai !== undefined) {
-        configured.add(openai.model);
-        for (const model of this.#discoveredOpenAIModels) {
+    for (const id of OPENAI_LIKE_ENGINES) {
+      if (engine !== undefined && engine !== id) {
+        continue;
+      }
+      const endpoint = this.#endpoint(id);
+      if (endpoint !== undefined) {
+        configured.add(endpoint.model);
+        for (const model of this.#discovery.models(id, endpoint)) {
           configured.add(model);
         }
       }
@@ -598,7 +591,7 @@ export class EngineControl {
 
   /** The `GET /v1/engines` view. */
   async status(): Promise<Record<string, unknown>> {
-    await this.#discoverOpenAIModels();
+    await this.#discoverAll();
     const models = this.#catalogModels();
     const installed = await this.#installed(models);
     const health = this.#engine.health();
@@ -663,12 +656,12 @@ export class EngineControl {
       },
       {
         id: 'openai-compatible',
-        installed: this.#openAIConfig() !== undefined,
-        available: this.#openAIConfig() !== undefined,
+        installed: this.#endpoint('openai-compatible') !== undefined,
+        available: this.#endpoint('openai-compatible') !== undefined,
         detail:
-          this.#openAIConfig() === undefined
+          this.#endpoint('openai-compatible') === undefined
             ? 'set engines.openai-compatible.url/model'
-            : this.#openAIConfig()?.url,
+            : this.#endpoint('openai-compatible')?.url,
         validation: null,
       },
     ];
@@ -722,26 +715,24 @@ export class EngineControl {
     };
   }
 
-  #openAIConfig():
-    | Extract<EngineConfig, { type: 'openai-compatible' }>
-    | NonNullable<GatewayConfig['engines']>['openai-compatible']
-    | undefined {
-    return this.#config.engine.type === 'openai-compatible'
-      ? this.#config.engine
-      : this.#config.engines?.['openai-compatible'];
+  #endpoint(id: OpenAILikeEngine): DiscoveryEndpoint | undefined {
+    return discoveryEndpoint(id, this.#config);
   }
 
   #catalogModels(): ModelDescriptor<EngineId>[] {
     const models = allModels();
-    const openai = this.#openAIConfig();
-    if (openai !== undefined) {
-      const ids =
-        this.#discoveredOpenAIModels.length > 0 ? this.#discoveredOpenAIModels : [openai.model];
+    for (const id of OPENAI_LIKE_ENGINES) {
+      const endpoint = this.#endpoint(id);
+      if (endpoint === undefined) {
+        continue;
+      }
+      const found = this.#discovery.models(id, endpoint);
+      const ids = found.length > 0 ? found : [endpoint.model];
       models.push(
-        ...ids.map((id) => ({
-          id,
-          engine: 'openai-compatible' as const,
-          label: id,
+        ...ids.map((model) => ({
+          id: model,
+          engine: id,
+          label: model,
           downloadGb: null,
           memoryGb: null,
           latencyHint: null,
@@ -751,29 +742,12 @@ export class EngineControl {
     return models;
   }
 
-  async #discoverOpenAIModels(): Promise<void> {
-    const config = this.#openAIConfig();
-    if (config === undefined) {
-      this.#discoveredOpenAIModels = [];
-      return;
-    }
-    const token =
-      config.tokenEnv !== undefined && tokenAllowed(config.url)
-        ? this.#env[config.tokenEnv]
-        : undefined;
-    try {
-      const response = await getJson(`${config.url.replace(/\/+$/, '')}/models`, {
-        token,
-        signal: AbortSignal.timeout(2000),
-        maxBytes: 256 * 1024,
-      });
-      this.#discoveredOpenAIModels = [
-        config.model,
-        ...modelIds(response).filter((id) => id !== config.model),
-      ];
-    } catch {
-      this.#discoveredOpenAIModels = [config.model];
-    }
+  async #discoverAll(): Promise<void> {
+    await Promise.all(OPENAI_LIKE_ENGINES.map(async (id) => this.#discover(id)));
+  }
+
+  async #discover(id: OpenAILikeEngine): Promise<void> {
+    await this.#discovery.refresh(id, this.#endpoint(id));
   }
 
   #engineConfig(sel: EngineSelection): EngineConfig {
@@ -851,8 +825,8 @@ export class EngineControl {
   }
 
   async #checkSelectable(next: EngineSelection): Promise<void> {
-    if (next.engine === 'openai-compatible') {
-      await this.#discoverOpenAIModels();
+    if (isOpenAILike(next.engine)) {
+      await this.#discover(next.engine);
     }
     if (!this.allowedModels(next.engine).includes(next.model)) {
       throw new EngineSwitchError(400, `unknown ${next.engine} model "${next.model}"`);
