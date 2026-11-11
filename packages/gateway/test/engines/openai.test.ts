@@ -119,14 +119,14 @@ describe('OpenAI-compatible engine', () => {
     assert.equal(openaiCompatibleEngine.selectable, false);
   });
 
-  it('probes /models and logprobs before becoming ready', async () => {
+  it('is ready from the logprob probe even when the server does not support /models', async () => {
     const paths: string[] = [];
     const bodies: Record<string, unknown>[] = [];
     await withServer(
       (request, response) => {
         paths.push(request.url ?? '');
         if (request.method === 'GET') {
-          json(response, { data: [{ id: 'test-model' }] });
+          response.writeHead(501).end();
           return;
         }
         void readJson(request).then((body) => {
@@ -139,7 +139,7 @@ describe('OpenAI-compatible engine', () => {
           config(url, { maxTokens: 8, promptSuffix: '/no_think' }),
         );
         await engine.start();
-        assert.deepEqual(paths, ['/v1/models', '/v1/chat/completions']);
+        assert.deepEqual(paths, ['/v1/chat/completions']);
         assert.equal(engine.health().state, 'ready');
         assert.equal(bodies[0]?.['model'], 'test-model');
         assert.equal(bodies[0]?.['max_tokens'], 8);
@@ -275,7 +275,7 @@ describe('OpenAI-compatible engine', () => {
           OPENAI_TEST_TOKEN: 'local-secret',
         });
         await engine.start();
-        assert.deepEqual(loopbackHeaders, ['Bearer local-secret', 'Bearer local-secret']);
+        assert.deepEqual(loopbackHeaders, ['Bearer local-secret']);
       },
     );
 
@@ -286,7 +286,7 @@ describe('OpenAI-compatible engine', () => {
       fakeFetch(insecureHeaders),
     );
     await insecure.start();
-    assert.deepEqual(insecureHeaders, [null, null]);
+    assert.deepEqual(insecureHeaders, [null]);
 
     const secureHeaders: (string | null)[] = [];
     const secure = new OpenAICompatibleEngine(
@@ -295,7 +295,7 @@ describe('OpenAI-compatible engine', () => {
       fakeFetch(secureHeaders),
     );
     await secure.start();
-    assert.deepEqual(secureHeaders, ['Bearer secure-secret', 'Bearer secure-secret']);
+    assert.deepEqual(secureHeaders, ['Bearer secure-secret']);
   });
 
   it('honours an aborted decision signal', async () => {
@@ -341,10 +341,12 @@ describe('OpenAI-compatible engine', () => {
   it('caps responses at one MiB', async () => {
     await withServer(
       (request, response) => {
-        if (request.method === 'GET') {
+        void readJson(request).then(() => {
           response.writeHead(200, { 'content-type': 'application/json' });
-          response.end(`{"data":"${'x'.repeat(1024 * 1024)}"}`);
-        }
+          response.end(
+            `{"choices":[{"logprobs":{"content":[{"top_logprobs":${' '.repeat(1024 * 1024)}}]}}]}`,
+          );
+        });
       },
       async (url) => {
         const engine = new OpenAICompatibleEngine(config(url));

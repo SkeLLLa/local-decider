@@ -10,7 +10,7 @@ import {
 import { z } from 'zod';
 
 import { defineEngine } from '../descriptor.ts';
-import { getJson, postJson, type JsonRequestOptions } from '../http.ts';
+import { postJson, type JsonRequestOptions } from '../http.ts';
 import { EngineError, type Engine, type EngineHealth, type EngineState } from '../types.ts';
 import {
   optionMasses,
@@ -193,7 +193,6 @@ export class OpenAICompatibleEngine implements Engine {
   async start(): Promise<void> {
     this.#state = 'starting';
     try {
-      await getJson(endpoint(this.#url, '/models'), this.#requestOptions());
       const response = await this.#complete(renderPrompt(PROBE_QUESTION, 'probe'));
       if (parseTopLogprobs(response).length === 0) {
         throw new EngineError(NO_LOGPROBS);
