@@ -156,13 +156,22 @@ export const configSchema = z
     engines: engineOptionsSchema.optional().describe('Per-engine options for switching engines.'),
     selection: z
       .strictObject({
-        engine: z.enum(SELECTABLE_IDS),
-        model: z.string().min(1).max(300),
+        mode: z
+          .enum(['manual', 'auto'])
+          .optional()
+          .describe(
+            '`auto` lets the gateway rank installed engines and fall back on failure; absent or `manual` keeps the engine and model below.',
+          ),
+        engine: z.enum(SELECTABLE_IDS).optional(),
+        model: z.string().min(1).max(300).optional(),
         device: z.enum(DEVICES).optional(),
+      })
+      .refine((s) => s.mode === 'auto' || (s.engine !== undefined && s.model !== undefined), {
+        message: 'a manual selection needs `engine` and `model`',
       })
       .optional()
       .describe(
-        'Engine and model in use, set by the settings pages; beats `engine.type` and `engine.model`.',
+        'Engine and model in use, set by the settings pages; beats `engine.type` and `engine.model`. `mode: auto` selects automatically.',
       ),
     policies: z
       .record(z.string().regex(/^[a-z][a-z0-9_-]*$/), policySettingsSchema)

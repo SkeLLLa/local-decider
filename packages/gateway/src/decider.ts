@@ -94,6 +94,8 @@ export class Decider {
   readonly #precedent: PrecedentStore;
   /** Recent harness tool calls and what each policy decided for them. */
   readonly calls = new CallStore();
+  #failureHandler: ((engine: Engine) => void) | undefined;
+  #successHandler: ((engine: Engine) => void) | undefined;
 
   constructor(options: DeciderOptions) {
     this.#engine = options.engine;
@@ -113,6 +115,16 @@ export class Decider {
 
   get engine(): Engine {
     return this.#engine;
+  }
+
+  /** Called with the engine that errored, so a supervisor can check its health. */
+  onEngineFailure(handler: (engine: Engine) => void): void {
+    this.#failureHandler = handler;
+  }
+
+  /** Called with the engine that answered, so a supervisor knows a lazy engine is healthy. */
+  onEngineSuccess(handler: (engine: Engine) => void): void {
+    this.#successHandler = handler;
   }
 
   /** Change a policy's run mode in place; false when the policy is unknown. */
@@ -431,6 +443,7 @@ export class Decider {
       return { answers: {}, latencyMs: 0, cached: false, error: 'engine queue full' };
     }
     const started = performance.now();
+    const engine = this.#engine;
     try {
       const bounded = this.#signal(signal);
       const response = await this.#queue.run(
@@ -442,8 +455,10 @@ export class Decider {
       const latencyMs = performance.now() - started;
       this.#latency.add(latencyMs);
       this.#remember(hash, answers, ttlSeconds);
+      this.#successHandler?.(engine);
       return { answers, latencyMs, cached: false };
     } catch (error) {
+      this.#failureHandler?.(engine);
       return {
         answers: {},
         latencyMs: performance.now() - started,

@@ -237,7 +237,7 @@ export function planInstall(
  */
 export function configIsExplicit(config: GatewayConfig): boolean {
   return (
-    config.selection !== undefined ||
+    (config.selection !== undefined && config.selection.mode !== 'auto') ||
     config.engine.type !== 'strands-decider' ||
     config.engine.model !== DEFAULT_MODEL
   );

@@ -575,9 +575,14 @@
       "additionalProperties": false
     },
     "selection": {
-      "description": "Engine and model in use, set by the settings pages; beats `engine.type` and `engine.model`.",
+      "description": "Engine and model in use, set by the settings pages; beats `engine.type` and `engine.model`. `mode: auto` selects automatically.",
       "type": "object",
       "properties": {
+        "mode": {
+          "description": "`auto` lets the gateway rank installed engines and fall back on failure; absent or `manual` keeps the engine and model below.",
+          "type": "string",
+          "enum": ["manual", "auto"]
+        },
         "engine": {
           "type": "string",
           "enum": ["strands-decider", "fastflowlm", "openai-compatible", "lmstudio"]
@@ -592,7 +597,6 @@
           "enum": ["auto", "cpu", "mlx", "mps", "cuda"]
         }
       },
-      "required": ["engine", "model"],
       "additionalProperties": false
     },
     "policies": {

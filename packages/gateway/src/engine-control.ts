@@ -25,6 +25,7 @@ import {
   type DiscoveryEndpoint,
   type OpenAILikeEngine,
 } from './engine-discovery.ts';
+import { candidateKey, FallbackPolicy, type FallbackOptions } from './engine-fallback.ts';
 import { ServerProbe, type DiscoverRequest } from './engine-probe.ts';
 import type {
   EngineContext,
@@ -226,6 +227,8 @@ export interface EngineControlOptions {
   readonly fetch?: typeof fetch;
   /** Injected in tests: the accelerator probe. */
   readonly capabilities?: (strandsDecider: string) => Promise<HostCapabilities>;
+  /** Injected in tests: cooldown clock and backoff for automatic fallback. */
+  readonly fallback?: FallbackOptions;
 }
 
 function lifecycleFrom(config: GatewayConfig): LifecycleOptions {
@@ -266,6 +269,15 @@ export class EngineControl {
   #probing = false;
   /** Bumped by `#retool()`; a probe started under an older generation is discarded. */
   #generation = 0;
+  readonly #fallback: FallbackPolicy;
+  readonly #fallbackNow: () => number;
+  /** Engines whose failure was already handled, so one failure backs off once. */
+  readonly #reported = new WeakSet<ManagedEngine>();
+  #booted = false;
+  #attempting: string | undefined;
+  /** Why automatic mode is not on its top choice; null while it is. */
+  #fallbackNote: { readonly reason: string; readonly retryAt: number | undefined } | null = null;
+  #retryTimer: NodeJS.Timeout | undefined;
   readonly #downloads = new Downloads();
   readonly #status: CatalogStatus;
   /** The config last applied, to tell what an edit of config.yaml changed. */
@@ -293,6 +305,8 @@ export class EngineControl {
     this.#installedOverride = options.installed;
     this.#probeCapabilities =
       options.capabilities ?? ((strandsDecider) => probeHostCapabilities({ strandsDecider }));
+    this.#fallbackNow = options.fallback?.now ?? Date.now;
+    this.#fallback = new FallbackPolicy(options.fallback);
     this.pathsEditable = options.pathsEditable ?? true;
     this.#tools = toolchain(config, paths, this.#env);
     this.#status = new CatalogStatus(this.#context());
@@ -317,11 +331,32 @@ export class EngineControl {
     return this.#engine;
   }
 
+  /** True when `selection.mode` is `auto`: the gateway ranks and falls back on its own. */
+  get #auto(): boolean {
+    return this.switchable && this.#config.selection?.mode === 'auto';
+  }
+
   bind(decider: Decider): void {
     this.#decider = decider;
+    decider.onEngineFailure((engine) => this.#engineFailed(engine as ManagedEngine));
+    decider.onEngineSuccess((engine) => this.#engineSucceeded(engine as ManagedEngine));
+    if (this.#auto) {
+      void this.#queueReconcile();
+    }
     this.#applyPolicyState(decider);
     if (this.#tools.flm !== undefined) {
       void this.#status.validate('fastflowlm');
+    }
+  }
+
+  /**
+   * Start the initial engine. In automatic mode the first reconcile picks and starts it, so the
+   * configured engine is not loaded just to be replaced.
+   */
+  start(): void {
+    this.#booted = true;
+    if (!this.#auto) {
+      this.#startTracked(this.#engine);
     }
   }
 
@@ -373,6 +408,21 @@ export class EngineControl {
     const run = this.#pending.then(() => this.#apply(next, false));
     this.#pending = run.catch(() => undefined);
     await run;
+    if (this.#auto) {
+      // Choosing the engine that is already active changes nothing to persist; do it anyway.
+      this.#save([
+        {
+          path: ['selection'],
+          value: {
+            engine: next.engine,
+            model: next.model,
+            ...(next.device === null ? {} : { device: next.device }),
+          },
+        },
+      ]);
+      this.#applied = this.#config;
+    }
+    this.#leaveAuto();
     return next;
   }
 
@@ -515,7 +565,7 @@ export class EngineControl {
     this.#applied = { ...this.#applied, engine, engines };
     const selected = this.#selected;
     if (selected?.engine === id && JSON.stringify(this.#endpoint(id) ?? null) !== before) {
-      const run = this.#pending.then(() => this.#apply({ ...selected, model }, true));
+      const run = this.#pending.then(() => this.#apply({ ...selected, model }, true, !this.#auto));
       this.#pending = run.catch(() => undefined);
       await run;
     }
@@ -636,7 +686,12 @@ export class EngineControl {
     this.#status.reset(this.#context());
     if (this.#selected !== null) {
       const sel = this.#selected;
-      this.#pending = this.#pending.then(() => this.#apply(sel, true)).catch(() => undefined);
+      this.#pending = this.#pending
+        .then(() => this.#apply(sel, true, !this.#auto))
+        .catch(() => undefined);
+    }
+    if (this.#auto) {
+      void this.#queueReconcile();
     }
   }
 
@@ -692,6 +747,17 @@ export class EngineControl {
             }),
         state: health.state,
         detail: health.detail ?? null,
+        selectionMode: this.#auto ? 'auto' : 'manual',
+        ...(this.#fallbackNote === null
+          ? {}
+          : {
+              fallback: {
+                reason: this.#fallbackNote.reason,
+                ...(this.#fallbackNote.retryAt === undefined
+                  ? {}
+                  : { retryAt: new Date(this.#fallbackNote.retryAt).toISOString() }),
+              },
+            }),
         lifecycle: life.lifecycle,
         idleUnloadMinutes: life.idleUnloadMinutes,
         lastUsedAt: this.#engine.lastUsedAt,
@@ -724,6 +790,10 @@ export class EngineControl {
   /** Ranked candidates from cached capabilities; the first call kicks the probe and shows unknowns. */
   #recommendation(): Ranking {
     this.#refreshCapabilities();
+    return this.#rank(this.#capabilities, this.#auto ? null : this.#selected);
+  }
+
+  #rank(capabilities: HostCapabilities | undefined, explicit: EngineSelection | null): Ranking {
     const installed = new Set<string>();
     if (this.#tools.strandsDecider !== undefined) {
       installed.add('strands-decider');
@@ -733,11 +803,25 @@ export class EngineControl {
     }
     return rankEngines({
       host: { ...this.#host, totalMemoryBytes: this.#memory },
-      capabilities: this.#capabilities,
+      capabilities,
       engines: ENGINES,
       installed,
-      explicit: this.#selected,
+      explicit,
     });
+  }
+
+  /** Cached capabilities, probing once if needed; unknown (undefined) when the probe fails. */
+  async #ensureCapabilities(): Promise<HostCapabilities | undefined> {
+    if (this.#capabilities !== undefined) {
+      return this.#capabilities;
+    }
+    const generation = this.#generation;
+    const binary = this.#tools.strandsDecider ?? strandsBinary(this.#paths);
+    const caps = await this.#probeCapabilities(binary).catch(() => undefined);
+    if (caps !== undefined && generation === this.#generation) {
+      this.#capabilities = caps;
+    }
+    return caps;
   }
 
   /** Outside the request path: never awaited by `status()`. */
@@ -830,7 +914,7 @@ export class EngineControl {
     const saved = this.#config.selection;
     const savedEngine = saved?.engine;
     if (
-      saved === undefined ||
+      saved?.model === undefined ||
       savedEngine === undefined ||
       !SWITCHABLE_ENGINES.includes(savedEngine)
     ) {
@@ -959,6 +1043,11 @@ export class EngineControl {
   }
 
   async #applySelectionConfig(previous: GatewayConfig, config: GatewayConfig): Promise<void> {
+    if (this.#auto) {
+      await this.reconcileAuto();
+      return;
+    }
+    this.#leaveAuto();
     const wanted = this.switchable ? this.#initialSelection() : null;
     if (wanted === null) {
       return;
@@ -1048,7 +1137,7 @@ export class EngineControl {
   }
 
   /** Swap engines: stop the old one first so two models never share memory. */
-  async #apply(next: EngineSelection, force: boolean): Promise<void> {
+  async #apply(next: EngineSelection, force: boolean, persist = true): Promise<void> {
     if (!force && this.#same(next)) {
       return;
     }
@@ -1062,12 +1151,148 @@ export class EngineControl {
       model: next.model,
       ...(next.device === null ? {} : { device: next.device }),
     };
-    if (JSON.stringify(this.#config.selection) !== JSON.stringify(selection)) {
+    if (persist && JSON.stringify(this.#config.selection) !== JSON.stringify(selection)) {
       this.#save([{ path: ['selection'], value: selection }]);
       this.#applied = this.#config;
     }
     await previous.stop().catch(() => undefined);
-    void engine.start();
+    this.#startTracked(engine);
+  }
+
+  #startTracked(engine: ManagedEngine): void {
+    void engine.start().then(() => this.#started(engine));
+  }
+
+  /** A lazy engine never reports ready on start; its first answer proves it is healthy. */
+  #engineSucceeded(engine: ManagedEngine): void {
+    if (engine === this.#engine && this.#selected !== null) {
+      this.#fallback.recordSuccess(candidateKey(this.#selected));
+    }
+  }
+
+  /** Leaving automatic mode drops its fallback report and retry timer. */
+  #leaveAuto(): void {
+    this.#fallbackNote = null;
+    clearTimeout(this.#retryTimer);
+    this.#retryTimer = undefined;
+  }
+
+  /** An eager engine finished loading: a failure backs off, a healthy start clears the slate. */
+  #started(engine: ManagedEngine): void {
+    if (engine !== this.#engine || this.#selected === null) {
+      return;
+    }
+    if (engine.health().state === 'ready') {
+      this.#fallback.recordSuccess(candidateKey(this.#selected));
+    } else {
+      this.#engineFailed(engine);
+    }
+  }
+
+  /** Automatic mode only: an infrastructure failure of the active engine starts a fallback. */
+  #engineFailed(engine: ManagedEngine): void {
+    const health = engine.health();
+    if (
+      !this.#auto ||
+      engine !== this.#engine ||
+      this.#selected === null ||
+      health.state !== 'failed' ||
+      this.#reported.has(engine)
+    ) {
+      return;
+    }
+    this.#reported.add(engine);
+    const retryAt = this.#fallback.recordFailure(candidateKey(this.#selected));
+    this.#fallbackNote = {
+      reason: `${engine.id} failed: ${health.detail ?? 'unknown'}`,
+      retryAt,
+    };
+    void this.#queueReconcile();
+  }
+
+  #queueReconcile(): Promise<void> {
+    const run = this.#pending.then(() => this.#reconcile());
+    this.#pending = run.catch(() => undefined);
+    return run.catch(() => undefined);
+  }
+
+  /** Re-rank now (also what the retry timer calls); a no-op outside automatic mode. */
+  reconcileAuto(): Promise<void> {
+    return this.#queueReconcile();
+  }
+
+  /** Move to the best installed, eligible candidate that is not cooling down. Never downloads. */
+  async #reconcile(): Promise<void> {
+    if (!this.#auto) {
+      this.#leaveAuto();
+      return;
+    }
+    try {
+      await this.#moveToBest();
+    } catch (error) {
+      this.#recordSwitchFailure(error);
+    } finally {
+      this.#armRetry();
+    }
+  }
+
+  async #moveToBest(): Promise<void> {
+    this.#attempting = undefined;
+    const capabilities = await this.#ensureCapabilities();
+    const ranking = this.#rank(capabilities, null);
+    const models = ranking.candidates.flatMap(
+      (c) => catalogModel(c.model, c.engine as EngineId) ?? [],
+    );
+    const present = await this.#installed(models);
+    const here = (c: { readonly model: string }): boolean => present.get(c.model) ?? false;
+    const wanted = this.#fallback.pick(ranking.candidates, here);
+    if (wanted === undefined) {
+      return;
+    }
+    this.#attempting = candidateKey(wanted);
+    const next: EngineSelection = {
+      engine: wanted.engine as EngineId,
+      model: wanted.model,
+      device: wanted.device,
+    };
+    const failed = this.#engine.health().state === 'failed';
+    const first = !this.#booted;
+    this.#booted = true;
+    if (failed || !this.#same(next)) {
+      await this.#apply(next, failed, false);
+    } else if (first) {
+      this.#startTracked(this.#engine);
+    }
+    // The report stays only while a better candidate is cooling down.
+    const best = ranking.candidates.find((c) => c.eligible && c.ready && here(c));
+    if (best !== undefined && candidateKey(best) === candidateKey(wanted)) {
+      this.#fallbackNote = null;
+    }
+  }
+
+  /** The switch itself threw: back that candidate off so it is not picked again at once. */
+  #recordSwitchFailure(error: unknown): void {
+    const key = this.#attempting;
+    if (key === undefined) {
+      return;
+    }
+    const message = error instanceof Error ? error.message : String(error);
+    this.#fallbackNote = {
+      reason: `switching to ${key.split('|')[0] ?? key} failed: ${message}`,
+      retryAt: this.#fallback.recordFailure(key),
+    };
+  }
+
+  /** Wake up when the earliest cooldown ends, so a recovered engine is retried without polling. */
+  #armRetry(): void {
+    clearTimeout(this.#retryTimer);
+    const at = this.#fallback.nextRetryAt();
+    if (at === undefined) {
+      return;
+    }
+    const delay = Math.min(Math.max(at - this.#fallbackNow(), 0) + 1, 2 ** 30);
+    this.#retryTimer = setTimeout(() => void this.reconcileAuto(), delay);
+    this.#retryTimer.unref();
   }
 
   async #installed(models: readonly ModelDescriptor[]): Promise<Map<string, boolean>> {

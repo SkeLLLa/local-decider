@@ -40,6 +40,15 @@ export interface StartOptions {
   readonly logStore?: LogStore;
 }
 
+/** A managed engine starts through EngineControl, which in auto mode lets the first reconcile pick it. */
+function startEngine(engine: Engine, engineControl: EngineControl | undefined): void {
+  if (engineControl !== undefined && engine === engineControl.engine) {
+    engineControl.start();
+  } else {
+    void engine.start();
+  }
+}
+
 /**
  * Listen first, then start the engine in the background: `/health` reports `degraded` while
  * the model loads, so adapters can skip decisions instead of waiting minutes.
@@ -80,7 +89,7 @@ export async function startGateway(options: StartOptions): Promise<Gateway> {
     pricing: config.pricing,
     settings: () => engineControl?.settings ?? store.current,
   });
-  void engine.start();
+  startEngine(engine, engineControl);
   const unwatch =
     store instanceof ConfigFile && engineControl !== undefined
       ? watchSettings(store, engineControl, report)
