@@ -47,7 +47,7 @@ flowchart LR
 |---|---|---|
 | Core | `packages/core` | `/v1/systemone` types and answer normalisation, policy schema and rules, redaction, truncation, gateway client |
 | Gateway | `packages/gateway` | HTTP service, engine supervisor, decider, shadow log, stats, MCP server, `local-decider` CLI, service units |
-| Hooks | `packages/hooks` → `plugins/local-decider/dist/hook.mjs`, `hooks/register.mjs` | One zero-dependency hook runner for Claude Code and Codex, with the deterministic guard, and the Claude Code auto-mode mod |
+| Hooks | `packages/hooks` → `plugins/local-decider/dist/hook.mjs`, `hooks/register.mjs` (built at release, published as `@local-decider/agent-plugin`) | One zero-dependency hook runner for Claude Code and Codex, with the deterministic guard, and the Claude Code auto-mode mod |
 | Paseo plugin | `packages/paseo-plugin` | Hooks, decision rows, settings and status screens; never runs a model in-process |
 | Policies | `policies/` | Default policies and eval fixtures |
 

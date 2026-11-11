@@ -159,6 +159,9 @@ claude plugin marketplace add SkeLLLa/local-decider; and claude plugin install l
 codex plugin marketplace add SkeLLLa/local-decider; and codex plugin add local-decider@local-decider
 ```
 
+Both install the plugin from npm (`@local-decider/agent-plugin`, built at release), so the `npm`
+CLI must be on `PATH`.
+
 Details: [Claude Code and Codex plugin README](../plugins/local-decider/README.md).
 
 ## Verify it works

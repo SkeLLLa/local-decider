@@ -77,7 +77,7 @@ Needs Claude Code 2.1.304 or newer (older versions are skipped) and a running ga
 the plugin's hook "was skipped" on each allow, and in Paseo-launched sessions the allow is ignored
 and the classifier decides. See [ADR-0007](../../docs/adr/0007-claude-auto-mode-mod.md).
 
-`hooks/register.mjs` is generated from `packages/hooks/src/mod` by the same build as
+`hooks/register.mjs` is generated (not committed) from `packages/hooks/src/mod` by the same build as
 `dist/hook.mjs`. `mise run test:mod` validates it and runs `claude plugin test`.
 
 ## Fail-open
@@ -122,4 +122,21 @@ also applies to a `claude -p` or `codex exec` the agent starts itself, since it 
 environment.
 
 `dist/hook.mjs` is generated from `packages/hooks` by `pnpm --filter @local-decider/hooks build`.
-Do not edit it by hand.
+Do not edit it by hand. Neither generated file is committed: the release workflow builds them and
+publishes this directory to npm as `@local-decider/agent-plugin`, which both marketplaces install
+([ADR-0009](../../docs/adr/0009-plugin-npm-distribution.md)). The `npm` CLI must be on `PATH`.
+
+## Development
+
+```sh
+pnpm --filter @local-decider/hooks build
+claude --plugin-dir plugins/local-decider
+```
+
+For Codex, point a personal `~/.agents/plugins/marketplace.json` at the checkout with
+`{ "source": "local", "path": "<checkout>/plugins/local-decider" }`. Without a build the hooks
+exit 0 silently.
+
+release-please bumps this package only for commits that touch `plugins/local-decider/`. A change
+under `packages/hooks` alone does not release the plugin, so touch a file here (for example with
+a `fix(plugin):` commit) whenever the hook bundle changes.

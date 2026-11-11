@@ -1,6 +1,6 @@
 # ADR-0004: One plugin directory for Claude Code and Codex
 
-Status: accepted (2026-11-10)
+Status: accepted (2026-11-10); amended by [ADR-0009](0009-plugin-npm-distribution.md)
 
 ## Context
 
@@ -20,14 +20,13 @@ plugins/local-decider/
   .codex-plugin/plugin.json            # "hooks": "./hooks/codex-hooks.json"
   hooks/hooks.json                     # Claude Code
   hooks/codex-hooks.json               # Codex
-  dist/hook.mjs                        # bundled from packages/hooks, committed
+  dist/hook.mjs                        # built from packages/hooks, published to npm
 ```
 
 Hooks run `node "${CLAUDE_PLUGIN_ROOT}/dist/hook.mjs" <claude|codex> <event>`. The bundle has
-no dependencies; CI rebuilds it and fails if the committed file differs.
+no dependencies. It is no longer committed; ADR-0009 builds it at release.
 
 ## Consequences
 
 One repo, `claude plugin marketplace add SkeLLLa/local-decider` and
-`codex plugin marketplace add SkeLLLa/local-decider`. The committed bundle is generated code in
-git, kept honest by the CI diff check.
+`codex plugin marketplace add SkeLLLa/local-decider`. The bundle is not in git (see ADR-0009).
