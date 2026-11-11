@@ -158,7 +158,7 @@ export const openaiCompatibleEngine = defineEngine({
   label: 'OpenAI-compatible',
   description: 'Score decision options from an OpenAI-compatible server logprob distribution',
   configSchema: openaiCompatibleSchema,
-  selectable: false,
+  selectable: true,
   supports: () => ({ ok: true }),
   tag: () => 'LLM',
   calibrated: false,

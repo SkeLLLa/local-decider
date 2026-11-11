@@ -23,13 +23,13 @@ describe('engine registry', () => {
   it('has unique ids and selectable engines in the existing order', () => {
     const ids = ENGINES.map((engine) => engine.id);
     assert.equal(new Set(ids).size, ids.length);
-    assert.deepEqual(SELECTABLE_IDS, ['strands-decider', 'fastflowlm']);
+    assert.deepEqual(SELECTABLE_IDS, ['strands-decider', 'fastflowlm', 'openai-compatible']);
     assert.equal(engineDescriptor('fastflowlm')?.id, 'fastflowlm');
-    assert.equal(engineDescriptor('openai-compatible')?.selectable, false);
+    assert.equal(engineDescriptor('openai-compatible')?.selectable, true);
     assert.equal(engineDescriptor('missing'), undefined);
     assert.ok(isSelectableEngine('strands-decider'));
     assert.ok(!isSelectableEngine('systemone-remote'));
-    assert.ok(!isSelectableEngine('openai-compatible'));
+    assert.ok(isSelectableEngine('openai-compatible'));
   });
 
   it('parses default model configs for every engine', () => {

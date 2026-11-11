@@ -408,7 +408,7 @@
       "properties": {
         "engine": {
           "type": "string",
-          "enum": ["strands-decider", "fastflowlm"]
+          "enum": ["strands-decider", "fastflowlm", "openai-compatible"]
         },
         "model": {
           "type": "string",

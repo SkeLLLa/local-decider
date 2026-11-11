@@ -6,6 +6,7 @@ import { MODES } from '@local-decider/core';
 import { readFileSync } from 'node:fs';
 
 import type { ConfigEdit } from './config-file.ts';
+import { isSelectableEngine } from './engines/registry.ts';
 
 const PATH_KEYS = new Set([
   'tools.flm',
@@ -21,11 +22,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 function selectionEdits(sel: unknown): ConfigEdit[] {
-  if (
-    !isRecord(sel) ||
-    (sel['engine'] !== 'strands-decider' && sel['engine'] !== 'fastflowlm') ||
-    typeof sel['model'] !== 'string'
-  ) {
+  if (!isRecord(sel) || !isSelectableEngine(sel['engine']) || typeof sel['model'] !== 'string') {
     return [];
   }
   const device = typeof sel['device'] === 'string' ? { device: sel['device'] } : {};

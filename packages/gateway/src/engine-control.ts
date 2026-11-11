@@ -21,7 +21,13 @@ import { cachedFlmVersion } from './engines/fastflowlm/status.ts';
 import { hostInfo } from './engines/host.ts';
 import { createEngine } from './engines/index.ts';
 import { ManagedEngine, type LifecycleOptions } from './engines/lazy.ts';
-import { allModels, ENGINES, engineDescriptor, type EngineId } from './engines/registry.ts';
+import {
+  allModels,
+  ENGINES,
+  engineDescriptor,
+  SELECTABLE_IDS,
+  type EngineId,
+} from './engines/registry.ts';
 import type { Engine } from './engines/types.ts';
 import { catalogModel, MEMORY_BUDGET, modelFits, modelMemoryGb } from './models.ts';
 import type { Paths } from './paths.ts';
@@ -38,7 +44,7 @@ import {
   type Toolchain,
 } from './toolchain.ts';
 
-const SWITCHABLE_ENGINES: readonly EngineId[] = ['strands-decider', 'fastflowlm'];
+const SWITCHABLE_ENGINES: readonly EngineId[] = SELECTABLE_IDS;
 
 export interface EngineSelection {
   readonly engine: EngineId;
@@ -245,7 +251,9 @@ export class EngineControl {
     this.pathsEditable = options.pathsEditable ?? true;
     this.#tools = toolchain(config, paths, this.#env);
     this.#status = new CatalogStatus(this.#context());
-    this.switchable = config.engine.type !== 'systemone-remote' && config.engine.url === undefined;
+    this.switchable =
+      config.engine.type !== 'systemone-remote' &&
+      (config.engine.type === 'openai-compatible' || config.engine.url === undefined);
     this.#selected = this.switchable ? this.#initialSelection() : null;
     this.#engine = this.#build(this.#selected);
   }
@@ -277,10 +285,16 @@ export class EngineControl {
   }
 
   allowedModels(engine?: EngineId): string[] {
-    const configured =
-      engine === undefined || engine === this.#config.engine.type
-        ? [this.#config.engine.model]
-        : [];
+    const configured = new Set<string>();
+    if (engine === undefined || engine === this.#config.engine.type) {
+      configured.add(this.#config.engine.model);
+    }
+    if (engine === undefined || engine === 'openai-compatible') {
+      const openai = this.#openAIConfig();
+      if (openai !== undefined) {
+        configured.add(openai.model);
+      }
+    }
     const known = allModels()
       .filter((model) => engine === undefined || model.engine === engine)
       .map((model) => model.id);
@@ -550,7 +564,7 @@ export class EngineControl {
 
   /** The `GET /v1/engines` view. */
   async status(): Promise<Record<string, unknown>> {
-    const models = allModels();
+    const models = this.#catalogModels();
     const installed = await this.#installed(models);
     const health = this.#engine.health();
     const life = this.#engine.lifecycle;
@@ -612,6 +626,16 @@ export class EngineControl {
           : 'not installed; run `local-decider engine install --engine fastflowlm`',
         validation,
       },
+      {
+        id: 'openai-compatible',
+        installed: this.#openAIConfig() !== undefined,
+        available: this.#openAIConfig() !== undefined,
+        detail:
+          this.#openAIConfig() === undefined
+            ? 'set engines.openai-compatible.url/model'
+            : this.#openAIConfig()?.url,
+        validation: null,
+      },
     ];
     return ENGINES.filter((engine) => engine.selectable).map((engine) => {
       const support = engine.supports(this.#host);
@@ -657,6 +681,31 @@ export class EngineControl {
       model: saved.model,
       device: savedEngine === 'strands-decider' ? device : null,
     };
+  }
+
+  #openAIConfig():
+    | Extract<EngineConfig, { type: 'openai-compatible' }>
+    | NonNullable<GatewayConfig['engines']>['openai-compatible']
+    | undefined {
+    return this.#config.engine.type === 'openai-compatible'
+      ? this.#config.engine
+      : this.#config.engines?.['openai-compatible'];
+  }
+
+  #catalogModels(): ModelDescriptor<EngineId>[] {
+    const models = allModels();
+    const openai = this.#openAIConfig();
+    if (openai !== undefined) {
+      models.push({
+        id: openai.model,
+        engine: 'openai-compatible',
+        label: openai.model,
+        downloadGb: null,
+        memoryGb: null,
+        latencyHint: null,
+      });
+    }
+    return models;
   }
 
   #engineConfig(sel: EngineSelection): EngineConfig {

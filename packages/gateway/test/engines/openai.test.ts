@@ -109,14 +109,14 @@ function near(actual: number | undefined, expected: number): void {
 }
 
 describe('OpenAI-compatible engine', () => {
-  it('uses the planned defaults and stays out of the selectable settings list', () => {
+  it('uses the planned defaults and is selectable', () => {
     const parsed = config('http://127.0.0.1:1234/v1');
     assert.equal(parsed.api, 'chat');
     assert.equal(parsed.maxTokens, 1);
     assert.equal(parsed.topLogprobs, 10);
     assert.equal(parsed.maxOptions, 10);
     assert.equal(parsed.minCoverage, 0.5);
-    assert.equal(openaiCompatibleEngine.selectable, false);
+    assert.equal(openaiCompatibleEngine.selectable, true);
   });
 
   it('is ready from the logprob probe even when the server does not support /models', async () => {

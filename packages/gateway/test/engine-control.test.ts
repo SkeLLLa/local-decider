@@ -179,6 +179,52 @@ describe('EngineControl switching', () => {
     assert.equal(decider.engine.id, 'fastflowlm');
   });
 
+  it('lists OpenAI-compatible as unavailable until configured', async () => {
+    const { control } = setup({ host: DARWIN_HOST });
+    const status = await control.status();
+    const engines = status['engines'] as Record<string, unknown>[];
+    const openai = engines.find((engine) => engine['id'] === 'openai-compatible');
+    assert.equal(openai?.['available'], false);
+    assert.equal(openai?.['supported'], true);
+    assert.equal(openai?.['detail'], 'set engines.openai-compatible.url/model');
+    assert.deepEqual(
+      status['models'] &&
+        (status['models'] as unknown[]).filter(
+          (model) => (model as Record<string, unknown>)['engine'] === 'openai-compatible',
+        ),
+      [],
+    );
+  });
+
+  it('selects the configured OpenAI-compatible model and rejects unknown models', async () => {
+    const { control, created } = setup({
+      engines: {
+        'openai-compatible': { url: 'http://127.0.0.1:1234/v1', model: 'local-model' },
+      },
+    });
+    const status = await control.status();
+    const engines = status['engines'] as Record<string, unknown>[];
+    const openai = engines.find((engine) => engine['id'] === 'openai-compatible');
+    assert.equal(openai?.['available'], true);
+    const models = status['models'] as Record<string, unknown>[];
+    const model = models.find((entry) => entry['id'] === 'local-model');
+    assert.equal(model?.['engine'], 'openai-compatible');
+    assert.equal(model?.['downloadGb'], null);
+    assert.equal(model?.['memoryGb'], null);
+    assert.equal(model?.['installed'], true);
+
+    await control.select({ engine: 'openai-compatible', model: 'local-model' });
+    assert.equal(created.at(-1)?.config.type, 'openai-compatible');
+    assert.deepEqual(control.settings.selection, {
+      engine: 'openai-compatible',
+      model: 'local-model',
+    });
+    await assert.rejects(
+      control.select({ engine: 'openai-compatible', model: 'other-model' }),
+      (error: unknown) => error instanceof EngineSwitchError && error.status === 400,
+    );
+  });
+
   it('uses and reapplies per-engine options when switching to FastFlowLM', async () => {
     const paths = tempPaths();
     const { control, created } = setup({
@@ -473,7 +519,7 @@ describe('EngineControl state', () => {
     writeFileSync(
       join(paths.data, 'state.json'),
       JSON.stringify({
-        selection: { engine: 'fastflowlm', model: 'd3:nano' },
+        selection: { engine: 'openai-compatible', model: 'local-model' },
         lifecycle: { lifecycle: 'eager', idleUnloadMinutes: 20 },
         paths: { 'dirs.hfCache': '/tmp', 'bogus.key': '/x', 'tools.uv': '' },
         policyModes: { permission: 'act', bad: 'loud' },
@@ -481,7 +527,7 @@ describe('EngineControl state', () => {
       }),
     );
     const config = ConfigFile.open(paths).current;
-    assert.deepEqual(config.selection, { engine: 'fastflowlm', model: 'd3:nano' });
+    assert.deepEqual(config.selection, { engine: 'openai-compatible', model: 'local-model' });
     assert.deepEqual(config.lifecycle, { mode: 'eager', idleUnloadMinutes: 20 });
     assert.equal(config.dirs.hfCache, '/tmp');
     assert.deepEqual(config.policies, {
@@ -512,7 +558,7 @@ describe('EngineControl state', () => {
     const engines = status['engines'] as { id: string; installed: boolean }[];
     assert.deepEqual(
       engines.map((e) => e.id),
-      ['strands-decider', 'fastflowlm'],
+      ['strands-decider', 'fastflowlm', 'openai-compatible'],
     );
     assert.equal(engines.find((e) => e.id === 'fastflowlm')?.installed, true);
     const models = status['models'] as { id: string; recommended: boolean; quality: unknown }[];
@@ -532,7 +578,7 @@ describe('EngineControl state', () => {
     }[];
     assert.deepEqual(
       darwinEngines.map(({ id }) => id),
-      ['strands-decider', 'fastflowlm'],
+      ['strands-decider', 'fastflowlm', 'openai-compatible'],
     );
     const darwinFlm = darwinEngines.find(({ id }) => id === 'fastflowlm');
     assert.ok(darwinFlm);
@@ -544,6 +590,7 @@ describe('EngineControl state', () => {
     assert.ok(darwinStrands);
     assert.equal(darwinStrands.label, 'Strands Decider (PyTorch)');
     assert.deepEqual(darwinStrands.devices, ['auto', 'cpu', 'mlx', 'mps']);
+    assert.equal(darwinEngines.find(({ id }) => id === 'openai-compatible')?.supported, true);
 
     const linuxStatus = await setup({ host: LINUX_HOST }).control.status();
     const linuxEngines = linuxStatus['engines'] as {
