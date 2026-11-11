@@ -21,7 +21,7 @@ import { cachedFlmVersion } from './engines/fastflowlm/status.ts';
 import { hostInfo } from './engines/host.ts';
 import { createEngine } from './engines/index.ts';
 import { ManagedEngine, type LifecycleOptions } from './engines/lazy.ts';
-import { allModels, type EngineId } from './engines/registry.ts';
+import { allModels, engineDescriptor, type EngineId } from './engines/registry.ts';
 import type { Engine } from './engines/types.ts';
 import { catalogModel, MEMORY_BUDGET, modelFits, modelMemoryGb } from './models.ts';
 import type { Paths } from './paths.ts';
@@ -546,10 +546,11 @@ export class EngineControl {
   }
 
   validate(engine: string): Promise<Validation> {
-    if (engine !== 'fastflowlm') {
-      throw new EngineSwitchError(400, 'only fastflowlm can be validated');
+    const descriptor = engineDescriptor(engine);
+    if (descriptor?.validation === undefined) {
+      throw new EngineSwitchError(400, `${engine} does not support validation`);
     }
-    return this.#status.validate('fastflowlm');
+    return this.#status.validate(descriptor.id);
   }
 
   /** The `GET /v1/engines` view. */

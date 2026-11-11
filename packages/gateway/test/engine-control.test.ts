@@ -470,6 +470,22 @@ describe('EngineControl state', () => {
     assert.equal((status['active'] as { lifecycle: string }).lifecycle, 'lazy');
   });
 
+  it('dispatches validation using the selected engine descriptor', async () => {
+    const { control } = setup();
+    const result = await control.validate('fastflowlm');
+    assert.equal(result.ok, true);
+    assert.deepEqual(result.lines, ['FLM v1.0.12']);
+
+    assert.throws(
+      () => control.validate('strands-decider'),
+      /strands-decider does not support validation/,
+    );
+    assert.throws(
+      () => control.validate('unknown-engine'),
+      /unknown-engine does not support validation/,
+    );
+  });
+
   it('validates path updates and refuses them on a remote gateway', async () => {
     const { control, paths } = setup();
     await assert.rejects(control.setPath('tools.flm', 'relative/flm'), /absolute path/);
