@@ -28,7 +28,7 @@ const START_HINT =
   'start LM Studio (lms server start), ollama serve, llama-server or mlx_lm.server';
 const PROBE_QUESTION: Question = { type: 'noul', instructions: 'Say yes to confirm logprobs.' };
 
-const sharedShape = {
+export const sharedShape = {
   url: z.url().default('http://127.0.0.1:1234/v1'),
   model: z
     .string()

@@ -16,6 +16,7 @@ import {
 } from './config.ts';
 import type { Decider } from './decider.ts';
 import { DownloadError, Downloads, type Download } from './downloads.ts';
+import type { EngineConnection } from './engine-connection.ts';
 import {
   discoveryEndpoint,
   isOpenAILike,
@@ -73,6 +74,13 @@ export interface EngineRequest {
   readonly engine?: EngineId | undefined;
   readonly model: string;
   readonly device?: Device | undefined;
+}
+
+/** A saved OpenAI-like connection; the token is only ever the name of an environment variable. */
+export interface EngineConnectionView {
+  readonly url: string;
+  readonly model: string;
+  readonly tokenEnv?: string;
 }
 
 export class EngineSwitchError extends Error {
@@ -420,6 +428,9 @@ export class EngineControl {
         policy: join(schemas, 'policy.schema.json'),
       },
       policyDir: join(this.#paths.config, 'policies'),
+      connections: Object.fromEntries(
+        OPENAI_LIKE_ENGINES.map((id) => [id, this.#connection(id) ?? null]),
+      ),
       config: this.#config,
     };
   }
@@ -458,6 +469,51 @@ export class EngineControl {
       throw new EngineSwitchError(403, 'routing presets can only be changed on a loopback gateway');
     }
     this.#save([{ path: ['routing', 'presets', harness, preset], value: target ?? undefined }]);
+  }
+
+  /**
+   * Save the connection of an OpenAI-like engine: `engine.*` when that is the primary engine
+   * type (it beats `engines`), else `engines.<id>.*`. Editing the active engine rebuilds it once
+   * (its model follows the edit); an inactive engine is only saved, never selected.
+   */
+  // fallow-ignore-next-line unused-class-member -- called through the settings-routes table
+  async saveEngineConnection(connection: EngineConnection): Promise<EngineConnectionView> {
+    // Where the gateway connects (and which env var it reads): not from a remote client.
+    if (!this.pathsEditable) {
+      throw new EngineSwitchError(
+        403,
+        'engine connections can only be changed on a loopback gateway',
+      );
+    }
+    const { engine: id, url, model, tokenEnv } = connection;
+    const before = JSON.stringify(this.#endpoint(id) ?? null);
+    const base = this.#config.engine.type === id ? ['engine'] : ['engines', id];
+    this.#save([
+      { path: [...base, 'url'], value: url },
+      { path: [...base, 'model'], value: model },
+      { path: [...base, 'tokenEnv'], value: tokenEnv },
+    ]);
+    const { engine, engines } = this.#config;
+    this.#applied = { ...this.#applied, engine, engines };
+    const selected = this.#selected;
+    if (selected?.engine === id && JSON.stringify(this.#endpoint(id) ?? null) !== before) {
+      const run = this.#pending.then(() => this.#apply({ ...selected, model }, true));
+      this.#pending = run.catch(() => undefined);
+      await run;
+    }
+    return this.#connection(id) ?? { url, model };
+  }
+
+  /** The saved connection of an OpenAI-like engine, for a settings page to prefill. */
+  #connection(id: OpenAILikeEngine): EngineConnectionView | undefined {
+    const endpoint = this.#endpoint(id);
+    return endpoint === undefined
+      ? undefined
+      : {
+          url: endpoint.url,
+          model: endpoint.model,
+          ...(endpoint.tokenEnv === undefined ? {} : { tokenEnv: endpoint.tokenEnv }),
+        };
   }
 
   /** Re-read the policy directories, e.g. after adding a policy; saved modes and variants stay. */
@@ -693,6 +749,7 @@ export class EngineControl {
         detail: existing?.['detail'] ?? null,
         devices: [...(engine.devices?.(this.#host) ?? [])],
         validation: existing?.['validation'] ?? null,
+        ...(existing?.['connection'] === undefined ? {} : { connection: existing['connection'] }),
         supported: support.ok,
         ...(support.ok ? {} : { unsupportedReason: support.reason }),
       };
@@ -738,6 +795,7 @@ export class EngineControl {
       available: endpoint !== undefined,
       detail: endpoint === undefined ? `set engines.${id}.url/model` : endpoint.url,
       validation: null,
+      connection: this.#connection(id) ?? null,
     };
   }
 

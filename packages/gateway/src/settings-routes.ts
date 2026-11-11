@@ -6,6 +6,7 @@ import { HARNESSES } from '@local-decider/core';
 
 import type { PresetTarget } from './config.ts';
 import type { Decider } from './decider.ts';
+import { parseEngineConnection, type EngineConnection } from './engine-connection.ts';
 import { EngineSwitchError, type EngineControl } from './engine-control.ts';
 
 type SettingsHandler = (
@@ -77,6 +78,16 @@ function parsePresetUpdate(body: unknown): PresetUpdate {
 const ROUTES: Readonly<Record<string, SettingsHandler>> = {
   'GET /v1/config': async (_body, c) => [200, c.describeSettings()],
   'POST /v1/config/reload': async (_body, c) => [200, await c.reloadConfig()],
+  'POST /v1/config/engine': async (body, c) => {
+    let connection: EngineConnection;
+    try {
+      connection = parseEngineConnection(body);
+    } catch (error) {
+      throw new EngineSwitchError(400, error instanceof Error ? error.message : 'invalid body');
+    }
+    const saved = await c.saveEngineConnection(connection);
+    return [200, { engine: connection.engine, connection: saved }];
+  },
   'POST /v1/routing/presets': async (body, c) => {
     const { harness, preset, target } = parsePresetUpdate(body);
     c.setRoutingPreset(harness, preset, target);
