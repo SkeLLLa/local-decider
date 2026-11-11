@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { DEVICES, defineEngine } from '../descriptor.ts';
 import { MODELS } from './models.ts';
 import { FastFlowLMEngine } from './server.ts';
+import { flmModelsPresent, validateFlm } from './status.ts';
 
 export const DEFAULT_FLM_MODEL = 'd3:nano';
 const FLM_PMODES = ['powersaver', 'balanced', 'performance', 'turbo'] as const;
@@ -35,5 +36,19 @@ export const fastflowlmEngine = defineEngine({
   devices: () => DEVICES,
   calibrated: true,
   models: MODELS,
+  modelsPresent: flmModelsPresent,
+  downloadSteps: (model, ctx) => {
+    const flm = ctx.tools?.flm;
+    if (flm === undefined) {
+      throw new Error('FastFlowLM is not installed');
+    }
+    return [{ command: flm, args: ['pull', model.id] }];
+  },
+  validation: {
+    label: 'flm validate',
+    hint: 'Checks the NPU and driver; takes a few seconds.',
+    onStart: true,
+    run: validateFlm,
+  },
   create: (config, ctx) => new FastFlowLMEngine(config, ctx.paths, ctx.tools),
 });

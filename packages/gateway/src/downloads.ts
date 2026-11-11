@@ -1,9 +1,8 @@
 import { spawn } from 'node:child_process';
-import { existsSync } from 'node:fs';
-import { dirname, join } from 'node:path';
 
-import type { ModelDescriptor } from './engines/descriptor.ts';
-import { stripAnsi, type Toolchain } from './toolchain.ts';
+import type { DownloadStep, EngineContext, ModelDescriptor } from './engines/descriptor.ts';
+import { engineDescriptor } from './engines/registry.ts';
+import { stripAnsi } from './toolchain.ts';
 
 export interface Download {
   readonly id: string;
@@ -26,26 +25,28 @@ export class DownloadError extends Error {
   }
 }
 
-/** Fixed argv per step. Model ids and repos come from the catalogue, never from a request. */
-export function downloadSteps(model: ModelDescriptor, tools: Toolchain): [string, string[]][] {
-  if (model.engine === 'fastflowlm') {
-    if (tools.flm === undefined) {
-      throw new DownloadError(409, 'FastFlowLM is not installed');
+interface DownloadProvider {
+  readonly id: string;
+  downloadSteps?(this: void, model: ModelDescriptor, ctx: EngineContext): readonly DownloadStep[];
+}
+
+/** Fixed argv per step comes from the engine descriptor, never from a request. */
+export function downloadSteps(
+  model: ModelDescriptor,
+  ctx: EngineContext,
+  descriptor: DownloadProvider | undefined = engineDescriptor(model.engine),
+): readonly DownloadStep[] {
+  if (descriptor?.id !== model.engine || descriptor.downloadSteps === undefined) {
+    throw new DownloadError(400, `${model.engine} does not support model downloads`);
+  }
+  try {
+    return descriptor.downloadSteps(model, ctx);
+  } catch (error) {
+    if (error instanceof DownloadError) {
+      throw error;
     }
-    return [[tools.flm, ['pull', model.id]]];
+    throw new DownloadError(409, error instanceof Error ? error.message : String(error));
   }
-  const hf =
-    tools.strandsDecider === undefined ? undefined : join(dirname(tools.strandsDecider), 'hf');
-  if (hf === undefined || !existsSync(hf)) {
-    throw new DownloadError(
-      409,
-      'the strands-decider engine is not installed; run `local-decider engine install`',
-    );
-  }
-  return (model.artifacts ?? []).map((artifact): [string, string[]] => [
-    hf,
-    ['download', artifact],
-  ]);
 }
 
 const PERCENT = /(\d{1,3}(?:\.\d+)?)\s*%/g;
@@ -108,11 +109,11 @@ export class Downloads {
     return this.list().some((d) => d.model === model && d.state === 'running');
   }
 
-  start(model: ModelDescriptor, tools: Toolchain, onDone: () => void): Download {
+  start(model: ModelDescriptor, ctx: EngineContext, onDone: () => void): Download {
     if (this.running(model.id)) {
       throw new DownloadError(409, `${model.id} is already downloading`);
     }
-    const steps = downloadSteps(model, tools);
+    const steps = downloadSteps(model, ctx);
     this.#seq += 1;
     const job: Download = {
       id: `dl-${String(this.#seq)}`,
@@ -125,18 +126,18 @@ export class Downloads {
       progress: null,
     };
     this.#jobs.set(job.id, job);
-    void this.#run(job, steps, tools.env).finally(onDone);
+    void this.#run(job, steps, ctx.tools?.env ?? {}).finally(onDone);
     return job;
   }
 
   async #run(
     job: Download,
-    steps: [string, string[]][],
+    steps: readonly DownloadStep[],
     env: Readonly<Record<string, string>>,
   ): Promise<void> {
     try {
-      for (const [i, [cmd, args]] of steps.entries()) {
-        await runStep(cmd, args, env, (text) => {
+      for (const [i, step] of steps.entries()) {
+        await runStep(step.command, [...step.args], env, (text) => {
           const p = lastPercent(text);
           if (p !== null) {
             job.progress = (i + p) / steps.length;

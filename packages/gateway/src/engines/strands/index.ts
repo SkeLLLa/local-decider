@@ -1,6 +1,9 @@
+import { existsSync, readdirSync } from 'node:fs';
+import { homedir } from 'node:os';
+import { dirname, join } from 'node:path';
 import { z } from 'zod';
 
-import { DEVICES, defineEngine } from '../descriptor.ts';
+import { DEVICES, defineEngine, type EngineContext, type ModelDescriptor } from '../descriptor.ts';
 import { MODELS } from './models.ts';
 import { StrandsDeciderEngine } from './server.ts';
 
@@ -22,6 +25,49 @@ const strandsSchema = z.strictObject({
 
 export type StrandsEngineConfig = z.infer<typeof strandsSchema>;
 
+/** `models--Org--Name/snapshots/<rev>` holds at least one file. */
+export function hfCached(hfCache: string, repo: string): boolean {
+  const snapshots = join(hfCache, `models--${repo.replace('/', '--')}`, 'snapshots');
+  if (!existsSync(snapshots)) {
+    return false;
+  }
+  return readdirSync(snapshots).some((rev) => readdirSync(join(snapshots, rev)).length > 0);
+}
+
+function hfCachePath(ctx: EngineContext): string {
+  const configured = ctx.tools?.env['HF_HUB_CACHE'] ?? ctx.env['HF_HUB_CACHE'];
+  return configured ?? join(ctx.env['HF_HOME'] ?? join(homedir(), '.cache', 'huggingface'), 'hub');
+}
+
+function strandsModelsPresent(
+  models: readonly ModelDescriptor<'strands-decider'>[],
+  ctx: EngineContext,
+): Promise<ReadonlyMap<string, boolean>> {
+  const cache = hfCachePath(ctx);
+  return Promise.resolve(
+    new Map(
+      models.map((model) => [
+        model.id,
+        (model.artifacts ?? []).every((artifact) => hfCached(cache, artifact)),
+      ]),
+    ),
+  );
+}
+
+function strandsDownloadSteps(
+  model: ModelDescriptor<'strands-decider'>,
+  ctx: EngineContext,
+): { readonly command: string; readonly args: readonly string[] }[] {
+  const binary = ctx.tools?.strandsDecider;
+  const hf = binary === undefined ? undefined : join(dirname(binary), 'hf');
+  if (hf === undefined || !existsSync(hf)) {
+    throw new Error(
+      'the strands-decider engine is not installed; run `local-decider engine install`',
+    );
+  }
+  return (model.artifacts ?? []).map((artifact) => ({ command: hf, args: ['download', artifact] }));
+}
+
 export const strandsEngine = defineEngine({
   id: 'strands-decider',
   label: 'Strands Decider',
@@ -33,5 +79,7 @@ export const strandsEngine = defineEngine({
   devices: () => DEVICES,
   calibrated: true,
   models: MODELS,
+  modelsPresent: strandsModelsPresent,
+  downloadSteps: strandsDownloadSteps,
   create: (config, ctx) => new StrandsDeciderEngine(config, ctx.paths, ctx.tools),
 });

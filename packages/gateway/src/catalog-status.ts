@@ -1,156 +1,173 @@
-import { existsSync, readdirSync } from 'node:fs';
-import { join } from 'node:path';
+import type { EngineContext, ModelDescriptor, Validation } from './engines/descriptor.ts';
+import { engineDescriptor, type EngineId } from './engines/registry.ts';
 
-import type { ModelDescriptor } from './engines/descriptor.ts';
-import type { EngineId } from './engines/registry.ts';
-import { probe, type Toolchain } from './toolchain.ts';
+export type { Validation } from './engines/descriptor.ts';
 
-export interface Validation {
-  readonly ok: boolean;
-  readonly checkedAt: string;
-  readonly summary: string;
-  readonly lines: readonly string[];
+const CACHE_TTL_MS = 15_000;
+const VALIDATION_TTL_MS = 60_000;
+
+interface CacheEntry<T> {
+  readonly at: number;
+  readonly value: T;
 }
 
-const LIST_TTL_MS = 15_000;
+function fresh<T>(entry: CacheEntry<T> | undefined, ttl: number): entry is CacheEntry<T> {
+  return entry !== undefined && Date.now() - entry.at < ttl;
+}
 
-/** `models--Org--Name/snapshots/<rev>` holds at least one file. */
-export function hfCached(hfCache: string, repo: string): boolean {
-  const snapshots = join(hfCache, `models--${repo.replace('/', '--')}`, 'snapshots');
-  if (!existsSync(snapshots)) {
-    return false;
+class EngineCache<T> {
+  readonly #values = new Map<EngineId, CacheEntry<T>>();
+  readonly #loads = new Map<EngineId, Promise<T>>();
+
+  read(engine: EngineId): T | undefined {
+    return this.#values.get(engine)?.value;
   }
-  return readdirSync(snapshots).some((rev) => readdirSync(join(snapshots, rev)).length > 0);
-}
 
-/** Tags `flm list` marks downloaded (`  - d3:nano ✅`). */
-export function parseFlmList(output: string): Set<string> {
-  const out = new Set<string>();
-  for (const line of output.split('\n')) {
-    const match = /^\s*-\s+(\S+)\s+✅/.exec(line);
-    if (match?.[1] !== undefined) {
-      out.add(match[1]);
+  clear(engine?: EngineId): void {
+    if (engine === undefined) {
+      this.#values.clear();
+      this.#loads.clear();
+    } else {
+      this.#values.delete(engine);
+      this.#loads.delete(engine);
     }
   }
-  return out;
+
+  async get(engine: EngineId, ttl: number, load: () => Promise<T>): Promise<T> {
+    const entry = this.#values.get(engine);
+    if (fresh(entry, ttl)) {
+      return entry.value;
+    }
+    const pending = this.#loads.get(engine);
+    if (pending !== undefined) {
+      return pending;
+    }
+    const promise = Promise.resolve().then(load);
+    this.#loads.set(engine, promise);
+    try {
+      const value = await promise;
+      if (this.#loads.get(engine) === promise) {
+        this.#values.set(engine, { at: Date.now(), value });
+      }
+      return value;
+    } finally {
+      if (this.#loads.get(engine) === promise) {
+        this.#loads.delete(engine);
+      }
+    }
+  }
 }
 
-/** Summary from `flm validate` output: the NPU and firmware lines. */
-export function summariseValidate(lines: readonly string[]): string {
-  const pick = (re: RegExp): string | undefined =>
-    lines
-      .find((l) => re.test(l))
-      ?.replace(/^\[\w+\]\s*/, '')
-      .trim();
-  return [pick(/NPU platform/), pick(/NPU:/), pick(/FW Version/)]
-    .filter((s): s is string => s !== undefined)
-    .join(' · ');
+function modelsByEngine(
+  models: readonly ModelDescriptor[],
+): Map<EngineId, ModelDescriptor<EngineId>[]> {
+  const groups = new Map<EngineId, ModelDescriptor<EngineId>[]>();
+  for (const model of models) {
+    const engine = model.engine as EngineId;
+    const group = groups.get(engine) ?? [];
+    group.push(model as ModelDescriptor<EngineId>);
+    groups.set(engine, group);
+  }
+  return groups;
 }
 
-function cleanLines(text: string): string[] {
-  return text
-    .split('\n')
-    .map((l) => l.trim())
-    .filter((l) => l !== '' && !l.includes('no version information available'));
+function modelPresence(
+  models: readonly ModelDescriptor[],
+  value: boolean,
+): ReadonlyMap<string, boolean> {
+  return new Map(models.map((model) => [model.id, value]));
 }
 
-/** Installed models, the FLM version and validation, cached so GET /v1/engines stays cheap. */
+async function checkModels(
+  engine: EngineId,
+  models: readonly ModelDescriptor<EngineId>[],
+  context: EngineContext,
+): Promise<ReadonlyMap<string, boolean>> {
+  const descriptor = engineDescriptor(engine);
+  if (descriptor === undefined) {
+    return modelPresence(models, false);
+  }
+  const check = descriptor.modelsPresent as
+    | ((
+        this: void,
+        models: readonly ModelDescriptor[],
+        ctx: EngineContext,
+      ) => Promise<ReadonlyMap<string, boolean>>)
+    | undefined;
+  if (check === undefined) {
+    return modelPresence(models, true);
+  }
+  try {
+    return await check(models, context);
+  } catch {
+    return modelPresence(models, false);
+  }
+}
+
+function failedValidation(
+  engine: EngineId,
+  message = `${engine} does not support validation`,
+): Validation {
+  const detail = message || `${engine} validation failed`;
+  return { ok: false, checkedAt: new Date().toISOString(), summary: detail, lines: [detail] };
+}
+
+async function runValidation(engine: EngineId, context: EngineContext): Promise<Validation> {
+  const validation = engineDescriptor(engine)?.validation;
+  if (validation === undefined) {
+    return failedValidation(engine);
+  }
+  try {
+    return await validation.run(context);
+  } catch (error) {
+    return failedValidation(engine, error instanceof Error ? error.message : String(error));
+  }
+}
+
+/** Per-engine presence and validation caches; engine-specific checks live on descriptors. */
 export class CatalogStatus {
-  #tools: Toolchain;
-  #hfCache: string;
-  #flmList: { at: number; tags: Set<string> } | undefined;
-  #flmVersion: string | undefined;
-  #validation: Validation | undefined;
-  #validating: Promise<Validation> | undefined;
+  #context: EngineContext;
+  readonly #models = new EngineCache<ReadonlyMap<string, boolean>>();
+  readonly #validations = new EngineCache<Validation>();
 
-  constructor(tools: Toolchain, hfCache: string) {
-    this.#tools = tools;
-    this.#hfCache = hfCache;
+  constructor(context: EngineContext) {
+    this.#context = context;
   }
 
-  /** New tool paths or directories: forget everything derived from the old ones. */
-  reset(tools: Toolchain, hfCache: string): void {
-    this.#tools = tools;
-    this.#hfCache = hfCache;
-    this.#flmList = undefined;
-    this.#flmVersion = undefined;
-    this.#validation = undefined;
+  /** A new toolchain or path invalidates all values derived from the previous context. */
+  reset(context: EngineContext): void {
+    this.#context = context;
+    this.#models.clear();
+    this.#validations.clear();
   }
 
-  invalidate(): void {
-    this.#flmList = undefined;
+  invalidate(engine?: EngineId): void {
+    this.#models.clear(engine);
   }
 
   get validation(): Validation | undefined {
-    return this.#validation;
+    return this.getValidation('fastflowlm');
   }
 
-  get flmVersion(): string | undefined {
-    return this.#flmVersion;
+  getValidation(engine: EngineId): Validation | undefined {
+    return this.#validations.read(engine);
   }
 
   async installed(models: readonly ModelDescriptor[]): Promise<Map<string, boolean>> {
-    const flm = models.some((m) => m.engine === 'fastflowlm')
-      ? await this.#flmTags()
-      : new Set<string>();
-    return new Map(
-      models.map((m) => [
-        m.id,
-        m.engine === 'fastflowlm'
-          ? flm.has(m.id)
-          : (m.artifacts ?? []).every((artifact) => hfCached(this.#hfCache, artifact)),
-      ]),
+    const groups = modelsByEngine(models);
+    const values = await Promise.all(
+      [...groups].map(([engine, engineModels]) =>
+        this.#models.get(engine, CACHE_TTL_MS, () =>
+          checkModels(engine, engineModels, this.#context),
+        ),
+      ),
     );
+    return new Map(values.flatMap((presence) => [...presence]));
   }
 
-  async #flmTags(): Promise<Set<string>> {
-    if (this.#flmList !== undefined && Date.now() - this.#flmList.at < LIST_TTL_MS) {
-      return this.#flmList.tags;
-    }
-    const flm = this.#tools.flm;
-    if (flm === undefined) {
-      return new Set();
-    }
-    try {
-      const out = await probe(flm, ['list'], this.#tools.env);
-      this.#flmList = { at: Date.now(), tags: parseFlmList(out) };
-      this.#flmVersion ??= await this.#version(flm);
-      return this.#flmList.tags;
-    } catch {
-      return new Set();
-    }
-  }
-
-  async #version(flm: string): Promise<string | undefined> {
-    try {
-      return /FLM v[\d.]+/.exec(await probe(flm, ['version'], this.#tools.env))?.[0];
-    } catch {
-      return undefined;
-    }
-  }
-
-  /** Run `flm validate` (one at a time); the result is cached for GET /v1/engines. */
   validate(engine: EngineId): Promise<Validation> {
-    const flm = this.#tools.flm;
-    if (engine !== 'fastflowlm' || flm === undefined) {
-      return Promise.resolve(this.#store(false, ['FastFlowLM is not installed']));
-    }
-    this.#validating ??= probe(flm, ['validate'], this.#tools.env, 60_000)
-      .then((out) => this.#store(true, cleanLines(out)))
-      .catch((error: unknown) => this.#store(false, cleanLines((error as Error).message)))
-      .finally(() => {
-        this.#validating = undefined;
-      });
-    return this.#validating;
-  }
-
-  #store(ok: boolean, lines: string[]): Validation {
-    this.#validation = {
-      ok,
-      checkedAt: new Date().toISOString(),
-      summary: ok ? summariseValidate(lines) : (lines.at(-1) ?? 'validation failed'),
-      lines,
-    };
-    return this.#validation;
+    return this.#validations.get(engine, VALIDATION_TTL_MS, () =>
+      runValidation(engine, this.#context),
+    );
   }
 }

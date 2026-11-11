@@ -16,7 +16,9 @@ import {
 } from './config.ts';
 import type { Decider } from './decider.ts';
 import { DownloadError, Downloads, type Download } from './downloads.ts';
-import type { ModelDescriptor } from './engines/descriptor.ts';
+import type { EngineContext, ModelDescriptor } from './engines/descriptor.ts';
+import { cachedFlmVersion } from './engines/fastflowlm/status.ts';
+import { hostInfo } from './engines/host.ts';
 import { createEngine } from './engines/index.ts';
 import { ManagedEngine, type LifecycleOptions } from './engines/lazy.ts';
 import { allModels, type EngineId } from './engines/registry.ts';
@@ -214,6 +216,7 @@ export class EngineControl {
   readonly #store: ConfigStore;
   readonly #paths: Paths;
   readonly #env: NodeJS.ProcessEnv;
+  readonly #host = hostInfo();
   readonly #create: NonNullable<EngineControlOptions['create']>;
   readonly #memory: number;
   readonly #installedOverride: EngineControlOptions['installed'];
@@ -239,7 +242,7 @@ export class EngineControl {
     this.#installedOverride = options.installed;
     this.pathsEditable = options.pathsEditable ?? true;
     this.#tools = toolchain(config, paths, this.#env);
-    this.#status = new CatalogStatus(this.#tools, this.#hfCache());
+    this.#status = new CatalogStatus(this.#context());
     this.switchable = config.engine.type !== 'systemone-remote' && config.engine.url === undefined;
     this.#selected = this.switchable ? this.#initialSelection() : null;
     this.#engine = this.#build(this.#selected);
@@ -514,7 +517,7 @@ export class EngineControl {
   /** Rebuild the toolchain from the config and restart the engine on it. */
   #retool(): void {
     this.#tools = toolchain(this.#config, this.#paths, this.#env);
-    this.#status.reset(this.#tools, this.#hfCache());
+    this.#status.reset(this.#context());
     if (this.#selected !== null) {
       const sel = this.#selected;
       this.#pending = this.#pending.then(() => this.#apply(sel, true)).catch(() => undefined);
@@ -539,7 +542,7 @@ export class EngineControl {
     if (entry === undefined) {
       throw new DownloadError(400, `unknown ${engine} model "${model}"`);
     }
-    return this.#downloads.start(entry, this.#tools, () => this.#status.invalidate());
+    return this.#downloads.start(entry, this.#context(), () => this.#status.invalidate());
   }
 
   validate(engine: string): Promise<Validation> {
@@ -612,7 +615,7 @@ export class EngineControl {
         installed: flmInstalled,
         available: flmInstalled && validation?.ok !== false,
         detail: flmInstalled
-          ? (this.#status.flmVersion ?? this.#tools.flm)
+          ? (cachedFlmVersion(this.#tools.flm) ?? this.#tools.flm)
           : 'not installed; run `local-decider engine install --engine fastflowlm`',
         devices: [],
         validation,
@@ -757,8 +760,8 @@ export class EngineControl {
     }
   }
 
-  #hfCache(): string {
-    return resolveEntry('dirs.hfCache', this.#config, this.#paths, this.#env).effective ?? '';
+  #context(): EngineContext {
+    return { paths: this.#paths, tools: this.#tools, host: this.#host, env: this.#env };
   }
 
   #save(edits: readonly ConfigEdit[]): void {

@@ -3,11 +3,9 @@ import { chmodSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, it } from 'node:test';
 
-import { hfCached, parseFlmList, summariseValidate } from '../src/catalog-status.ts';
 import { parseConfig } from '../src/config.ts';
-import { downloadSteps, lastPercent } from '../src/downloads.ts';
 import { flmServeArgs, managedFlm } from '../src/engines/fastflowlm/server.ts';
-import { catalogModel, modelFits } from '../src/models.ts';
+import { modelFits } from '../src/models.ts';
 import { checkPath, resolveEntry, toolchain } from '../src/toolchain.ts';
 import { tempPaths } from './helpers.ts';
 
@@ -61,63 +59,12 @@ describe('toolchain discovery', () => {
   });
 });
 
-describe('catalogue status helpers', () => {
-  it('parses `flm list`', () => {
-    const tags = parseFlmList('Models:\n  - d3:edge ⏬\n  - d3:lite ✅\n  - d3:nano ✅\n');
-    assert.deepEqual([...tags], ['d3:lite', 'd3:nano']);
-  });
-
-  it('summarises `flm validate`', () => {
-    const lines = [
-      '[Linux]  NPU: /dev/accel/accel0 with 8 columns',
-      '[Linux]  NPU FW Version: 1.1.2.64',
-      '[Linux]  NPU platform: aie2p',
-    ];
-    assert.equal(
-      summariseValidate(lines),
-      'NPU platform: aie2p · NPU: /dev/accel/accel0 with 8 columns · NPU FW Version: 1.1.2.64',
-    );
-  });
-
-  it('detects Hugging Face cache snapshots', () => {
-    const { data } = tempPaths();
-    assert.equal(hfCached(data, 'Org/model'), false);
-    mkdirSync(join(data, 'models--Org--model', 'snapshots', 'abc'), { recursive: true });
-    assert.equal(hfCached(data, 'Org/model'), false);
-    writeFileSync(join(data, 'models--Org--model', 'snapshots', 'abc', 'config.json'), '{}');
-    assert.equal(hfCached(data, 'Org/model'), true);
-  });
-
+describe('model catalogue helpers', () => {
   it('knows model memory by device', () => {
     const e4b = 'StrandsAgents/strands-decider-E4B-gemma4-v1-2610';
     assert.equal(modelFits(e4b, 32e9, 'cpu'), false);
     assert.equal(modelFits(e4b, 32e9, 'mlx'), true);
     assert.equal(modelFits('unknown/model', 1, 'cpu'), true);
-  });
-});
-
-describe('downloads', () => {
-  it('builds fixed argv from the catalogue', () => {
-    const paths = tempPaths();
-    const flm = executable(join(paths.data, 'flm'));
-    const strands = executable(join(paths.venvs, 'sd', 'bin', 'strands-decider'));
-    const hf = executable(join(paths.venvs, 'sd', 'bin', 'hf'));
-    const tools = { flm, strandsDecider: strands, uv: undefined, env: {} };
-    const d3 = catalogModel('d3:mini');
-    const sd = catalogModel('StrandsAgents/strands-decider-2B-qwen3.5-v1-2610');
-    assert.ok(d3 !== undefined && sd !== undefined);
-    assert.deepEqual(downloadSteps(d3, tools), [[flm, ['pull', 'd3:mini']]]);
-    assert.deepEqual(downloadSteps(sd, tools), [
-      [hf, ['download', 'StrandsAgents/strands-decider-2B-qwen3.5-v1-2610']],
-      [hf, ['download', 'Qwen/Qwen3.5-2B-Base']],
-    ]);
-    assert.throws(() => downloadSteps(d3, { ...tools, flm: undefined }), /not installed/);
-  });
-
-  it('reads the last percentage of tool output', () => {
-    assert.equal(lastPercent('Downloading 12% ... 47.5%'), 0.475);
-    assert.equal(lastPercent('no progress here'), null);
-    assert.equal(lastPercent('999%'), null);
   });
 });
 

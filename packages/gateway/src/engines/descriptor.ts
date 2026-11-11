@@ -21,6 +21,25 @@ export interface EngineContext {
   readonly env: NodeJS.ProcessEnv;
 }
 
+export interface Validation {
+  readonly ok: boolean;
+  readonly checkedAt: string;
+  readonly summary: string;
+  readonly lines: readonly string[];
+}
+
+export interface DownloadStep {
+  readonly command: string;
+  readonly args: readonly string[];
+}
+
+export interface EngineValidation {
+  readonly label: string;
+  readonly hint: string;
+  readonly onStart: boolean;
+  run(this: void, ctx: EngineContext): Promise<Validation>;
+}
+
 export type Support = { readonly ok: true } | { readonly ok: false; readonly reason: string };
 
 export interface ModelDescriptor<E extends string = string> {
@@ -58,6 +77,19 @@ export interface EngineDescriptor<
   devices?(host: HostInfo): readonly Device[];
   readonly calibrated: boolean;
   readonly models: readonly ModelDescriptor<C['type']>[];
+  /** Absent means all catalogue models are present. */
+  modelsPresent?(
+    this: void,
+    models: readonly ModelDescriptor<C['type']>[],
+    ctx: EngineContext,
+  ): Promise<ReadonlyMap<string, boolean>>;
+  /** Absent means this engine has no model download action. */
+  downloadSteps?(
+    this: void,
+    model: ModelDescriptor<C['type']>,
+    ctx: EngineContext,
+  ): readonly DownloadStep[];
+  readonly validation?: EngineValidation;
   create(config: C, ctx: EngineContext): Engine;
 }
 
@@ -76,6 +108,17 @@ export function defineEngine<
   devices?(host: HostInfo): readonly Device[];
   readonly calibrated: boolean;
   readonly models: readonly ModelDescriptor<z.output<S>['type']>[];
+  modelsPresent?(
+    this: void,
+    models: readonly ModelDescriptor<z.output<S>['type']>[],
+    ctx: EngineContext,
+  ): Promise<ReadonlyMap<string, boolean>>;
+  downloadSteps?(
+    this: void,
+    model: ModelDescriptor<z.output<S>['type']>,
+    ctx: EngineContext,
+  ): readonly DownloadStep[];
+  readonly validation?: EngineValidation;
   create(config: z.output<S>, ctx: EngineContext): Engine;
 }): EngineDescriptor<z.output<S>, S, Selectable> {
   return descriptor;
