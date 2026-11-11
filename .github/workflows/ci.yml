@@ -16,74 +16,30 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  conventional-commits:
-    name: Conventional commit messages
-    if: github.event_name == 'pull_request' && github.actor != 'dependabot[bot]'
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    permissions:
-      contents: read
-      pull-requests: read
-    steps:
-      - name: Verify Conventional Commit messages
-        uses: opensource-nepal/commitlint@9c112b70de7b0e51f81d12a5268a451db5419794 # v2.0.0
-
-  pin-check:
-    name: Action pins
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    permissions:
-      contents: read
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - name: Check action pins
-        run: scripts/check-action-pins.sh .github/workflows/*.yml
-
-  zizmor:
-    name: Workflow security (zizmor)
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    permissions:
-      contents: read
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - name: Run zizmor
-        uses: zizmorcore/zizmor-action@45d7276c9ca790aabd705e31ca99c6185c3e76dd # v0.8.1
-        with:
-          advanced-security: false
-
-  # Workflow/Markdown lint, shellcheck, hook tests and complexity: the static checks in `mise run check`.
+  # Every OS-independent check in `mise run check`, run once and in parallel (`:::`): TS lint and
+  # typecheck, action pins, workflow/Markdown/shell lint, hook shim tests, complexity and fallow.
   static:
     name: Static checks
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
     permissions:
       contents: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: Install linters (versions from mise.toml)
+      - name: Install node, pnpm and linters (versions from mise.toml)
         uses: jdx/mise-action@b44d12e7d0d8ee7461bb893e1b1993500433185b # v5.2.7
         with:
-          install_args: bats jactionlint shellcheck rumdl github:moznion/cccc github:fallow-rs/fallow
+          install_args: node pnpm bats jactionlint shellcheck rumdl github:moznion/cccc github:fallow-rs/fallow
           cache: false
-      - name: jactionlint
-        run: mise run lint:actions
-      - name: shellcheck
-        run: mise run lint:shell
-      - name: Hook shim tests
-        run: mise run test:shim
-      - name: Markdown
-        run: mise run md-check
-      - name: Complexity (cccc.toml)
-        run: mise run lint:complexity
-      - name: fallow (fallow.toml)
-        run: mise run lint:fallow
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Checks
+        run: >-
+          mise run --jobs 4
+          lint ::: typecheck ::: lint:pins ::: lint:actions ::: lint:shell ::: test:shim :::
+          md-check ::: lint:complexity ::: lint:fallow
 
   build:
     name: Build and test (${{ matrix.os }}, Node ${{ matrix.node }})
@@ -120,10 +76,6 @@ jobs:
           install_args: node pnpm
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
-      - name: Lint
-        run: pnpm run lint
-      - name: Typecheck
-        run: pnpm -r typecheck
       - name: Build
         run: pnpm -r build
       # The plugin bundle is built, not committed; a broken `files` list must fail before release.

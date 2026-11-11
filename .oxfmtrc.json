@@ -26,6 +26,10 @@
     "lcov.info",
     "pnpm-lock.yaml",
     ".release-please-manifest.json",
+    "plugins/local-decider/.claude-plugin/plugin.json",
+    "plugins/local-decider/.codex-plugin/plugin.json",
+    ".claude-plugin/marketplace.json",
+    ".agents/plugins/marketplace.json",
     "CHANGELOG.md"
   ]
 }
