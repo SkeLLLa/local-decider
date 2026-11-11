@@ -13,8 +13,10 @@ import {
 import { useState, type ReactNode } from 'react';
 import { View } from 'react-native';
 
+import type { DiscoveredServer, Seed } from '../shared/connection.ts';
 import {
   deviceOptions,
+  engineHint,
   engineOptions,
   initialEngine,
   modelRowState,
@@ -25,23 +27,11 @@ import {
   type Validation,
 } from '../shared/engines.ts';
 import { downloadModelRpc, selectEngineRpc, validateEngineRpc } from '../shared/rpc.ts';
+import { ConnectionForm } from './connection-form.tsx';
 import { type Outcome, outcomeOf, useAction, useEngines } from './hooks.ts';
 import { Badge, InlineMessage, Mono, Progress, type Theme, Value } from './ui.tsx';
 
 type Action = ReturnType<typeof useAction>;
-
-function engineHint(engine: EngineInfo | null): string {
-  if (engine === null) {
-    return 'The gateway lists no engines.';
-  }
-  const detail = engine.detail ?? '';
-  const note = engine.supported ? '' : (engine.unsupportedReason ?? 'Not supported here.');
-  let state = detail;
-  if (!engine.available) {
-    state = engine.installed ? `Unavailable here. ${detail}` : `Not installed. ${detail}`;
-  }
-  return [engine.description, note, state].filter((p) => p !== '').join(' ');
-}
 
 interface RowProps {
   readonly theme: Theme;
@@ -216,10 +206,37 @@ function ModelList(props: Omit<RowProps, 'model'>): ReactNode {
   );
 }
 
+function ConnectionSlot({
+  theme,
+  engine,
+  seed,
+  onSetupLmStudio,
+}: {
+  theme: Theme;
+  engine: EngineInfo | null;
+  seed: Seed | null;
+  onSetupLmStudio: (server: DiscoveredServer) => void;
+}): ReactNode {
+  if (engine?.connectable !== true) {
+    return null;
+  }
+  const own = engine.id === 'lmstudio' ? seed : null;
+  return (
+    <ConnectionForm
+      key={`${engine.id}:${own?.url ?? ''}`}
+      theme={theme}
+      engine={engine}
+      seed={own}
+      onSetupLmStudio={onSetupLmStudio}
+    />
+  );
+}
+
 function EnginePicker({ theme, catalog }: { theme: Theme; catalog: EngineCatalog }): ReactNode {
   const action = useAction();
   const [picked, setPicked] = useState<string | null>(null);
   const [device, setDevice] = useState('auto');
+  const [seed, setSeed] = useState<Seed | null>(null);
   const id = picked ?? initialEngine(catalog);
   const engine = catalog.engines.find((e) => e.id === id) ?? null;
   return (
@@ -255,6 +272,17 @@ function EnginePicker({ theme, catalog }: { theme: Theme; catalog: EngineCatalog
           />
         )}
       </SettingsCard>
+      <ConnectionSlot
+        theme={theme}
+        engine={engine}
+        seed={seed}
+        onSetupLmStudio={(server: DiscoveredServer) => {
+          setSeed({ url: server.url, models: server.models });
+          setPicked('lmstudio');
+          setDevice('auto');
+          action.clear();
+        }}
+      />
       {engine === null ? null : (
         <ModelList
           theme={theme}

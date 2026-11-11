@@ -61,6 +61,16 @@ export interface Gateway {
   ): Promise<PostResult>;
   /** `POST /v1/engines/validate`: re-run an engine's self check (FastFlowLM's `flm validate`). */
   validateEngine(engine: string, options?: CallOptions): Promise<PostResult>;
+  /** `POST /v1/config/engine`: save an OpenAI-like engine's URL, model and token variable name. */
+  saveEngineConnection(
+    body: Readonly<Record<string, unknown>>,
+    options?: CallOptions,
+  ): Promise<PostResult>;
+  /** `POST /v1/engines/discover`: `{}` lists local servers, `{engine, url}` probes one URL. */
+  discoverServers(
+    body: Readonly<Record<string, unknown>>,
+    options?: CallOptions,
+  ): Promise<PostResult>;
   /** `POST /v1/paths`: set a tool path or directory; null returns to automatic discovery. */
   setPath(key: string, value: string | null, options?: CallOptions): Promise<PostResult>;
   /** `POST /v1/engine/load` (202) or `/v1/engine/unload`: load the model now, or free it. */
@@ -261,6 +271,8 @@ export function createGateway(options: GatewayOptions = {}): Gateway | null {
     selectEngine: async (selection, call) => post('/v1/engine', selectionBody(selection), call),
     downloadModel: async (target, call) => post('/v1/models/download', { ...target }, call),
     validateEngine: async (engine, call) => post('/v1/engines/validate', { engine }, call),
+    saveEngineConnection: async (body, call) => post('/v1/config/engine', { ...body }, call),
+    discoverServers: async (body, call) => post('/v1/engines/discover', { ...body }, call),
     setPath: async (key, value, call) => post('/v1/paths', { key, value }, call),
     engineLoad: async (action, call) => post(`/v1/engine/${action}`, {}, call),
     setLifecycle: async (lifecycle, call) => post('/v1/engine/lifecycle', { ...lifecycle }, call),

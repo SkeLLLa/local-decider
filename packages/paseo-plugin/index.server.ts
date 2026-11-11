@@ -12,6 +12,8 @@ import {
   routingSettings,
   setRoutingPreset,
   reloadPolicies,
+  discoverServers,
+  saveConnection,
   selectEngine,
   setLifecycle,
   setPolicyMode,
@@ -44,6 +46,8 @@ import {
   routingPresetRpc,
   routingSettingsRpc,
   reloadPoliciesRpc,
+  discoverServersRpc,
+  saveConnectionRpc,
   selectEngineRpc,
   serviceInfoRpc,
   serviceRpc,
@@ -160,6 +164,8 @@ export default function contribute(server: PluginServerContext): () => void {
   server.handle(feedbackRpc, async (input, { paseo }) => recordFeedback(deps, paseo, input));
   server.handle(enginesRpc, async () => listEngines(deps));
   server.handle(selectEngineRpc, async (input) => selectEngine(deps, input));
+  server.handle(saveConnectionRpc, async (input) => saveConnection(deps, input));
+  server.handle(discoverServersRpc, async (input) => discoverServers(deps, input));
   server.handle(downloadModelRpc, async (input) => downloadModel(deps, input));
   server.handle(validateEngineRpc, async ({ engine }) => validateEngine(deps, engine));
   server.handle(setPathRpc, async (input) => setPath(deps, input));

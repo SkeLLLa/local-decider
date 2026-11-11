@@ -4,6 +4,12 @@
  */
 import { z } from 'zod';
 
+import {
+  NOT_CONFIGURED_HINT,
+  connectionSchema,
+  isConnectable,
+  parseConnection,
+} from './connection.ts';
 import { parsePaths, pathEntrySchema } from './paths.ts';
 
 const text = z.string().nullable();
@@ -31,6 +37,9 @@ const engineSchema = z.object({
   capabilities: z.object({ validate: z.boolean() }),
   supported: z.boolean(),
   unsupportedReason: text,
+  /** True when the gateway reports connection settings for this engine (OpenAI-like, new gateways). */
+  connectable: z.boolean(),
+  connection: connectionSchema.nullable(),
 });
 
 const modelSchema = z.object({
@@ -165,6 +174,9 @@ function parseEngine(value: unknown): EngineInfo | null {
     capabilities: { validate: bool(caps?.['validate'], validation !== null) },
     supported: bool(v['supported'], true),
     unsupportedReason: str(v['unsupportedReason']),
+    // Only a gateway that sends the `connection` key (null or an object) can save one.
+    connectable: isConnectable(id) && 'connection' in v,
+    connection: parseConnection(v['connection']),
   };
 }
 
@@ -469,9 +481,32 @@ export function engineOptions(
   return engines
     .filter((e) => e.supported || e.id === activeId)
     .map((e) => ({
-      label: e.available
-        ? e.label
-        : `${e.label} (${e.installed ? 'unavailable' : 'not installed'})`,
+      label: e.available ? e.label : `${e.label} (${unavailableWord(e)})`,
       value: e.id,
     }));
+}
+
+function unavailableWord(e: EngineInfo): string {
+  if (e.installed) {
+    return 'unavailable';
+  }
+  return e.connectable ? 'not configured' : 'not installed';
+}
+
+/** Hint under the engine select: description, why unsupported, and the engine's state. */
+export function engineHint(engine: EngineInfo | null): string {
+  if (engine === null) {
+    return 'The gateway lists no engines.';
+  }
+  const detail = engine.detail ?? '';
+  const note = engine.supported ? '' : (engine.unsupportedReason ?? 'Not supported here.');
+  let state = detail;
+  if (!engine.available) {
+    if (engine.installed) {
+      state = `Unavailable here. ${detail}`;
+    } else {
+      state = engine.connectable ? NOT_CONFIGURED_HINT : `Not installed. ${detail}`;
+    }
+  }
+  return [engine.description, note, state].filter((p) => p !== '').join(' ');
 }

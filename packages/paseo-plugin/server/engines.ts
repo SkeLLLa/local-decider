@@ -1,4 +1,13 @@
 import {
+  buildDiscoverBody,
+  parseConnection,
+  parseDiscovery,
+  type ConnectableEngine,
+  type Connection,
+  type ConnectionPayload,
+  type Discovery,
+} from '../shared/connection.ts';
+import {
   parseDownload,
   parseEngineCatalog,
   parseValidation,
@@ -90,6 +99,34 @@ export async function validateEngine(
     (body) => parseValidation(field(body, 'validation')),
   );
   return { ok: res.ok, error: res.error, validation: res.value };
+}
+
+export async function saveConnection(
+  deps: Deps,
+  input: ConnectionPayload,
+): Promise<{ ok: boolean; error: string | null; connection: Connection | null }> {
+  const res = await call(
+    deps,
+    `save ${input.engine} connection`,
+    async (gw) => gw.saveEngineConnection({ ...input }, { timeoutMs: 10_000 }),
+    (body) => parseConnection(field(body, 'connection')),
+  );
+  return { ok: res.ok, error: res.error, connection: res.value };
+}
+
+/** Suggestions without a URL, else that URL's models. Probes never select an engine. */
+export async function discoverServers(
+  deps: Deps,
+  input: { engine?: ConnectableEngine | undefined; url?: string | undefined },
+): Promise<Discovery> {
+  const body = buildDiscoverBody(input.engine ?? 'openai-compatible', input.url ?? null);
+  const res = await call(
+    deps,
+    input.url === undefined ? 'discover local servers' : 'discover models',
+    async (gw) => gw.discoverServers(body, { timeoutMs: 8000 }),
+    parseDiscovery,
+  );
+  return { ok: res.ok, error: res.error, ...(res.value ?? { suggestions: [], server: null }) };
 }
 
 export async function setPath(

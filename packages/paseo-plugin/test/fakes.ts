@@ -99,6 +99,8 @@ export function fakeGateway(
     selectEngine: record('selectEngine'),
     downloadModel: record('downloadModel'),
     validateEngine: record('validateEngine'),
+    saveEngineConnection: record('saveEngineConnection'),
+    discoverServers: record('discoverServers'),
     setPath: async (key, value) => record('setPath')({ key, value }),
     engineLoad: record('engineLoad'),
     setLifecycle: record('setLifecycle'),

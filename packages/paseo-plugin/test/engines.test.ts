@@ -192,6 +192,8 @@ describe('GET /v1/engines parsing', () => {
       capabilities: { validate: false },
       supported: true,
       unsupportedReason: null,
+      connectable: false,
+      connection: null,
     });
     assert.equal(catalog.engines[1]?.available, true);
     assert.deepEqual(catalog.models[0], {

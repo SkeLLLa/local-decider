@@ -2,6 +2,7 @@
 import { defineRpc } from '@getpaseo/plugin';
 import { z } from 'zod';
 
+import { CONNECTABLE_ENGINES, connectionSchema, discoverySchema } from './connection.ts';
 import { HOOK_POLICIES, SERVICE_ACTIONS } from './constants.ts';
 import { downloadSchema, engineCatalogSchema, validationSchema } from './engines.ts';
 import { IDLE_MINUTES } from './lifecycle.ts';
@@ -75,6 +76,28 @@ export const validateEngineRpc = defineRpc({
   name: 'validate-engine',
   input: z.object({ engine: id }),
   output: z.object({ ok: z.boolean(), error: failure, validation: validationSchema.nullable() }),
+});
+
+/** Save an OpenAI-like engine's connection (`POST /v1/config/engine`); does not select it. */
+export const saveConnectionRpc = defineRpc({
+  name: 'save-connection',
+  input: z.object({
+    engine: z.enum(CONNECTABLE_ENGINES),
+    url: z.string().min(1).max(2048),
+    model: id,
+    tokenEnv: z.string().max(128).nullable(),
+  }),
+  output: z.object({ ok: z.boolean(), error: failure, connection: connectionSchema.nullable() }),
+});
+
+/** `POST /v1/engines/discover`: no input lists local suggestions, `{engine, url}` probes a URL. */
+export const discoverServersRpc = defineRpc({
+  name: 'discover-servers',
+  input: z.object({
+    engine: z.enum(CONNECTABLE_ENGINES).optional(),
+    url: z.string().max(2048).optional(),
+  }),
+  output: discoverySchema,
 });
 
 /** Set a tool path or directory (`POST /v1/paths`); null goes back to automatic discovery. */
