@@ -118,3 +118,15 @@ describe('FastFlowLM serve args', () => {
     );
   });
 });
+
+describe('install links', () => {
+  it('gives every entry a fixed https installUrl', () => {
+    const entries = resolveAll(parseConfig({}), tempPaths(), { PATH: '' }, DARWIN_HOST);
+    assert.ok(entries.length > 0);
+    for (const entry of entries) {
+      assert.match(entry.installUrl ?? '', /^https:\/\//, entry.key);
+    }
+    const uv = entries.find((e) => e.key === 'tools.uv');
+    assert.equal(uv?.installUrl, 'https://docs.astral.sh/uv/getting-started/installation/');
+  });
+});

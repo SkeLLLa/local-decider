@@ -2,7 +2,7 @@
  * Settings: the tools and directories the gateway uses. Each is discovered automatically unless
  * a custom path is set; the gateway checks a custom path before it accepts it.
  */
-import { useRpc } from '@getpaseo/plugin/client';
+import { openExternalUrl, useRpc } from '@getpaseo/plugin/client';
 import {
   SettingsAction,
   SettingsCard,
@@ -14,6 +14,7 @@ import { Text, View } from 'react-native';
 
 import {
   canSavePath,
+  installHelp,
   middleEllipsis,
   pathDraftError,
   pathStatus,
@@ -25,6 +26,7 @@ import { outcomeOf, useAction, useEngines } from './hooks.ts';
 import { Badge, Button, InlineMessage, Mono, type Theme } from './ui.tsx';
 
 function PathHeader({ theme, entry }: { theme: Theme; entry: PathEntry }): ReactNode {
+  const help = installHelp(entry);
   return (
     <View style={{ paddingHorizontal: 16, paddingTop: 12, gap: 4 }}>
       <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
@@ -47,6 +49,16 @@ function PathHeader({ theme, entry }: { theme: Theme; entry: PathEntry }): React
       >
         {`${entry.ok ? '✓' : '✕'} ${pathStatus(entry)}`}
       </Text>
+      {help === null ? null : (
+        <View style={{ flexDirection: 'row' }}>
+          <Button
+            theme={theme}
+            variant="secondary"
+            label={help.label}
+            onPress={() => void openExternalUrl(help.url)}
+          />
+        </View>
+      )}
     </View>
   );
 }

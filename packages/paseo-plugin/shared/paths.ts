@@ -17,6 +17,8 @@ export const pathEntrySchema = z.object({
   source: z.enum(PATH_SOURCES),
   ok: z.boolean(),
   detail: z.string().nullable(),
+  /** Where to install or read about it; https only, absent on older gateways. */
+  installUrl: z.string().optional(),
 });
 
 export type PathEntry = z.output<typeof pathEntrySchema>;
@@ -28,6 +30,12 @@ const MAX_ENTRIES = 50;
 
 function str(value: unknown, max = 500): string | null {
   return typeof value === 'string' && value !== '' ? value.slice(0, max) : null;
+}
+
+/** An https URL (at most 500 characters) or null; anything else is dropped. */
+function httpsUrl(value: unknown): string | null {
+  const text = str(value);
+  return text !== null && /^https:\/\/[^\s/]+/i.test(text) ? text : null;
 }
 
 function source(value: unknown): PathSource {
@@ -43,6 +51,7 @@ function parsePathEntry(value: unknown): PathEntry | null {
   if (key === null || !PATH_KEY.test(key)) {
     return null;
   }
+  const installUrl = httpsUrl(v['installUrl']);
   return {
     key,
     label: str(v['label']) ?? key,
@@ -52,6 +61,7 @@ function parsePathEntry(value: unknown): PathEntry | null {
     source: source(v['source']),
     ok: v['ok'] === true,
     detail: str(v['detail']),
+    ...(installUrl === null ? {} : { installUrl }),
   };
 }
 
@@ -130,4 +140,16 @@ export function pathStatus(entry: Pick<PathEntry, 'ok' | 'detail' | 'kind'>): st
 export function canSavePath(draft: string, current: string | null): boolean {
   const path = draft.trim();
   return pathDraftError(path) === null && path !== current;
+}
+
+/** The help button: shown for a missing or not-working entry that has an https link. */
+export function installHelp(
+  entry: Pick<PathEntry, 'ok' | 'source' | 'kind' | 'installUrl'>,
+): { url: string; label: 'Install' | 'Docs' } | null {
+  if ((entry.ok && entry.source !== 'missing') || entry.installUrl === undefined) {
+    return null;
+  }
+  return httpsUrl(entry.installUrl) === null
+    ? null
+    : { url: entry.installUrl, label: entry.kind === 'directory' ? 'Docs' : 'Install' };
 }

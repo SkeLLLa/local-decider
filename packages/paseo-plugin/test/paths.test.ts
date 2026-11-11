@@ -5,6 +5,7 @@ import { setPath } from '../server/engines.ts';
 import { parseEngineCatalog } from '../shared/engines.ts';
 import {
   canSavePath,
+  installHelp,
   middleEllipsis,
   parsePaths,
   pathDraftError,
@@ -140,5 +141,31 @@ describe('set-path RPC', () => {
       error: 'not executable: /tmp/flm',
       entry: null,
     });
+  });
+});
+
+describe('install help', () => {
+  const missing = {
+    ok: false,
+    source: 'missing',
+    kind: 'executable',
+    installUrl: 'https://x.dev/i',
+  } as const;
+  it('parses with and without installUrl, dropping non-https', () => {
+    const [a, b, c] = parsePaths([
+      { ...FLM, installUrl: 'https://x.dev/i' },
+      FLM,
+      { ...FLM, key: 'tools.b', installUrl: 'javascript:alert(1)' },
+    ]);
+    assert.equal(a?.installUrl, 'https://x.dev/i');
+    assert.equal(b?.installUrl, undefined);
+    assert.equal(c?.installUrl, undefined);
+  });
+  it('offers Install or Docs only when not ok and a link exists', () => {
+    assert.deepEqual(installHelp(missing), { url: 'https://x.dev/i', label: 'Install' });
+    assert.equal(installHelp({ ...missing, kind: 'directory' })?.label, 'Docs');
+    assert.equal(installHelp({ ...missing, ok: true, source: 'path' }), null);
+    assert.equal(installHelp({ ...missing, installUrl: undefined }), null);
+    assert.equal(installHelp({ ...missing, installUrl: 'http://x.dev' }), null);
   });
 });

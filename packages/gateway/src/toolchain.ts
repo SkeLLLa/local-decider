@@ -33,9 +33,13 @@ export interface PathEntry {
   readonly source: PathSource;
   readonly ok: boolean;
   readonly detail: string | null;
+  /** Where to install or read about this tool or directory; a fixed https URL, absent if none. */
+  readonly installUrl?: string;
 }
 
 interface PathDef {
+  /** Fixed https constant, never derived from input. */
+  readonly installUrl?: string;
   readonly label: string;
   readonly kind: 'executable' | 'directory';
   readonly engine?: EngineId;
@@ -71,6 +75,7 @@ const DEFS: Readonly<Record<PathKey, PathDef>> = {
     kind: 'executable',
     engine: 'fastflowlm',
     tool: 'flm',
+    installUrl: 'https://github.com/FastFlowLM/FastFlowLM',
     auto: (paths, env) => [
       ['managed', managedFlm(paths)],
       ['path', onPath('flm', env)],
@@ -80,6 +85,7 @@ const DEFS: Readonly<Record<PathKey, PathDef>> = {
     label: 'strands-decider',
     kind: 'executable',
     tool: 'strands-decider',
+    installUrl: 'https://github.com/SkeLLLa/local-decider/blob/master/docs/install.md#2-engine',
     auto: (paths, env) => [
       ['managed', strandsBinary(paths)],
       ['path', onPath('strands-decider', env)],
@@ -89,11 +95,13 @@ const DEFS: Readonly<Record<PathKey, PathDef>> = {
     label: 'uv (installs the Python engine)',
     kind: 'executable',
     tool: 'uv',
+    installUrl: 'https://docs.astral.sh/uv/getting-started/installation/',
     auto: (_paths, env) => [['path', onPath('uv', env)]],
   },
   'dirs.flmModels': {
     label: 'FastFlowLM models',
     kind: 'directory',
+    installUrl: 'https://github.com/FastFlowLM/FastFlowLM',
     engine: 'fastflowlm',
     auto: (_paths, env) => [
       ['default', env['FLM_MODEL_PATH'] ?? join(homedir(), '.config', 'flm', 'models')],
@@ -102,6 +110,7 @@ const DEFS: Readonly<Record<PathKey, PathDef>> = {
   'dirs.hfCache': {
     label: 'Hugging Face cache',
     kind: 'directory',
+    installUrl: 'https://huggingface.co/docs/huggingface_hub/guides/manage-cache',
     auto: (_paths, env) => [['default', hfDefault(env)]],
   },
 };
@@ -150,7 +159,13 @@ export function resolveEntry(
 ): PathEntry {
   const def = DEFS[key];
   const value = configValue(config, key) ?? null;
-  const base = { key, label: def.label, kind: def.kind, value };
+  const base = {
+    key,
+    label: def.label,
+    kind: def.kind,
+    value,
+    ...(def.installUrl === undefined ? {} : { installUrl: def.installUrl }),
+  };
   const chosen: [PathSource, string | undefined] =
     value !== null
       ? ['config', value]
