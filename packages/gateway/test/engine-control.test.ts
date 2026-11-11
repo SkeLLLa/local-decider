@@ -648,7 +648,7 @@ describe('EngineControl state', () => {
     const engines = status['engines'] as { id: string; installed: boolean }[];
     assert.deepEqual(
       engines.map((e) => e.id),
-      ['strands-decider', 'fastflowlm', 'openai-compatible'],
+      ['strands-decider', 'fastflowlm', 'openai-compatible', 'lmstudio'],
     );
     assert.equal(engines.find((e) => e.id === 'fastflowlm')?.installed, true);
     const models = status['models'] as { id: string; recommended: boolean; quality: unknown }[];
@@ -668,7 +668,7 @@ describe('EngineControl state', () => {
     }[];
     assert.deepEqual(
       darwinEngines.map(({ id }) => id),
-      ['strands-decider', 'fastflowlm', 'openai-compatible'],
+      ['strands-decider', 'fastflowlm', 'openai-compatible', 'lmstudio'],
     );
     const darwinFlm = darwinEngines.find(({ id }) => id === 'fastflowlm');
     assert.ok(darwinFlm);

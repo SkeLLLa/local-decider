@@ -4,7 +4,7 @@ import type { GatewayConfig } from './config.ts';
 import { getJson } from './engines/http.ts';
 
 /** Engines that serve an OpenAI-style `/models` list and take their model from it. */
-export const OPENAI_LIKE_ENGINES = ['openai-compatible'] as const;
+export const OPENAI_LIKE_ENGINES = ['openai-compatible', 'lmstudio'] as const;
 export type OpenAILikeEngine = (typeof OPENAI_LIKE_ENGINES)[number];
 
 const DISCOVERY_TIMEOUT_MS = 2000;

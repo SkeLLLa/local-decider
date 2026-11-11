@@ -23,7 +23,7 @@ import {
 
 const MAX_RESPONSE_BYTES = 1024 * 1024;
 const NO_LOGPROBS =
-  'server returned no logprobs; LM Studio: try api: completions, or use llama-server/Ollama/mlx_lm.server';
+  'server returned no logprobs; LM Studio: use engine lmstudio (chat, maxTokens 8, /no_think), or use llama-server/Ollama/mlx_lm.server';
 const START_HINT =
   'start LM Studio (lms server start), ollama serve, llama-server or mlx_lm.server';
 const PROBE_QUESTION: Question = { type: 'noul', instructions: 'Say yes to confirm logprobs.' };
@@ -60,7 +60,7 @@ const openaiCompatibleSchema = z.strictObject({
  * LM Studio returns logprobs only from chat completions with a few tokens, and a thinking model
  * needs `/no_think`; those are this engine's defaults.
  */
-const lmStudioSchema = z.strictObject({
+export const lmStudioSchema = z.strictObject({
   type: z.literal('lmstudio'),
   ...sharedShape,
   maxTokens: z.number().int().min(1).max(32).default(8),

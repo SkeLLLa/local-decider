@@ -220,6 +220,94 @@
           },
           "required": ["type", "model"],
           "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "lmstudio"
+            },
+            "url": {
+              "default": "http://127.0.0.1:1234/v1",
+              "type": "string",
+              "format": "uri"
+            },
+            "model": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 300,
+              "pattern": "^[^-\\s][^\\s]*$"
+            },
+            "api": {
+              "default": "chat",
+              "type": "string",
+              "enum": ["chat", "completions"]
+            },
+            "maxTokens": {
+              "default": 8,
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 32
+            },
+            "promptSuffix": {
+              "default": "/no_think",
+              "type": "string",
+              "maxLength": 64
+            },
+            "tokenEnv": {
+              "type": "string",
+              "pattern": "^[A-Z_][A-Z0-9_]*$"
+            },
+            "topLogprobs": {
+              "default": 10,
+              "type": "integer",
+              "minimum": 2,
+              "maximum": 20
+            },
+            "maxOptions": {
+              "default": 10,
+              "type": "integer",
+              "minimum": 2,
+              "maximum": 20
+            },
+            "minCoverage": {
+              "default": 0.5,
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1
+            },
+            "temperature": {
+              "default": 1,
+              "type": "number",
+              "minimum": 0.1,
+              "maximum": 10
+            },
+            "maxStateChars": {
+              "default": 24000,
+              "type": "integer",
+              "minimum": 1000,
+              "maximum": 400000
+            },
+            "extraBody": {
+              "default": {},
+              "type": "object",
+              "propertyNames": {
+                "type": "string"
+              },
+              "additionalProperties": {
+                "$ref": "#/$defs/__schema0"
+              }
+            },
+            "requestTimeoutMs": {
+              "default": 20000,
+              "type": "integer",
+              "minimum": 1000,
+              "maximum": 120000
+            }
+          },
+          "required": ["type", "model"],
+          "additionalProperties": false
         }
       ]
     },
@@ -398,6 +486,90 @@
           },
           "required": ["model"],
           "additionalProperties": false
+        },
+        "lmstudio": {
+          "type": "object",
+          "properties": {
+            "url": {
+              "default": "http://127.0.0.1:1234/v1",
+              "type": "string",
+              "format": "uri"
+            },
+            "model": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 300,
+              "pattern": "^[^-\\s][^\\s]*$"
+            },
+            "api": {
+              "default": "chat",
+              "type": "string",
+              "enum": ["chat", "completions"]
+            },
+            "maxTokens": {
+              "default": 8,
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 32
+            },
+            "promptSuffix": {
+              "default": "/no_think",
+              "type": "string",
+              "maxLength": 64
+            },
+            "tokenEnv": {
+              "type": "string",
+              "pattern": "^[A-Z_][A-Z0-9_]*$"
+            },
+            "topLogprobs": {
+              "default": 10,
+              "type": "integer",
+              "minimum": 2,
+              "maximum": 20
+            },
+            "maxOptions": {
+              "default": 10,
+              "type": "integer",
+              "minimum": 2,
+              "maximum": 20
+            },
+            "minCoverage": {
+              "default": 0.5,
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1
+            },
+            "temperature": {
+              "default": 1,
+              "type": "number",
+              "minimum": 0.1,
+              "maximum": 10
+            },
+            "maxStateChars": {
+              "default": 24000,
+              "type": "integer",
+              "minimum": 1000,
+              "maximum": 400000
+            },
+            "extraBody": {
+              "default": {},
+              "type": "object",
+              "propertyNames": {
+                "type": "string"
+              },
+              "additionalProperties": {
+                "$ref": "#/$defs/__schema0"
+              }
+            },
+            "requestTimeoutMs": {
+              "default": 20000,
+              "type": "integer",
+              "minimum": 1000,
+              "maximum": 120000
+            }
+          },
+          "required": ["model"],
+          "additionalProperties": false
         }
       },
       "additionalProperties": false
@@ -408,7 +580,7 @@
       "properties": {
         "engine": {
           "type": "string",
-          "enum": ["strands-decider", "fastflowlm", "openai-compatible"]
+          "enum": ["strands-decider", "fastflowlm", "openai-compatible", "lmstudio"]
         },
         "model": {
           "type": "string",

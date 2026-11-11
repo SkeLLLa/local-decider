@@ -654,16 +654,7 @@ export class EngineControl {
           : 'not installed; run `local-decider engine install --engine fastflowlm`',
         validation,
       },
-      {
-        id: 'openai-compatible',
-        installed: this.#endpoint('openai-compatible') !== undefined,
-        available: this.#endpoint('openai-compatible') !== undefined,
-        detail:
-          this.#endpoint('openai-compatible') === undefined
-            ? 'set engines.openai-compatible.url/model'
-            : this.#endpoint('openai-compatible')?.url,
-        validation: null,
-      },
+      ...OPENAI_LIKE_ENGINES.map((id) => this.#openAIDetails(id)),
     ];
     return ENGINES.filter((engine) => engine.selectable).map((engine) => {
       const support = engine.supports(this.#host);
@@ -712,6 +703,17 @@ export class EngineControl {
       engine: savedEngine,
       model: saved.model,
       device: savedEngine === 'strands-decider' ? device : null,
+    };
+  }
+
+  #openAIDetails(id: OpenAILikeEngine): Record<string, unknown> {
+    const endpoint = this.#endpoint(id);
+    return {
+      id,
+      installed: endpoint !== undefined,
+      available: endpoint !== undefined,
+      detail: endpoint === undefined ? `set engines.${id}.url/model` : endpoint.url,
+      validation: null,
     };
   }
 

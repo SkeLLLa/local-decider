@@ -1,5 +1,6 @@
 import { parseArgs } from 'node:util';
 
+import { isOpenAILike } from './engine-discovery.ts';
 import { defaultFlavor, type InstallFlavor } from './engine-install.ts';
 import type { HostInfo } from './engines/descriptor.ts';
 import { engineDescriptor } from './engines/registry.ts';
@@ -91,9 +92,14 @@ export type InstallPlan =
     };
 
 function refusal(engine: string): never {
-  if (engine === 'openai-compatible') {
+  if (engine === 'lmstudio') {
     throw new EngineInstallUsageError(
-      'nothing to install for openai-compatible: start your server and set engines.openai-compatible.url',
+      "nothing to install for lmstudio: start LM Studio's server (lms server start) and load a model",
+    );
+  }
+  if (isOpenAILike(engine)) {
+    throw new EngineInstallUsageError(
+      `nothing to install for ${engine}: start your server and set engines.${engine}.url`,
     );
   }
   throw new EngineInstallUsageError(`nothing to install for ${engine}`);

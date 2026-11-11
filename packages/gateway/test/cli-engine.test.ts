@@ -88,6 +88,10 @@ describe('engine install planning', () => {
       /nothing to install for openai-compatible: start your server and set engines.openai-compatible.url/,
     );
     assert.throws(
+      () => planInstall([], linux, 'lmstudio'),
+      /nothing to install for lmstudio: start LM Studio's server \(lms server start\) and load a model/,
+    );
+    assert.throws(
       () => planInstall(['--flavor', 'metal'], linux, 'strands-decider'),
       /invalid strands-decider flavor/,
     );

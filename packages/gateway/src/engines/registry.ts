@@ -2,6 +2,7 @@ import { z } from 'zod';
 
 import type { EngineContext, EngineDescriptor, ModelDescriptor } from './descriptor.ts';
 import { fastflowlmEngine } from './fastflowlm/index.ts';
+import { lmStudioEngine } from './lmstudio/index.ts';
 import { openaiCompatibleEngine } from './openai/index.ts';
 import { remoteEngine } from './remote.ts';
 import { strandsEngine } from './strands/index.ts';
@@ -12,6 +13,7 @@ export const ENGINES = [
   remoteEngine,
   fastflowlmEngine,
   openaiCompatibleEngine,
+  lmStudioEngine,
 ] as const;
 const ENGINE_BY_ID = new Map<string, AnyEngine>(
   ENGINES.map((engine): [string, AnyEngine] => [engine.id, engine]),

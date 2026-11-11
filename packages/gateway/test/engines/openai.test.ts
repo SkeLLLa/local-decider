@@ -164,7 +164,7 @@ describe('OpenAI-compatible engine', () => {
         await engine.start();
         assert.equal(engine.health().state, 'failed');
         assert.match(engine.health().detail ?? '', /server returned no logprobs/);
-        assert.match(engine.health().detail ?? '', /try api: completions/);
+        assert.match(engine.health().detail ?? '', /use engine lmstudio/);
       },
     );
   });

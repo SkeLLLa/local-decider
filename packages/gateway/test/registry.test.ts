@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
 import type { RemoteEngineConfig } from '../src/config.ts';
+import { isOpenAILike } from '../src/engine-discovery.ts';
 import { DEVICES, type HostInfo } from '../src/engines/descriptor.ts';
 import {
   allModels,
@@ -23,7 +24,12 @@ describe('engine registry', () => {
   it('has unique ids and selectable engines in the existing order', () => {
     const ids = ENGINES.map((engine) => engine.id);
     assert.equal(new Set(ids).size, ids.length);
-    assert.deepEqual(SELECTABLE_IDS, ['strands-decider', 'fastflowlm', 'openai-compatible']);
+    assert.deepEqual(SELECTABLE_IDS, [
+      'strands-decider',
+      'fastflowlm',
+      'openai-compatible',
+      'lmstudio',
+    ]);
     assert.equal(engineDescriptor('fastflowlm')?.id, 'fastflowlm');
     assert.equal(engineDescriptor('openai-compatible')?.selectable, true);
     assert.equal(engineDescriptor('missing'), undefined);
@@ -37,12 +43,30 @@ describe('engine registry', () => {
       // Attach-only engines need their target; OpenAI-compatible also needs a server model id.
       const config = engineDefaults(
         engine.id,
-        engine.id === 'openai-compatible' ? 'test-model' : undefined,
+        isOpenAILike(engine.id) ? 'test-model' : undefined,
         engine.id === 'systemone-remote' ? { url: 'http://127.0.0.1:8765' } : {},
       );
       assert.equal(config.type, engine.id);
       assert.ok(config.model.length > 0, `${engine.id} has a default model`);
     }
+  });
+
+  it('gives lmstudio its own defaults and leaves openai-compatible alone', () => {
+    const lm = engineDefaults('lmstudio', 'qwen');
+    const generic = engineDefaults('openai-compatible', 'qwen');
+    assert.ok(lm.type === 'lmstudio' && generic.type === 'openai-compatible');
+    assert.deepEqual(
+      [lm.url, lm.api, lm.maxTokens, lm.promptSuffix],
+      ['http://127.0.0.1:1234/v1', 'chat', 8, '/no_think'],
+    );
+    assert.deepEqual([generic.maxTokens, generic.promptSuffix], [1, undefined]);
+    assert.throws(() => engineDefaults('lmstudio'), /model/);
+    const descriptor = engineDescriptor('lmstudio');
+    assert.equal(descriptor?.calibrated, false);
+    assert.equal(descriptor?.tag({} as never, linuxHost), 'LM Studio');
+    assert.ok(descriptor?.supports(linuxHost).ok);
+    assert.ok(descriptor?.supports({ ...linuxHost, platform: 'darwin' }).ok);
+    assert.ok(!descriptor?.supports({ ...linuxHost, platform: 'win32' }).ok);
   });
 
   it('re-exports the remote config shape from config.ts', () => {

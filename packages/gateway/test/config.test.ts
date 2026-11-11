@@ -39,6 +39,16 @@ describe('config', () => {
     });
   });
 
+  it('parses lmstudio as the engine and as per-engine options', () => {
+    const primary = parseConfig({ engine: { type: 'lmstudio', model: 'qwen' } });
+    assert.deepEqual([primary.engine.type, primary.engine.model], ['lmstudio', 'qwen']);
+    assert.equal(primary.engine.type === 'lmstudio' && primary.engine.maxTokens, 8);
+    const options = parseConfig({ engines: { lmstudio: { model: 'qwen', maxTokens: 4 } } });
+    assert.equal(options.engines?.lmstudio?.maxTokens, 4);
+    assert.equal(options.engines?.lmstudio?.promptSuffix, '/no_think');
+    assert.throws(() => parseConfig({ engines: { lmstudio: {} } }), /invalid config/);
+  });
+
   it('rejects unknown per-engine option keys', () => {
     assert.throws(
       () => parseConfig({ engines: { 'not-an-engine': { model: 'x' } } }),
