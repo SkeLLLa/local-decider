@@ -208,7 +208,10 @@ describe('EngineControl switching', () => {
     const openai = engines.find((engine) => engine['id'] === 'openai-compatible');
     assert.equal(openai?.['available'], false);
     assert.equal(openai?.['supported'], true);
-    assert.equal(openai?.['detail'], 'set engines.openai-compatible.url/model');
+    assert.equal(
+      openai?.['detail'],
+      "Not configured. Enter your server's API base URL and choose or type a model below. Nothing to install.",
+    );
     assert.deepEqual(
       status['models'] &&
         (status['models'] as unknown[]).filter(

@@ -82,6 +82,21 @@ Engine HTTP clients refuse redirects, so a configured URL cannot bounce the stat
 elsewhere. The gateway does not run anything for these engines: it starts no LM Studio, Ollama or
 llama-server process, and model ids from `/models` are used as data only.
 
+Configure these connections in Paseo by entering the API base URL, optionally using **Find local
+servers** and **Find models**, then saving. Choose **Use** separately to activate the connection.
+The CLI equivalent is `local-decider engine configure <openai-compatible|lmstudio> --url URL
+--model ID [--token-env NAME]`; it writes directly to the effective config file even when the
+gateway is stopped. That file defaults to `~/.config/local-decider/config.yaml` and can be moved
+with `LOCAL_DECIDER_CONFIG_DIR`. Only the token environment variable's name is stored. The token
+value remains in the environment and is never accepted by the configure command or Paseo form.
+
+When the configured id matches `engine.type`, that primary `engine:` block wins over
+`engines.<id>:`. Otherwise the connection is stored under `engines.<id>:`. The active engine and
+model come from `selection`; save does not activate a connection. A running gateway watches the
+config file and applies valid connection edits live, so changing a URL, model, or token variable
+name does not require a restart. Keep the configured server trusted: it receives the redacted
+decision state sent to the selected engine.
+
 ## What it does not protect against
 
 - **Prompt injection.** The model reads attacker-controllable text. It cannot run tools, but it

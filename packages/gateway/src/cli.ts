@@ -16,6 +16,7 @@ import { EngineInstallUsageError, formatEngineList, planInstall } from './cli-en
 import { logsCommand } from './cli-logs.ts';
 import {
   configCommand,
+  configureEngine,
   routingCommand,
   setMode,
   SettingsUsageError,
@@ -50,6 +51,7 @@ Usage:
   local-decider engine install [--flavor cpu|mlx|cuda] [--model ID] [--no-download]
   local-decider engine install --engine fastflowlm [--model d3:nano]  AMD NPU (Linux)
   local-decider engine list                         list engines and models
+  local-decider engine configure <openai-compatible|lmstudio> --url URL --model ID [--token-env NAME]
   local-decider engine use <engine> <model> [--device D]  select an engine and model
   local-decider decide <policy> [--input JSON] [key=value ...]
   local-decider stats [--json] [--scope claude-auto]  agreement and calibration from the shadow log
@@ -247,6 +249,10 @@ async function engine(ctx: Context): Promise<void> {
   }
   if (sub === 'use') {
     return useEngine(ctx, rest);
+  }
+  if (sub === 'configure') {
+    console.log(configureEngine(ctx.paths, rest));
+    return;
   }
   if (sub === 'install') {
     return installEngine(ctx, rest);

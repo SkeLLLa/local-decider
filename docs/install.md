@@ -76,8 +76,30 @@ agent reads if it exists.
 ### OpenAI-compatible servers
 
 If you already run a local model server, the `openai-compatible` engine scores one option token
-from its logprobs. There is nothing to install or download. Start the server, then add it to
-`config.yaml` (restart the gateway) or switch to it later with `local-decider engine use`:
+from its logprobs. There is nothing to install or download. LM Studio is the recommended starting
+point for a local OpenAI-compatible server; its dedicated `lmstudio` engine uses chat defaults
+that suit LM Studio. In Paseo, open the engine settings, enter the API base URL, use **Find local
+servers** to see common local endpoints, then **Find models** to populate model choices. You can
+also type a model id. Choose **Save** to store the connection, then **Use** when you want to make
+it active. Saving never changes the active engine.
+
+The same setup works from a terminal while the gateway is down:
+
+```sh
+local-decider engine configure lmstudio --url http://127.0.0.1:1234/v1 --model qwen3-1.7b
+local-decider engine use lmstudio qwen3-1.7b
+```
+
+Use `openai-compatible` instead for a custom OpenAI-compatible server. Add `--token-env NAME` if
+it needs a bearer token; `NAME` is the environment variable name, never the token value. Both the
+Paseo form and CLI validate the URL and model before saving. Changes go to
+`~/.config/local-decider/config.yaml` (or the config directory selected by
+`LOCAL_DECIDER_CONFIG_DIR`) and a running gateway reloads them live; no gateway restart is needed.
+The matching `engine:` block takes precedence over `engines.<id>:`. Configure the primary engine
+in `engine:`; configure other engines under `engines.<id>:`. Use `local-decider engine use` to
+activate a saved connection.
+
+For manual configuration, set the primary engine in `engine:`:
 
 ```yaml
 engine:
@@ -86,8 +108,7 @@ engine:
   model: qwen3-1.7b                # the id the server reports at /models
 ```
 
-Or keep your normal engine and register the server's options for switching, then run
-`local-decider engine use openai-compatible <model>`:
+Or keep your normal engine and register the server's options for switching:
 
 ```yaml
 engines:
@@ -112,8 +133,8 @@ Caveats:
 - If the server returns no logprobs the engine says so (`server returned no logprobs`). Raise
   `maxTokens`, add a `promptSuffix`, or try the other `api`.
 - `tokenEnv` names an environment variable holding an API key. It is sent only over `https` or to
-  a loopback address. See [engines.md](engines.md#6-openai-compatible-prompt-mapping-and-caveats)
-  for every option.
+  a loopback address. Store only the variable name, never the token itself, in config or Paseo.
+  See [engines.md](engines.md#6-openai-compatible-prompt-mapping-and-caveats) for every option.
 
 ## 3. Start the gateway
 

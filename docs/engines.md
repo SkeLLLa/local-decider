@@ -31,6 +31,33 @@ the Paseo settings page all read it. Decision architecture is in
 
 `local-decider engine list` prints the engines and models as the gateway sees them.
 
+### Configure an OpenAI-compatible server
+
+In Paseo, open the engine settings, enter the API base URL, choose **Find local servers** to
+inspect common local endpoints, then **Find models** to query the selected URL. Select a returned
+model or type its id, press **Save**, and press **Use** separately to activate the engine. Saving
+does not change the active engine. LM Studio is the recommended local server to start with; choose
+the dedicated `lmstudio` engine for its chat and logprob defaults.
+
+The CLI provides the same save and activation steps, including when the gateway is stopped:
+
+```sh
+local-decider engine configure lmstudio --url http://127.0.0.1:1234/v1 --model qwen3-1.7b
+local-decider engine use lmstudio qwen3-1.7b
+```
+
+Use `openai-compatible` for other compatible servers. If a server needs authentication, pass
+`--token-env NAME` (or set the optional token environment variable in Paseo). Only the environment
+variable **name** is stored; never put the token itself in the form or config. Omitting
+`--token-env` clears a previously saved name.
+
+The effective default file is `~/.config/local-decider/config.yaml`; `LOCAL_DECIDER_CONFIG_DIR`
+can select another config directory. Connection edits are validated and applied by a running
+gateway as soon as the file changes, so no restart is needed. When an engine id matches
+`engine.type`, the connection belongs in the primary `engine:` block, which takes precedence over
+`engines.<id>:`. Otherwise it belongs under `engines.<id>:`. The saved `selection` determines which
+engine and model are active; use `local-decider engine use` to change it.
+
 ## 2. How an engine plugs in
 
 Each engine is one `defineEngine({...})` descriptor (`packages/gateway/src/engines/descriptor.ts`),

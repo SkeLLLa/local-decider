@@ -5,6 +5,7 @@ import { describe, it } from 'node:test';
 
 import {
   configCommand,
+  configureEngine,
   routingCommand,
   setMode,
   SettingsUsageError,
@@ -14,6 +15,77 @@ import { ConfigFile } from '../src/config-file.ts';
 import { tempPaths } from './helpers.ts';
 
 describe('settings commands', () => {
+  it('configures an inactive engine in engines.<id> without activating it', () => {
+    const paths = tempPaths();
+    assert.match(
+      configureEngine(paths, [
+        'lmstudio',
+        '--url',
+        'http://127.0.0.1:1234/v1/',
+        '--model',
+        'qwen3-1.7b',
+        '--token-env',
+        'LMSTUDIO_TOKEN',
+      ]),
+      /run local-decider engine use lmstudio qwen3-1\.7b to activate/,
+    );
+    const config = ConfigFile.open(paths).current;
+    assert.equal(config.engines?.lmstudio?.url, 'http://127.0.0.1:1234/v1');
+    assert.equal(config.engines?.lmstudio?.model, 'qwen3-1.7b');
+    assert.equal(config.engines?.lmstudio?.tokenEnv, 'LMSTUDIO_TOKEN');
+    assert.notEqual(config.selection?.engine, 'lmstudio');
+  });
+
+  it('configures the matching primary engine block and clears tokenEnv', () => {
+    const paths = tempPaths();
+    const store = ConfigFile.open(paths);
+    store.update([
+      {
+        path: ['engine'],
+        value: {
+          type: 'openai-compatible',
+          url: 'http://127.0.0.1:8080/v1',
+          model: 'old-model',
+          tokenEnv: 'OLD_TOKEN',
+        },
+      },
+    ]);
+    configureEngine(paths, [
+      'openai-compatible',
+      '--url',
+      'https://inference.example.test/v1',
+      '--model',
+      'new-model',
+      '--token-env',
+      '',
+    ]);
+    const config = ConfigFile.open(paths).current;
+    assert.equal(config.engine.type, 'openai-compatible');
+    assert.equal(config.engine.model, 'new-model');
+    assert.equal(config.engine.url, 'https://inference.example.test/v1');
+    assert.equal(config.engine.tokenEnv, undefined);
+    assert.equal(config.engines?.['openai-compatible'], undefined);
+  });
+
+  it('leaves config.yaml unchanged for invalid engine configuration', () => {
+    const paths = tempPaths();
+    const store = ConfigFile.open(paths);
+    store.update([{ path: ['routing', 'presets'], value: { paseo: { fast: { model: 'x' } } } }]);
+    const before = readFileSync(store.file, 'utf8');
+    assert.throws(
+      () =>
+        configureEngine(paths, [
+          'lmstudio',
+          '--url',
+          'file:///tmp/secret',
+          '--model',
+          'qwen3-1.7b',
+        ]),
+      /invalid url/,
+    );
+    assert.equal(readFileSync(store.file, 'utf8'), before);
+  });
+
   it('map and unmap presets per harness in config.yaml', () => {
     const paths = tempPaths();
     routingCommand(paths, ['map', 'paseo', 'cheap', 'claude/haiku', 'plan']);

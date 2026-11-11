@@ -16,7 +16,7 @@ import {
 } from './config.ts';
 import type { Decider } from './decider.ts';
 import { DownloadError, Downloads, type Download } from './downloads.ts';
-import type { EngineConnection } from './engine-connection.ts';
+import { engineConnectionConfigPath, type EngineConnection } from './engine-connection.ts';
 import {
   discoveryEndpoint,
   isOpenAILike,
@@ -490,7 +490,7 @@ export class EngineControl {
     }
     const { engine: id, url, model, tokenEnv } = connection;
     const before = JSON.stringify(this.#endpoint(id) ?? null);
-    const base = this.#config.engine.type === id ? ['engine'] : ['engines', id];
+    const base = engineConnectionConfigPath(id, this.#config.engine.type);
     this.#save([
       { path: [...base, 'url'], value: url },
       { path: [...base, 'model'], value: model },
@@ -796,7 +796,10 @@ export class EngineControl {
       id,
       installed: endpoint !== undefined,
       available: endpoint !== undefined,
-      detail: endpoint === undefined ? `set engines.${id}.url/model` : endpoint.url,
+      detail:
+        endpoint === undefined
+          ? "Not configured. Enter your server's API base URL and choose or type a model below. Nothing to install."
+          : endpoint.url,
       validation: null,
       connection: this.#connection(id) ?? null,
     };

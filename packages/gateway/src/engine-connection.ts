@@ -19,6 +19,14 @@ export interface EngineConnection {
   readonly tokenEnv: string | undefined;
 }
 
+/** Config path shared by gateway and CLI connection saves. */
+export function engineConnectionConfigPath(
+  engine: OpenAILikeEngine,
+  primaryEngine: string,
+): readonly string[] {
+  return primaryEngine === engine ? ['engine'] : ['engines', engine];
+}
+
 const urlField = sharedShape.url.unwrap();
 const tokenEnvField = sharedShape.tokenEnv.unwrap();
 

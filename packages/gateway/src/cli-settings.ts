@@ -7,6 +7,7 @@ import { join } from 'node:path';
 import { parseArgs } from 'node:util';
 
 import { ConfigFile, type ConfigEdit } from './config-file.ts';
+import { engineConnectionConfigPath, parseEngineConnection } from './engine-connection.ts';
 import type { Paths } from './paths.ts';
 import { loadPolicies, policyDirs } from './policies.ts';
 import { writeSchemas } from './schemas.ts';
@@ -17,6 +18,51 @@ function edit(paths: Paths, edits: readonly ConfigEdit[]): ConfigFile {
   const store = ConfigFile.open(paths);
   store.update(edits);
   return store;
+}
+
+/** `engine configure <engine> --url <url> --model <model> [--token-env <NAME>]`. */
+export function configureEngine(paths: Paths, args: readonly string[]): string {
+  let parsed: ReturnType<typeof parseArgs>;
+  try {
+    parsed = parseArgs({
+      args: [...args],
+      options: {
+        'url': { type: 'string' },
+        'model': { type: 'string' },
+        'token-env': { type: 'string' },
+      },
+      strict: true,
+      allowPositionals: true,
+    });
+  } catch (error) {
+    throw new SettingsUsageError(error instanceof Error ? error.message : String(error));
+  }
+  const [engine, ...extra] = parsed.positionals;
+  const { url, model } = parsed.values;
+  if (engine === undefined || extra.length > 0 || url === undefined || model === undefined) {
+    throw new SettingsUsageError(
+      'usage: local-decider engine configure <openai-compatible|lmstudio> --url <url> --model <model> [--token-env <NAME>]',
+    );
+  }
+  let connection;
+  try {
+    connection = parseEngineConnection({
+      engine,
+      url,
+      model,
+      ...(parsed.values['token-env'] === undefined ? {} : { tokenEnv: parsed.values['token-env'] }),
+    });
+  } catch (error) {
+    throw new SettingsUsageError(error instanceof Error ? error.message : String(error));
+  }
+  const store = ConfigFile.open(paths);
+  const base = engineConnectionConfigPath(connection.engine, store.current.engine.type);
+  store.update([
+    { path: [...base, 'url'], value: connection.url },
+    { path: [...base, 'model'], value: connection.model },
+    { path: [...base, 'tokenEnv'], value: connection.tokenEnv },
+  ]);
+  return `configured ${connection.engine} at ${connection.url} for ${connection.model}; run local-decider engine use ${connection.engine} ${connection.model} to activate`;
 }
 
 function harnessOf(value: string | undefined): string {
