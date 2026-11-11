@@ -187,6 +187,11 @@ flowchart LR
 | `strands-decider` | Spawns `strands-decider serve <model> --device cpu\|mlx\|mps\|cuda` from the managed uv venv, or attaches to `engine.url` |
 | `fastflowlm` | Spawns `flm serve --decision <model>` on the AMD XDNA NPU (Linux), or attaches to `engine.url` |
 | `systemone-remote` | Any `/v1/systemone` server at `engine.url`, with an optional bearer token from `tokenEnv` |
+| `openai-compatible` | Scores one option token from an OpenAI-style server's logprobs (LM Studio, Ollama, llama-server, `mlx_lm.server`); uncalibrated |
+
+Each engine is one descriptor in a registry; see [engines.md](engines.md) for the engine table,
+how to add an engine or a model, and the macOS notes
+([ADR-0008](adr/0008-engine-registry.md)).
 
 - **Supervision.** A spawned engine runs on a free loopback port and logs filtered stdout/stderr
   to `logs/engine-<id>.log`. Lines containing request `state` or `questions`, and lines over 500
@@ -197,8 +202,8 @@ flowchart LR
   loads waits for it.
 - **Limits.** Engine responses over 1 MiB are rejected while streaming.
 - **Switching.** `POST /v1/engine`, `local-decider engine install` and the Paseo settings page
-  switch strands-decider and FastFlowLM models at runtime; the choice is saved as `selection`.
-  A remote or `engine.url` engine cannot switch (409).
+  switch strands-decider, FastFlowLM and openai-compatible models at runtime; the choice is saved
+  as `selection`. A remote or `engine.url` engine cannot switch (409).
 
 ## HTTP routes
 

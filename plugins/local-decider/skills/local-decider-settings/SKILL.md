@@ -26,7 +26,9 @@ changes. Paseo's settings page writes to the same file.
    The keys are `policies.<id>.mode`, `policies.<id>.variant` and
    `routing.presets.<harness>.<preset>.model`/`.thinking`/`.mode`/`.profile` (`mode` and
    `profile` apply to Paseo only).
-5. Changes to `host`, `port`, `engine` or `decisionTimeoutMs` need
+5. Engines, models and devices (and the `engines:` options map) are described in `docs/engines.md`
+   in the local-decider repository; `local-decider engine list` shows what the gateway offers.
+6. Changes to `host`, `port`, `engine` or `decisionTimeoutMs` need
    `local-decider gateway restart`; everything else applies within a second.
 
 Policies ship in shadow mode. Confirm with the user before switching one to `act`, because

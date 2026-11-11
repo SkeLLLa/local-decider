@@ -61,6 +61,60 @@ Pick one. You can switch later in Paseo's settings or with `POST /v1/engine`.
   An `flm` already on `PATH` is found automatically. Tool paths and model directories can be set
   under `tools:` and `dirs:` in `config.yaml` or in the settings page.
 
+### Apple Silicon
+
+`local-decider engine install` picks the `mlx` flavour on an M-series Mac. With `device: auto`
+the gateway then serves on MLX (about 66 ms warm for the 2B model on an M5 Pro). To force
+another device, set `engine.device: mps` (about 180 ms; works with the `mlx` or `cpu` flavour) or
+`cpu` (about 1.1 s). A 48 GB Mac fits models up to 12B in bf16 but not 26B-A4B. FastFlowLM is
+Linux-only, and `engine install --engine fastflowlm` refuses on macOS.
+
+`local-decider gateway start` installs a LaunchAgent that has `PATH`, `HOME` and the data-directory
+variables set. Put a remote-mode `LOCAL_DECIDER_TOKEN` in `~/.config/local-decider/env`, which the
+agent reads if it exists.
+
+### OpenAI-compatible servers
+
+If you already run a local model server, the `openai-compatible` engine scores one option token
+from its logprobs. There is nothing to install or download. Start the server, then add it to
+`config.yaml` (restart the gateway) or switch to it later with `local-decider engine use`:
+
+```yaml
+engine:
+  type: openai-compatible
+  url: http://127.0.0.1:1234/v1   # LM Studio's default
+  model: qwen3-1.7b                # the id the server reports at /models
+```
+
+Or keep your normal engine and register the server's options for switching, then run
+`local-decider engine use openai-compatible <model>`:
+
+```yaml
+engines:
+  openai-compatible:
+    url: http://127.0.0.1:11434/v1
+    model: qwen3:1.7b
+```
+
+| Server | Start | `url` | Notes |
+|---|---|---|---|
+| LM Studio | `lms server start --port 1234`, load a model | `http://127.0.0.1:1234/v1` | Needs `maxTokens: 8` and `promptSuffix: "/no_think"` for a thinking model, or it returns no logprobs. Its completions route returns none; keep `api: chat`. |
+| Ollama | `ollama serve` | `http://127.0.0.1:11434/v1` | Use a version whose OpenAI endpoint returns `logprobs`. |
+| llama-server | `llama-server -m model.gguf --port 8080` | `http://127.0.0.1:8080/v1` | Supports both `api: chat` and `api: completions`. |
+| `mlx_lm.server` | `mlx_lm.server --model <mlx model> --port 8080` | `http://127.0.0.1:8080/v1` | Set `extraBody: { chat_template_kwargs: { enable_thinking: false } }` for Qwen thinking models. Rejects `topLogprobs` above about 10 (the default). |
+
+Caveats:
+
+- The gateway does not start, stop or load models in these servers. If the server is down the
+  decision fails open and the engine reports why.
+- The probabilities are **not calibrated**. Leave policies in `shadow`, check
+  `local-decider stats`, and set thresholds from your own data before using `act`.
+- If the server returns no logprobs the engine says so (`server returned no logprobs`). Raise
+  `maxTokens`, add a `promptSuffix`, or try the other `api`.
+- `tokenEnv` names an environment variable holding an API key. It is sent only over `https` or to
+  a loopback address. See [engines.md](engines.md#6-openai-compatible-prompt-mapping-and-caveats)
+  for every option.
+
 ## 3. Start the gateway
 
 ```sh

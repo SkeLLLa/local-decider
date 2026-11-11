@@ -324,6 +324,7 @@ Latency of one 4-option question, measured at the client (p50):
 
 - [Install and try it](docs/install.md)
 - [Architecture](docs/architecture.md)
+- [Engines](docs/engines.md): the engine table, adding an engine or model, macOS notes
 - [Policies](docs/policies.md): schema, thresholds, precedent, variants, testing
 - [Threat model and known limits](docs/security.md)
 - [Supervised child agents](docs/supervised-subagents.md)

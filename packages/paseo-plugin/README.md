@@ -37,7 +37,8 @@ Run `paseo plugin ls` and check that `local-decider` shows `running`. Upgrade wi
 `paseo plugin reload local-decider`.
 
 Then open **Settings → Local decider** to pick the engine and model, choose each policy's mode,
-and control the gateway service. What each setting does: [OVERVIEW.md](OVERVIEW.md).
+and control the gateway service. What each setting does: [OVERVIEW.md](OVERVIEW.md). The engines
+listed there come from the gateway; see [docs/engines.md](../../docs/engines.md).
 
 ## Permissions and agent modes
 

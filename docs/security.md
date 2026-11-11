@@ -73,6 +73,15 @@ SQLite does not encrypt data at rest; access is controlled by the operating syst
 permissions. WAL mode permits read-only stats and backup handles while the gateway writes. JSONL
 exports and backups contain the same sensitive metadata and should be protected accordingly.
 
+## Engine endpoints
+
+The `openai-compatible` and `systemone-remote` engines send the redacted state to the URL you
+configure, so pick one you trust: a non-loopback host sees decision state. The bearer token named
+by `tokenEnv` is sent only over `https` or to a loopback address, and is masked in error text.
+Engine HTTP clients refuse redirects, so a configured URL cannot bounce the state or token
+elsewhere. The gateway does not run anything for these engines: it starts no LM Studio, Ollama or
+llama-server process, and model ids from `/models` are used as data only.
+
 ## What it does not protect against
 
 - **Prompt injection.** The model reads attacker-controllable text. It cannot run tools, but it

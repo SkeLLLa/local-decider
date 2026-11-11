@@ -52,12 +52,16 @@ checks still run, since Paseo has no equivalent.
   agent profile or a model, with effort (thinking level) and mode, a reload for policy files, and
   "Write with an agent", which starts an agent that interviews you and writes a routing policy
   for your models.
-- **Engine and model:** pick an engine (Strands Decider on PyTorch, or FastFlowLM on an AMD NPU)
-  to list its models with download size, memory, a latency hint and a recommendation. Download
-  shows progress; a model too big for the machine is disabled; Use switches the gateway now.
-  Strands Decider also has a device picker. Engines that are not installed say how to install
-  them; the plugin never installs engines. The FastFlowLM check shows the `flm validate` result
-  with a Re-validate button.
+- **Engine and model:** the engines, devices and models come from the gateway, so a gateway that
+  knows another engine shows it here without a plugin update. Pick an engine to see its
+  description and models with download size, memory, a latency hint and a recommendation.
+  Download shows progress; a model too big for the machine is disabled; Use switches the gateway
+  now. Strands Decider also has a device picker, which lists MLX and MPS on Apple Silicon. An
+  engine this machine cannot run is hidden unless it is the active one, and an uninstalled engine
+  says how to install it; the plugin never installs engines. An engine whose probabilities are not
+  calibrated, such as OpenAI-compatible, shows an "uncalibrated" badge. Its models are discovered
+  from the server and have no download size or Download button. An engine that supports a check
+  (FastFlowLM) shows its result with a Re-validate button.
 - **Decisions in chat:** show all rows, only notable ones (changed something, need attention,
   failed, or below 70% confidence in shadow), or none. Hiding rows does not stop decisions or
   the gateway's log. The details line and feedback buttons can be turned off separately.
@@ -70,8 +74,9 @@ checks still run, since Paseo has no equivalent.
   such as "auto-allow when verdict is allow" at p(allow) ≥ 0.95, in steps of 0.01, with Reset.
   Below 0.90 it warns that more requests are auto-allowed without asking; below 0.80 that the
   model will often auto-allow requests it is unsure about. It never goes below 0.50.
-- **Paths** (collapsed): the tools and directories the gateway uses (`flm`, `strands-decider`,
-  `uv`, the FastFlowLM model directory, the Hugging Face cache), where each came from, and
+- **Paths** (collapsed): the tools and directories the gateway uses, which depend on the gateway
+  host (`flm` and the FastFlowLM model directory only appear where FastFlowLM is supported;
+  `strands-decider`, `uv` and the Hugging Face cache everywhere), where each came from, and
   whether it works. You can set a custom absolute path, which the gateway checks first. A remote
   gateway shows them read-only.
 
