@@ -222,6 +222,13 @@ importers:
         version: 0.28.2
 
   packages/paseo-plugin:
+    dependencies:
+      '@ziptie-soft/local-decider-core':
+        specifier: workspace:*
+        version: link:../core
+      zod:
+        specifier: ^4.6.7
+        version: 4.6.7
     devDependencies:
       '@getpaseo/client':
         specifier: 0.15.3
@@ -238,18 +245,12 @@ importers:
       '@types/react':
         specifier: ~19.2.18
         version: 19.2.18
-      '@ziptie-soft/local-decider-core':
-        specifier: workspace:*
-        version: link:../core
       react:
         specifier: 19.1.0
         version: 19.1.0
       react-native:
         specifier: 0.81.5
         version: 0.81.5(@babel/core@7.29.13(supports-color@8.1.1))(@types/react@19.2.18)(react@19.1.0)(supports-color@8.1.1)
-      zod:
-        specifier: ^4.6.7
-        version: 4.6.7
 
   plugins/local-decider: {}
 
