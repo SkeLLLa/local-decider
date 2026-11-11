@@ -686,6 +686,10 @@ describe('EngineControl state', () => {
     const linuxEngines = linuxStatus['engines'] as {
       id: string;
       label: string;
+      description: string;
+      tag: string;
+      calibrated: boolean;
+      capabilities: { validate: boolean };
       devices: string[];
       supported: boolean;
     }[];
@@ -693,11 +697,35 @@ describe('EngineControl state', () => {
     assert.ok(linuxFlm);
     assert.equal(linuxFlm.supported, true);
     assert.equal(linuxFlm.label, 'FastFlowLM (AMD NPU)');
+    assert.equal(linuxFlm.description, 'FastFlowLM decision engine for AMD XDNA NPU systems');
+    assert.equal(linuxFlm.tag, 'NPU');
+    assert.equal(linuxFlm.calibrated, true);
+    assert.deepEqual(linuxFlm.capabilities, { validate: true });
     assert.deepEqual(linuxFlm.devices, []);
     const linuxStrands = linuxEngines.find(({ id }) => id === 'strands-decider');
     assert.ok(linuxStrands);
     assert.equal(linuxStrands.label, 'Strands Decider (PyTorch)');
+    assert.equal(linuxStrands.description, 'strands-decider decision engine');
+    assert.equal(linuxStrands.tag, 'PyTorch');
+    assert.equal(linuxStrands.calibrated, true);
+    assert.deepEqual(linuxStrands.capabilities, { validate: false });
     assert.deepEqual(linuxStrands.devices, ['auto', 'cpu', 'cuda']);
+
+    const configuredOpenAI = await setup({
+      host: LINUX_HOST,
+      engines: { 'openai-compatible': { url: 'http://127.0.0.1:1/v1', model: 'test-model' } },
+    }).control.status();
+    const openAI = (configuredOpenAI['engines'] as typeof linuxEngines).find(
+      ({ id }) => id === 'openai-compatible',
+    );
+    assert.ok(openAI);
+    assert.equal(
+      openAI.description,
+      'Score decision options from an OpenAI-compatible server logprob distribution',
+    );
+    assert.equal(openAI.tag, 'LLM');
+    assert.equal(openAI.calibrated, false);
+    assert.deepEqual(openAI.capabilities, { validate: false });
   });
 
   it('dispatches validation using the selected engine descriptor', async () => {

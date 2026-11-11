@@ -312,7 +312,7 @@ function requestSignal(res: ServerResponse): AbortSignal {
   return controller.signal;
 }
 
-function health(decider: Decider): Record<string, unknown> {
+function health(decider: Decider, engineControl?: EngineControl): Record<string, unknown> {
   const engine = decider.engine.health();
   // A lazily unloaded engine is healthy: it loads on the next decision.
   const status =
@@ -324,6 +324,7 @@ function health(decider: Decider): Record<string, unknown> {
   return {
     status,
     engine: decider.engine.id,
+    engineTag: engineControl?.activeTag() ?? decider.engine.id,
     engineState: engine.state,
     model: engine.model,
     ...(engine.detail === undefined ? {} : { detail: engine.detail }),
@@ -475,7 +476,8 @@ function readRoute(key: string, path: string): Handler | undefined {
 function route(method: string, path: string): Handler | undefined {
   const key = `${method} ${path}`;
   if (key === 'GET /health' || key === 'GET /ping') {
-    return async (_req, res, { decider }) => send(res, 200, health(decider));
+    return async (_req, res, { decider, engineControl }) =>
+      send(res, 200, health(decider, engineControl));
   }
   if (key === 'GET /models') {
     return async (_req, res, { decider, engineControl }) =>

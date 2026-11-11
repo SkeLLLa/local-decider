@@ -22,7 +22,12 @@ import {
 } from './config.ts';
 import type { Decider } from './decider.ts';
 import { DownloadError, Downloads, type Download } from './downloads.ts';
-import type { EngineContext, HostInfo, ModelDescriptor } from './engines/descriptor.ts';
+import type {
+  EngineContext,
+  EngineDescriptor,
+  HostInfo,
+  ModelDescriptor,
+} from './engines/descriptor.ts';
 import { cachedFlmVersion } from './engines/fastflowlm/status.ts';
 import { hostInfo } from './engines/host.ts';
 import { getJson } from './engines/http.ts';
@@ -304,6 +309,10 @@ export class EngineControl {
 
   current(): EngineSelection | null {
     return this.#selected;
+  }
+
+  activeTag(): string {
+    return this.#tag(this.#engine.id as EngineId);
   }
 
   allowedModels(engine?: EngineId): string[] {
@@ -669,6 +678,10 @@ export class EngineControl {
       return {
         id: engine.id,
         label: engine.label,
+        description: engine.description,
+        tag: this.#tag(engine.id),
+        calibrated: engine.calibrated,
+        capabilities: { validate: engine.validation !== undefined },
         installed: existing?.['installed'] ?? false,
         available: existing?.['available'] ?? false,
         detail: existing?.['detail'] ?? null,
@@ -772,6 +785,29 @@ export class EngineControl {
       return { ...base, model: sel.model, device: sel.device ?? base.device };
     }
     return { ...base, model: sel.model };
+  }
+
+  #tag(id: EngineId): string {
+    try {
+      const descriptor = engineDescriptor(id);
+      if (descriptor === undefined) {
+        return id;
+      }
+      const typed = descriptor as EngineDescriptor<EngineConfig>;
+      return typed.tag(this.#engineConfigFor(id), this.#host);
+    } catch {
+      return id;
+    }
+  }
+
+  #engineConfigFor(id: EngineId): EngineConfig {
+    if (this.#selected?.engine === id) {
+      return this.#engineConfig(this.#selected);
+    }
+    if (this.#config.engine.type === id) {
+      return this.#config.engine;
+    }
+    return engineDefaults(id, undefined, this.#config.engines?.[id]);
   }
 
   async #applySelectionConfig(previous: GatewayConfig, config: GatewayConfig): Promise<void> {

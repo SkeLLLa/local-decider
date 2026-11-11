@@ -218,6 +218,7 @@ describe('gateway HTTP', () => {
       const body = await json(await fetch(`${gw.url}${path}`));
       assert.equal(body['status'], 'ok');
       assert.equal(body['engine'], 'fake');
+      assert.equal(body['engineTag'], 'fake');
     }
   });
 
