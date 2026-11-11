@@ -39,6 +39,11 @@ alias local-decider "node $PWD/packages/gateway/dist/cli.js"
 
 Pick one. You can switch later in Paseo's settings or with `POST /v1/engine`.
 
+`local-decider engine install` with no flags picks for your hardware, in this order: AMD NPU,
+NVIDIA CUDA, Apple MLX, Apple MPS, CPU. It prints the reason. Flags and an explicit engine in
+`config.yaml` override it, and `--no-download` prepares nothing that needs a download. Installing
+never switches the running engine.
+
 | Hardware | Command | Default model | Notes |
 |---|---|---|---|
 | Any CPU (Linux default) | `local-decider engine install` | 2B, ~4.8 GB download | 1.2–2.5 s per short decision |
@@ -60,6 +65,13 @@ Pick one. You can switch later in Paseo's settings or with `POST /v1/engine`.
 
   An `flm` already on `PATH` is found automatically. Tool paths and model directories can be set
   under `tools:` and `dirs:` in `config.yaml` or in the settings page.
+
+### Automatic selection
+
+With `selection: { mode: auto }` the gateway runs the best installed engine on this host and falls
+back to the next one if it fails, then retries the better one after a cooldown. A selection made
+in the settings page or with `engine use` is manual and is never replaced. See
+[engines.md](engines.md#5a-automatic-selection-and-fallback).
 
 ### Apple Silicon
 
@@ -119,7 +131,7 @@ engines:
 
 | Server | Start | `url` | Notes |
 |---|---|---|---|
-| LM Studio | `lms server start --port 1234`, load a model | `http://127.0.0.1:1234/v1` | Needs `maxTokens: 8` and `promptSuffix: "/no_think"` for a thinking model, or it returns no logprobs. Its completions route returns none; keep `api: chat`. |
+| LM Studio | `lms server start --port 1234`, load a model | `http://127.0.0.1:1234/v1` | Only the GGUF `qwen3-4b-instruct-2507` gave usable logprobs; MLX models return `null`. Needs `maxTokens: 8` and `promptSuffix: "/no_think"` for a thinking model, or it returns no logprobs. Its completions route returns none; keep `api: chat`. |
 | Ollama | `ollama serve` | `http://127.0.0.1:11434/v1` | Use a version whose OpenAI endpoint returns `logprobs`. |
 | llama-server | `llama-server -m model.gguf --port 8080` | `http://127.0.0.1:8080/v1` | Supports both `api: chat` and `api: completions`. |
 | `mlx_lm.server` | `mlx_lm.server --model <mlx model> --port 8080` | `http://127.0.0.1:8080/v1` | Set `extraBody: { chat_template_kwargs: { enable_thinking: false } }` for Qwen thinking models. Rejects `topLogprobs` above about 10 (the default). |
@@ -241,6 +253,7 @@ engine:
   device: auto           # auto | cpu | mlx | mps | cuda
   # url: http://127.0.0.1:8000   # attach to a running server instead of spawning one
 selection: { engine: fastflowlm, model: d3:mini }   # set by the settings page; beats engine.type/model
+# selection: { mode: auto }   # the gateway ranks installed engines and falls back if one fails
 lifecycle: { mode: lazy, idleUnloadMinutes: 15 }
 policies:
   permission: { mode: shadow, thresholds: { verdict.allow: 0.95 } }

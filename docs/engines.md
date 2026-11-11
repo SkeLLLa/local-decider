@@ -116,6 +116,39 @@ within 80% of the machine's memory is listed but cannot be selected.
   and the data-directory variables set, and reads tokens from `~/.config/local-decider/env` if it
   exists. Restarting uses `launchctl kickstart -k`.
 
+## 5a. Automatic selection and fallback
+
+`selection.mode: auto` lets the gateway choose the engine. Without it, the `selection` you saved
+(or `engine.type` and `model`) is what runs, and nothing switches on its own.
+
+```yaml
+selection: { mode: auto }
+```
+
+**The ladder.** The gateway probes the host (AMD XDNA NPU, NVIDIA, Apple MLX and MPS) and ranks
+the candidates, best first: AMD NPU (`fastflowlm`), NVIDIA CUDA, Apple MLX, Apple MPS, CPU.
+Only calibrated engines are eligible, so `openai-compatible` and `lmstudio` are never chosen
+automatically. A probe that cannot tell reports `unknown`, which does not count as available. The
+ranking appears as `recommendation` in `GET /v1/engines`, apart from the active engine, and
+`engine install` uses it to pick what to install and print why.
+
+**Fallback.** In auto mode only, an infrastructure failure of the active engine (it fails to
+start or dies, not a low-confidence answer) moves the gateway to the next installed, eligible
+candidate:
+
+- The failed engine is stopped before the replacement starts, so one model is loaded at a time.
+- Nothing is downloaded during a decision. A candidate whose model is missing is skipped.
+- Decisions fail open while the replacement loads. Decision caches are cleared on every switch.
+- The failed candidate cools down for 30 s, doubling per repeated failure up to 15 min. A
+  candidate that stayed healthy for 5 min starts again from 30 s. When the cooldown ends the
+  gateway retries the higher-ranked engine, so it recovers without flapping.
+- `GET /v1/engines` reports `active.selectionMode` (`auto` or `manual`) and, while a fallback is
+  in effect, `active.fallback` with the `reason` and `retryAt`.
+
+**A manual selection always wins.** Choosing an engine with `engine use`, `POST /v1/engine` or the
+settings page saves a manual `selection` and leaves auto mode. A manual selection never falls
+back. Setting `selection: { mode: auto }` in `config.yaml` turns auto mode back on.
+
 ## 6. openai-compatible: prompt mapping and caveats
 
 The engine asks an OpenAI-style server to answer with exactly one option label, then reads the
@@ -149,5 +182,9 @@ Measured on an M5 Pro with Qwen3-1.7B 4-bit:
 |---|---|
 | `mlx_lm.server` | Chat and completions return logprobs at `max_tokens: 1`. The default template starts a `<think>` block; `chat_template_kwargs.enable_thinking: false` fixes it. `/no_think` alone does not. |
 | LM Studio | With `max_tokens: 1` the chat and completions routes return `logprobs: null`. Chat needs `maxTokens: 8` and `promptSuffix: "/no_think"`. The completions route generated text but still no logprobs. `enable_thinking: false` did not suppress reasoning. |
+
+**LM Studio limitation.** Only the GGUF build of `qwen3-4b-instruct-2507` gave usable logprobs
+here. MLX models served by LM Studio return `null` logprobs, so the decision fails open. Load that
+GGUF model, or use `mlx_lm.server` for MLX models.
 
 The gateway does not start or stop LM Studio; start the server yourself.

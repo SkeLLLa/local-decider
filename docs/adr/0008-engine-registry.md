@@ -35,4 +35,13 @@ was an afterthought.
 - `openai-compatible` probabilities are not calibrated against the policy thresholds, so policies
   using it should stay in `shadow` until measured. The gateway does not manage LM Studio's
   lifecycle; the user starts the server.
+- **Automatic selection (2026-11-11).** `selection.mode: auto` opts in to ranking and fallback;
+  the default stays manual. `engines/selector.ts` ranks registry engines on the ladder NPU, CUDA,
+  MLX, MPS, CPU from cached capability probes (`unknown` is not available) and skips uncalibrated
+  engines. Only in auto mode does an infrastructure failure of the active engine move the gateway
+  to the next installed candidate, with a per-candidate cooldown that doubles and resets after
+  sustained health. A manual selection always wins and never falls back.
+  `GET /v1/engines` reports `recommendation`, `active.selectionMode` and `active.fallback`.
+- LM Studio's MLX models return `null` logprobs; only the GGUF `qwen3-4b-instruct-2507` is usable,
+  and the engine stays uncalibrated and never auto-selected.
 - The registry is compile-time. There is no plugin loading of third-party engines.
