@@ -1,6 +1,6 @@
 {
   "name": "@ziptie-soft/local-decider",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "Local decision-model gateway and CLI that answers routine coding-agent questions (permissions, command risk, routing, turn outcomes) for Paseo, Claude Code and Codex.",
   "keywords": [
     "ai-agents",
