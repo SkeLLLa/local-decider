@@ -1,5 +1,20 @@
 # local-decider
 
+[![CI](https://github.com/ziptie-soft/local-decider/actions/workflows/ci.yml/badge.svg?branch=master)](https://github.com/ziptie-soft/local-decider/actions/workflows/ci.yml)
+[![CodeQL](https://github.com/ziptie-soft/local-decider/actions/workflows/codeql.yml/badge.svg?branch=master)](https://github.com/ziptie-soft/local-decider/actions/workflows/codeql.yml)
+[![OSV](https://github.com/ziptie-soft/local-decider/actions/workflows/osv.yml/badge.svg?branch=master)](https://github.com/ziptie-soft/local-decider/actions/workflows/osv.yml)
+[![Release](https://github.com/ziptie-soft/local-decider/actions/workflows/release.yml/badge.svg?branch=master)](https://github.com/ziptie-soft/local-decider/actions/workflows/release.yml)
+[![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/ziptie-soft/local-decider/badge)](https://scorecard.dev/viewer/?uri=github.com/ziptie-soft/local-decider)
+[![npm](https://img.shields.io/npm/v/@ziptie-soft/local-decider)](https://www.npmjs.com/package/@ziptie-soft/local-decider)
+[![npm downloads](https://img.shields.io/npm/dm/@ziptie-soft/local-decider)](https://www.npmjs.com/package/@ziptie-soft/local-decider)
+[![Node](https://img.shields.io/node/v/@ziptie-soft/local-decider)](https://www.npmjs.com/package/@ziptie-soft/local-decider)
+[![Snyk](https://snyk.io/test/npm/@ziptie-soft/local-decider/badge.svg)](https://snyk.io/test/npm/@ziptie-soft/local-decider)
+[![Socket](https://socket.dev/api/badge/npm/package/@ziptie-soft/local-decider)](https://socket.dev/npm/package/@ziptie-soft/local-decider)
+[![License: Apache-2.0](https://img.shields.io/github/license/ziptie-soft/local-decider)](LICENSE)
+[![Come Back Alive](docs/assets/badges/donate-come-back-alive.svg)](https://savelife.in.ua/en/donate-en/)
+[![Sternenko Fund](docs/assets/badges/donate-sternenko-fund.svg)](https://www.sternenkofund.org/en/donate)
+[![Prytula Foundation](docs/assets/badges/donate-prytula-foundation.svg)](https://prytulafoundation.org/en/donation)
+
 ![local-decider logo](docs/assets/logo.svg)
 
 **Coding agents stop to ask you about routine things, or spend expensive model tokens deciding
