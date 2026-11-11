@@ -421,6 +421,62 @@ describe('engine selection helpers', () => {
     const found = model({ downloadGb: null, memoryGb: null, installed: false });
     assert.equal(modelRowState(found, ctx()).kind, 'use');
   });
+
+  it('handles the lmstudio engine: order, tag, uncalibrated, discovered labels', async () => {
+    const catalog = parseEngineCatalog({
+      active: { engine: 'fastflowlm', model: 'x' },
+      engines: [
+        { id: 'fastflowlm', label: 'FastFlowLM', installed: true, available: true, tag: 'NPU' },
+        {
+          id: 'lmstudio',
+          label: 'LM Studio',
+          installed: true,
+          available: true,
+          tag: 'LM Studio',
+          calibrated: false,
+          supported: true,
+        },
+        { id: 'legacy', label: 'Legacy', installed: true },
+      ],
+      models: [
+        { id: 'qwen3', engine: 'lmstudio', label: 'qwen3 (MLX)' },
+        { id: 'llama', engine: 'lmstudio', label: 'llama (GGUF · Q4_K_M · 4.5 GB)' },
+      ],
+    });
+    assert.deepEqual(
+      engineOptions(catalog.engines).map((o) => o.value),
+      ['fastflowlm', 'lmstudio', 'legacy'],
+    );
+    const lm = catalog.engines[1]!;
+    assert.equal(lm.tag, 'LM Studio');
+    assert.equal(lm.calibrated, false);
+    assert.equal(catalog.engines[2]!.calibrated, true);
+    assert.deepEqual(
+      catalog.models.map(
+        (m) =>
+          modelRowView(m, modelRowState(m, ctx()), {
+            device: 'auto',
+            totalMemoryGb: null,
+          }).label,
+      ),
+      ['qwen3 (MLX)', 'llama (GGUF · Q4_K_M · 4.5 GB)'],
+    );
+    assert.equal(modelRowState(catalog.models[0]!, ctx()).kind, 'use');
+    let sent: unknown = null;
+    const gw = {
+      ...fakeGateway(() => null),
+      selectEngine: async (body: unknown) => {
+        sent = body;
+        return { ok: true as const, body: {} };
+      },
+    };
+    await selectEngine(deps(settings(), gw), {
+      engine: 'lmstudio',
+      model: 'qwen3',
+      device: 'auto',
+    });
+    assert.deepEqual(sent, { engine: 'lmstudio', model: 'qwen3', device: 'auto' });
+  });
 });
 
 describe('engine RPC handlers', () => {
