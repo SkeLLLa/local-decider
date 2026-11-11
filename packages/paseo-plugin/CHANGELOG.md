@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.0.3](https://github.com/ziptie-soft/local-decider/compare/paseo-plugin-v1.0.2...paseo-plugin-v1.0.3) (2026-11-11)
+
+
+### Bug Fixes
+
+* **paseo-plugin:** declare core and zod as runtime dependencies ([#9](https://github.com/ziptie-soft/local-decider/issues/9)) ([1b060b7](https://github.com/ziptie-soft/local-decider/commit/1b060b745095a40aebcbbdf72bc7edf30b9fb5ae))
+
 ## [1.0.2](https://github.com/ziptie-soft/local-decider/compare/paseo-plugin-v1.0.1...paseo-plugin-v1.0.2) (2026-11-11)
 
 
