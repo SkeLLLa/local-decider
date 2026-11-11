@@ -507,7 +507,7 @@ describe('EngineControl state', () => {
     const darwinStrands = darwinEngines.find(({ id }) => id === 'strands-decider');
     assert.ok(darwinStrands);
     assert.equal(darwinStrands.label, 'Strands Decider (PyTorch)');
-    assert.deepEqual(darwinStrands.devices, ['auto', 'cpu', 'mlx', 'mps', 'cuda']);
+    assert.deepEqual(darwinStrands.devices, ['auto', 'cpu', 'mlx', 'mps']);
 
     const linuxStatus = await setup({ host: LINUX_HOST }).control.status();
     const linuxEngines = linuxStatus['engines'] as {
@@ -524,7 +524,7 @@ describe('EngineControl state', () => {
     const linuxStrands = linuxEngines.find(({ id }) => id === 'strands-decider');
     assert.ok(linuxStrands);
     assert.equal(linuxStrands.label, 'Strands Decider (PyTorch)');
-    assert.deepEqual(linuxStrands.devices, ['auto', 'cpu', 'mlx', 'mps', 'cuda']);
+    assert.deepEqual(linuxStrands.devices, ['auto', 'cpu', 'cuda']);
   });
 
   it('dispatches validation using the selected engine descriptor', async () => {

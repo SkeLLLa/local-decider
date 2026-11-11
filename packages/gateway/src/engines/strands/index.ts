@@ -76,7 +76,15 @@ export const strandsEngine = defineEngine({
   selectable: true,
   supports: () => ({ ok: true }),
   tag: () => 'PyTorch',
-  devices: () => DEVICES,
+  devices: (host) => {
+    if (host.platform === 'darwin' && host.arch === 'arm64') {
+      return ['auto', 'cpu', 'mlx', 'mps'];
+    }
+    if (host.platform === 'linux') {
+      return ['auto', 'cpu', 'cuda'];
+    }
+    return ['auto', 'cpu'];
+  },
   calibrated: true,
   models: MODELS,
   modelsPresent: strandsModelsPresent,

@@ -11,6 +11,7 @@ import {
   isSelectableEngine,
   SELECTABLE_IDS,
 } from '../src/engines/registry.ts';
+import { strandsEngine } from '../src/engines/strands/index.ts';
 
 const linuxHost: HostInfo = {
   platform: 'linux',
@@ -50,10 +51,26 @@ describe('engine registry', () => {
     assert.equal(config.type, 'systemone-remote');
   });
 
-  it('keeps the current device list available on Linux', () => {
+  it('offers host-compatible Strands devices and accepts all existing config values', () => {
+    const strands = strandsEngine;
+    const darwinHost: HostInfo = {
+      platform: 'darwin',
+      arch: 'arm64',
+      totalMemoryBytes: linuxHost.totalMemoryBytes,
+    };
+    const otherHost: HostInfo = {
+      platform: 'win32',
+      arch: 'x64',
+      totalMemoryBytes: linuxHost.totalMemoryBytes,
+    };
+
+    assert.deepEqual(strands.devices?.(darwinHost), ['auto', 'cpu', 'mlx', 'mps']);
+    assert.deepEqual(strands.devices?.(linuxHost), ['auto', 'cpu', 'cuda']);
+    assert.deepEqual(strands.devices?.(otherHost), ['auto', 'cpu']);
+    for (const device of DEVICES) {
+      assert.equal(strands.configSchema.parse({ type: 'strands-decider', device }).device, device);
+    }
     for (const engine of ENGINES.filter((candidate) => candidate.selectable)) {
-      const devices = engine.id === 'fastflowlm' ? [] : DEVICES;
-      assert.deepEqual(engine.devices?.(linuxHost), devices, engine.id);
       assert.deepEqual(engine.supports(linuxHost), { ok: true }, engine.id);
     }
   });
