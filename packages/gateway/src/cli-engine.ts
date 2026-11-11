@@ -10,7 +10,76 @@ const FLM_HOST_REFUSAL =
 
 export class EngineInstallUsageError extends Error {
   override readonly name = 'EngineInstallUsageError';
+  // fallow-ignore-next-line unused-class-member -- cli.ts uses this to set the process exit status.
   readonly exitCode = 2;
+}
+
+type UnknownRecord = Record<string, unknown>;
+
+function asRecord(value: unknown): UnknownRecord | undefined {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+    ? (value as UnknownRecord)
+    : undefined;
+}
+
+function displayText(value: unknown, fallback = ''): string {
+  return typeof value === 'string' && value !== '' ? value : fallback;
+}
+
+function engineLine(engine: UnknownRecord, activeId: string | undefined): string | undefined {
+  const id = displayText(engine['id']);
+  if (id === '') {
+    return undefined;
+  }
+  const supported =
+    typeof engine['supported'] === 'boolean'
+      ? `supported: ${engine['supported'] ? 'yes' : 'no'}`
+      : 'supported: unknown';
+  const reason = engine['supported'] === false ? displayText(engine['unsupportedReason']) : '';
+  const label = displayText(engine['label'], id);
+  const detail = displayText(engine['detail']);
+  const description = detail === '' ? label : `${label} — ${detail}`;
+  return [
+    id,
+    supported,
+    ...(activeId === id ? ['active'] : []),
+    ...(reason === '' ? [] : [reason]),
+    description,
+  ].join(' | ');
+}
+
+function modelLines(models: readonly unknown[], engineId: string): string[] {
+  return models.flatMap((model) => {
+    const row = asRecord(model);
+    if (row === undefined || row['engine'] !== engineId || typeof row['id'] !== 'string') {
+      return [];
+    }
+    const installed =
+      typeof row['installed'] === 'boolean'
+        ? ` (${row['installed'] ? 'installed' : 'not installed'})`
+        : '';
+    return [`  ${row['id']}${installed}`];
+  });
+}
+
+/** Lenient plain-text view of a gateway engine catalog. */
+export function formatEngineList(payload: unknown): string {
+  const root = asRecord(payload);
+  if (root === undefined || !Array.isArray(root['engines'])) {
+    return 'gateway returned an invalid engine list';
+  }
+  const active = asRecord(root['active']);
+  const activeId = typeof active?.['engine'] === 'string' ? active['engine'] : undefined;
+  const models = Array.isArray(root['models']) ? root['models'] : [];
+  const lines = root['engines'].flatMap((item) => {
+    const engine = asRecord(item);
+    if (engine === undefined) {
+      return [];
+    }
+    const line = engineLine(engine, activeId);
+    return line === undefined ? [] : [line, ...modelLines(models, String(engine['id']))];
+  });
+  return lines.length === 0 ? 'no engines available' : lines.join('\n');
 }
 
 export type InstallPlan =

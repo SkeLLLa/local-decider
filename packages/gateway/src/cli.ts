@@ -12,7 +12,7 @@ import { parseArgs } from 'node:util';
 
 import { authoringPrompt } from './authoring.ts';
 import { bench } from './bench.ts';
-import { planInstall, EngineInstallUsageError } from './cli-engine.ts';
+import { EngineInstallUsageError, formatEngineList, planInstall } from './cli-engine.ts';
 import { logsCommand } from './cli-logs.ts';
 import {
   configCommand,
@@ -49,6 +49,8 @@ Usage:
   local-decider gateway start|restart|stop|status|uninstall  user service (start is a no-op if running)
   local-decider engine install [--flavor cpu|mlx|cuda] [--model ID] [--no-download]
   local-decider engine install --engine fastflowlm [--model d3:nano]  AMD NPU (Linux)
+  local-decider engine list                         list engines and models
+  local-decider engine use <engine> <model> [--device D]  select an engine and model
   local-decider decide <policy> [--input JSON] [key=value ...]
   local-decider stats [--json] [--scope claude-auto]  agreement and calibration from the shadow log
   local-decider logs backup <file> | export [--since YYYY-MM-DD] <dir> | import <dir>
@@ -150,17 +152,106 @@ async function installFastFlowLM(model: string | undefined, noDownload: boolean)
   );
 }
 
-async function engine(ctx: Context): Promise<void> {
-  const [sub, ...rest] = ctx.args;
-  if (sub !== 'install') {
+async function listEngines(ctx: Context): Promise<void> {
+  const payload = await client(ctx.config, 5000).engines();
+  if (payload === null) {
+    console.error(`gateway unreachable at ${gatewayUrl(ctx.config)}`);
+    process.exitCode = 1;
+    return;
+  }
+  console.log(formatEngineList(payload));
+}
+
+function parseUseSelection(args: readonly string[]): {
+  engine: string;
+  model: string;
+  device?: string;
+} {
+  try {
+    const parsed = parseArgs({
+      args: [...args],
+      options: { device: { type: 'string' } },
+      allowPositionals: true,
+    });
+    const [engineName, model, ...extra] = parsed.positionals;
+    if (engineName === undefined || model === undefined || extra.length > 0) {
+      throw new UsageError();
+    }
+    return {
+      engine: engineName,
+      model,
+      ...(parsed.values.device === undefined ? {} : { device: parsed.values.device }),
+    };
+  } catch (error) {
+    if (error instanceof UsageError) {
+      throw error;
+    }
     throw new UsageError();
   }
-  const plan = planInstall(rest, hostInfo(), ctx.config.engine.type, ctx.config.engine.model);
+}
+
+function printSelectionResult(
+  result: Exclude<Awaited<ReturnType<GatewayClient['selectEngine']>>, null>,
+  engineName: string,
+  model: string,
+): void {
+  if (result.status < 200 || result.status >= 300) {
+    return printGatewayError(result.body);
+  }
+  const body = responseRecord(result.body);
+  const selectedEngine = selectionValue(body, 'engine', engineName);
+  const selectedModel = selectionValue(body, 'model', model);
+  console.log(`selected ${selectedEngine} ${selectedModel}`);
+}
+
+function responseRecord(value: unknown): Record<string, unknown> {
+  return typeof value === 'object' && value !== null ? (value as Record<string, unknown>) : {};
+}
+
+function selectionValue(body: Record<string, unknown>, key: string, fallback: string): string {
+  const value = body[key];
+  return typeof value === 'string' ? value : fallback;
+}
+
+function printGatewayError(value: unknown): void {
+  const body = responseRecord(value);
+  const error = body['error'];
+  console.error(typeof error === 'string' ? error : JSON.stringify(body));
+  process.exitCode = 1;
+}
+
+async function useEngine(ctx: Context, args: readonly string[]): Promise<void> {
+  const selection = parseUseSelection(args);
+  const result = await client(ctx.config, 30_000).selectEngine(selection);
+  if (result === null) {
+    console.error(`gateway unreachable at ${gatewayUrl(ctx.config)}`);
+    process.exitCode = 1;
+    return;
+  }
+  printSelectionResult(result, selection.engine, selection.model);
+}
+
+async function installEngine(ctx: Context, args: readonly string[]): Promise<void> {
+  const plan = planInstall(args, hostInfo(), ctx.config.engine.type, ctx.config.engine.model);
   if (plan.engine === 'fastflowlm') {
     return installFastFlowLM(plan.model, plan.noDownload);
   }
   installStrandsEngine(ctx.paths, plan.flavor, plan.model);
   console.log(`strands-decider engine installed (${plan.flavor}) under ${ctx.paths.venvs}`);
+}
+
+async function engine(ctx: Context): Promise<void> {
+  const [sub, ...rest] = ctx.args;
+  if (sub === 'list') {
+    return listEngines(ctx);
+  }
+  if (sub === 'use') {
+    return useEngine(ctx, rest);
+  }
+  if (sub === 'install') {
+    return installEngine(ctx, rest);
+  }
+  throw new UsageError();
 }
 
 function parseInput(args: readonly string[]): DecideRequest['input'] {

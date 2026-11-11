@@ -25,6 +25,17 @@ describe('GatewayClient', () => {
         res.end('{}');
         return;
       }
+      if (req.url === '/v1/engines') {
+        res.setHeader('content-type', 'application/json');
+        res.end('{"engines":[],"models":[]}');
+        return;
+      }
+      if (req.url === '/v1/engine') {
+        res.statusCode = 400;
+        res.setHeader('content-type', 'application/json');
+        res.end('{"error":"unknown model"}');
+        return;
+      }
       res.statusCode = 500;
       res.end('{"error":"boom"}');
     });
@@ -48,6 +59,15 @@ describe('GatewayClient', () => {
     const client = new GatewayClient({ baseUrl: url });
     assert.equal(await client.decide('permission', { harness: 'cli', input: {} }), null);
     assert.equal(lastAuth, undefined);
+  });
+
+  it('lists engines and preserves selection error status and body', async () => {
+    const client = new GatewayClient({ baseUrl: url });
+    assert.deepEqual(await client.engines(), { engines: [], models: [] });
+    assert.deepEqual(await client.selectEngine({ engine: 'openai-compatible', model: 'missing' }), {
+      status: 400,
+      body: { error: 'unknown model' },
+    });
   });
 
   it('fails open on timeouts and refused connections', async () => {

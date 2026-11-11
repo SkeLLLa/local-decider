@@ -24,6 +24,17 @@ export interface GatewayHealth {
   readonly p50Ms?: number;
 }
 
+export interface EngineSelectionRequest {
+  readonly engine: string;
+  readonly model: string;
+  readonly device?: string;
+}
+
+export interface GatewayRequestResult {
+  readonly status: number;
+  readonly body: unknown;
+}
+
 const LOOPBACK = new Set(['localhost', '[::1]', '::1']);
 const LOOPBACK_V4 = /^127\.\d{1,3}\.\d{1,3}\.\d{1,3}$/;
 
@@ -71,7 +82,28 @@ export class GatewayClient {
     return this.#request<GatewayHealth>('GET', '/health');
   }
 
+  /** List engines and models; null when the gateway is unreachable or returns an error. */
+  async engines(): Promise<unknown> {
+    return this.#request<unknown>('GET', '/v1/engines');
+  }
+
+  /** Select a model and retain its HTTP status and body for CLI error reporting. */
+  async selectEngine(selection: EngineSelectionRequest): Promise<GatewayRequestResult | null> {
+    return this.#requestWithStatus('POST', '/v1/engine', selection);
+  }
+
   async #request<T>(method: string, path: string, body?: unknown): Promise<T | null> {
+    const result = await this.#requestWithStatus(method, path, body);
+    return result !== null && result.status >= 200 && result.status < 300
+      ? (result.body as T)
+      : null;
+  }
+
+  async #requestWithStatus(
+    method: string,
+    path: string,
+    body?: unknown,
+  ): Promise<GatewayRequestResult | null> {
     const headers: Record<string, string> = { accept: 'application/json' };
     if (body !== undefined) {
       headers['content-type'] = 'application/json';
@@ -86,10 +118,7 @@ export class GatewayClient {
         signal: AbortSignal.timeout(this.#timeoutMs),
         ...(body === undefined ? {} : { body: JSON.stringify(body) }),
       });
-      if (!res.ok) {
-        return null;
-      }
-      return (await res.json()) as T;
+      return { status: res.status, body: await res.json().catch(() => null) };
     } catch {
       return null;
     }

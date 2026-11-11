@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
-import { EngineInstallUsageError, planInstall } from '../src/cli-engine.ts';
+import { EngineInstallUsageError, formatEngineList, planInstall } from '../src/cli-engine.ts';
 import type { HostInfo } from '../src/engines/descriptor.ts';
 
 const linux: HostInfo = {
@@ -101,6 +101,44 @@ describe('engine install planning', () => {
     assert.equal(
       planInstall(['--engine', 'strands-decider'], linux, 'fastflowlm', 'd3:nano').model,
       undefined,
+    );
+  });
+});
+
+describe('engine list formatting', () => {
+  it('formats engine support, active state, descriptions and models', () => {
+    const formatted = formatEngineList({
+      active: { engine: 'openai-compatible', model: 'local-qwen' },
+      engines: [
+        {
+          id: 'fastflowlm',
+          label: 'FastFlowLM (AMD NPU)',
+          supported: false,
+          unsupportedReason: 'FastFlowLM is supported only on Linux',
+          detail: 'not installed',
+        },
+        {
+          id: 'openai-compatible',
+          label: 'OpenAI-compatible',
+          supported: true,
+          detail: 'http://127.0.0.1:1234/v1',
+        },
+      ],
+      models: [
+        { id: 'd3:nano', engine: 'fastflowlm', installed: false },
+        { id: 'local-qwen', engine: 'openai-compatible', installed: true },
+      ],
+    });
+    assert.match(formatted, /fastflowlm \| supported: no \| FastFlowLM is supported only on Linux/);
+    assert.match(formatted, /  d3:nano \(not installed\)/);
+    assert.match(formatted, /openai-compatible \| supported: yes \| active \| OpenAI-compatible/);
+    assert.match(formatted, /  local-qwen \(installed\)/);
+  });
+
+  it('returns one line for an unparseable payload', () => {
+    assert.equal(
+      formatEngineList('not an engine catalog'),
+      'gateway returned an invalid engine list',
     );
   });
 });
