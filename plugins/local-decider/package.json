@@ -1,6 +1,6 @@
 {
   "name": "@ziptie-soft/local-decider-agent-plugin",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "description": "local-decider hooks for Claude Code and Codex (built plugin directory)",
   "license": "Apache-2.0",
   "repository": {

@@ -26,7 +26,7 @@ export function deciderBackend(decider: Decider): McpBackend {
   };
 }
 
-const VERSION = '1.0.0'; // x-release-please-version
+const VERSION = '1.1.0'; // x-release-please-version
 
 function toolResult(value: unknown): { content: { type: 'text'; text: string }[] } {
   return { content: [{ type: 'text', text: JSON.stringify(value, null, 2) }] };

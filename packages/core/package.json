@@ -1,6 +1,6 @@
 {
   "name": "@ziptie-soft/local-decider-core",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Types, systemone client, policy schema and loader for local-decider.",
   "license": "Apache-2.0",
   "repository": {

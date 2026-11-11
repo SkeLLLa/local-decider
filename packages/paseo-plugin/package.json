@@ -1,6 +1,6 @@
 {
   "name": "@ziptie-soft/paseo-plugin-local-decider",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Paseo plugin for local-decider: turn outcomes, permission triage and model routing through a local System One gateway.",
   "license": "Apache-2.0",
   "repository": {

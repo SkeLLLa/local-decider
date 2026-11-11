@@ -1,10 +1,17 @@
 {
   "name": "local-decider",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "description": "Routes routine permission, command-risk, routing and turn-outcome decisions through a local decision-model gateway. Shadow by default; fails open.",
-  "author": { "name": "ziptie-soft" },
+  "author": {
+    "name": "ziptie-soft"
+  },
   "homepage": "https://github.com/ziptie-soft/local-decider",
   "repository": "https://github.com/ziptie-soft/local-decider",
   "license": "Apache-2.0",
-  "keywords": ["permissions", "hooks", "decision-model", "local"]
+  "keywords": [
+    "permissions",
+    "hooks",
+    "decision-model",
+    "local"
+  ]
 }
