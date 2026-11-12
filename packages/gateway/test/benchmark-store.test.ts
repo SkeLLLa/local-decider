@@ -8,6 +8,8 @@ import {
   JsonBenchmarkStore,
   MAX_BENCH_RECORDS,
   MemoryBenchmarkStore,
+  measurementDetailsFor,
+  measurementsFor,
   type BenchmarkRecord,
 } from '../src/benchmark-store.ts';
 import { tempPaths } from './helpers.ts';
@@ -32,7 +34,16 @@ function record(index: number, status: 'ok' | 'failed' = 'ok'): BenchmarkRecord 
     resolvedDevice: null,
     runs: 3,
     loadMs: 10,
-    sizes: [],
+    sizes: [
+      {
+        targetTokens: 1024,
+        inputTokens: 1024,
+        p50Ms: 200,
+        p95Ms: 250,
+        answer: 'done',
+        error: null,
+      },
+    ],
   };
 }
 
@@ -54,7 +65,10 @@ describe('benchmark stores', () => {
     store.append(record(1));
     assert.equal(statSync(file).mode & 0o777, 0o600);
     assert.equal(statSync(join(data, 'nested')).mode & 0o777, 0o700);
-    assert.equal(readdirSync(join(data, 'nested')).includes(`benchmarks.json.${String(process.pid)}.tmp`), false);
+    assert.equal(
+      readdirSync(join(data, 'nested')).includes(`benchmarks.json.${String(process.pid)}.tmp`),
+      false,
+    );
     assert.ok(existsSync(file));
     assert.deepEqual(JSON.parse(readFileSync(file, 'utf8')), {
       version: BENCH_VERSION,
@@ -69,7 +83,9 @@ describe('benchmark stores', () => {
     const store = new JsonBenchmarkStore(file, (message) => warnings.push(message));
     assert.equal(store.records().length, 0);
     assert.equal(warnings.length, 1);
-    assert.ok(readdirSync(join(file, '..')).some((name) => name.startsWith('benchmarks.json.corrupt-')));
+    assert.ok(
+      readdirSync(join(file, '..')).some((name) => name.startsWith('benchmarks.json.corrupt-')),
+    );
   });
 
   it('renames unknown-version and overlarge files', () => {
@@ -88,6 +104,55 @@ describe('benchmark stores', () => {
     const store = new MemoryBenchmarkStore();
     store.append(record(1));
     store.append(record(2, 'failed'));
-    assert.deepEqual(store.records().map(({ status }) => status), ['ok', 'failed']);
+    assert.deepEqual(
+      store.records().map(({ status }) => status),
+      ['ok', 'failed'],
+    );
+  });
+
+  it('uses the latest success for ranking and exposes a later failure', () => {
+    const store = new MemoryBenchmarkStore();
+    store.append(record(1));
+    store.append(record(2, 'failed'));
+    const view = measurementsFor(store.records(), '0123456789abcdef', () => ({
+      runtime: null,
+      model: null,
+    })).get('llama-vulkan|d3-lite-q8_0|');
+    assert.equal(view?.ok?.typical.p50Ms, 200);
+    assert.deepEqual(view?.failed, { error: 'failed', at: new Date(2).toISOString() });
+  });
+
+  it('marks changed runtime or model stamps stale and leaves unknown fingerprints unranked', () => {
+    const prior = {
+      ...record(1),
+      runtime: 'llama.cpp b1',
+      modelStamp: 'sha256:old',
+    };
+    const stale = measurementDetailsFor([prior], prior.fingerprint, () => ({
+      runtime: 'llama.cpp b2',
+      model: 'sha256:new',
+    })).get('llama-vulkan|d3-lite-q8_0|');
+    assert.equal(stale?.view.ok?.freshness, 'stale');
+    assert.equal(stale?.view.ok?.staleReason, 'llama.cpp b1 → llama.cpp b2');
+
+    const unknown = measurementDetailsFor([prior], undefined, () => undefined).get(
+      'llama-vulkan|d3-lite-q8_0|',
+    );
+    assert.equal(unknown?.view.ok?.freshness, 'unknown');
+    assert.equal(unknown?.view.ok?.provisional, false);
+  });
+
+  it('ignores mismatched fingerprints, unknown bench versions, and unknown catalogue models', () => {
+    const accepted = record(1);
+    const details = measurementDetailsFor(
+      [
+        { ...accepted, fingerprint: 'ffffffffffffffff' },
+        { ...accepted, benchVersion: BENCH_VERSION + 1 },
+        { ...accepted, model: 'missing-model' },
+      ],
+      accepted.fingerprint,
+      () => ({ runtime: null, model: null }),
+    );
+    assert.equal(details.size, 0);
   });
 });

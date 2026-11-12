@@ -2,7 +2,13 @@ import { chmodSync, mkdirSync, readFileSync, renameSync, statSync, writeFileSync
 import { dirname } from 'node:path';
 
 import type { Device } from './engines/descriptor.ts';
+import type { RuntimeStamp } from './engines/descriptor.ts';
+import { familyId } from './engines/families.ts';
+import type { Measured, MeasurementView, Measurements } from './engines/ranking.ts';
+import { TYPICAL_TOKENS, LONG_TOKENS } from './engines/ranking.ts';
+import type { EngineId } from './engines/registry.ts';
 import type { Backend } from './engines/selector.ts';
+import { catalogModel } from './models.ts';
 
 export const BENCH_VERSION = 1;
 export const MAX_BENCH_RECORDS = 500;
@@ -44,6 +50,13 @@ export interface BenchmarkStore {
   records(): readonly BenchmarkRecord[];
 }
 
+export type StampLookup = (engine: string, model: string) => RuntimeStamp | undefined;
+
+export interface MeasurementDetails {
+  readonly record: BenchmarkRecord | null;
+  readonly view: MeasurementView;
+}
+
 export class MemoryBenchmarkStore implements BenchmarkStore {
   #records: BenchmarkRecord[] = [];
 
@@ -61,10 +74,7 @@ export class JsonBenchmarkStore implements BenchmarkStore {
   readonly file: string;
   #records: BenchmarkRecord[];
 
-  constructor(
-    file: string,
-    warn: (message: string) => void = () => undefined,
-  ) {
+  constructor(file: string, warn: (message: string) => void = () => undefined) {
     this.file = file;
     this.#records = readRecords(file, warn);
   }
@@ -78,6 +88,105 @@ export class JsonBenchmarkStore implements BenchmarkStore {
   records(): readonly BenchmarkRecord[] {
     return this.#records;
   }
+}
+
+/** Latest valid record per runtime, with its latest successful record for display and ranking. */
+export function measurementDetailsFor(
+  records: readonly BenchmarkRecord[],
+  fingerprint: string | undefined,
+  stamps: StampLookup,
+): ReadonlyMap<string, MeasurementDetails> {
+  const latest = new Map<string, BenchmarkRecord>();
+  const successful = new Map<string, BenchmarkRecord>();
+  for (const record of records) {
+    if (!knownRecord(record) || (fingerprint !== undefined && record.fingerprint !== fingerprint)) {
+      continue;
+    }
+    const key = `${record.engine}|${record.model}|${record.device ?? ''}`;
+    latest.set(key, record);
+    if (record.status === 'ok') successful.set(key, record);
+  }
+  return new Map(
+    [...latest].map(([key, record]) => {
+      const okRecord = successful.get(key) ?? null;
+      const latestFailure = record.status === 'failed' ? record : null;
+      const stamp =
+        fingerprint === undefined || okRecord === null
+          ? undefined
+          : stamps(okRecord.engine, okRecord.model);
+      return [
+        key,
+        {
+          record: okRecord,
+          view: {
+            ok: okRecord === null ? null : measured(okRecord, stamp, fingerprint === undefined),
+            failed:
+              latestFailure === null
+                ? null
+                : {
+                    error: latestFailure.error ?? 'benchmark failed',
+                    at: latestFailure.measuredAt,
+                  },
+          },
+        },
+      ];
+    }),
+  );
+}
+
+/** Measurements keyed by `${engine}|${model}|${device ?? ''}` for the selector. */
+export function measurementsFor(
+  records: readonly BenchmarkRecord[],
+  fingerprint: string | undefined,
+  stamps: StampLookup,
+): Measurements {
+  return new Map(
+    [...measurementDetailsFor(records, fingerprint, stamps)].map(([key, details]) => [
+      key,
+      details.view,
+    ]),
+  );
+}
+
+function knownRecord(record: BenchmarkRecord): boolean {
+  if (record.benchVersion !== BENCH_VERSION) return false;
+  const model = catalogModel(record.model, record.engine as EngineId);
+  return model !== undefined && record.family === familyId(model);
+}
+
+function measured(
+  record: BenchmarkRecord,
+  stamp: RuntimeStamp | undefined,
+  fingerprintUnknown: boolean,
+): Measured | null {
+  const typical = record.sizes.find((size) => size.targetTokens === TYPICAL_TOKENS);
+  if (typical === undefined) return null;
+  const long = record.sizes.find((size) => size.targetTokens === LONG_TOKENS);
+  const stale = staleReason(record, stamp, fingerprintUnknown);
+  return {
+    typical: { p50Ms: typical.p50Ms, p95Ms: typical.p95Ms },
+    long: long === undefined ? null : { p50Ms: long.p50Ms, p95Ms: long.p95Ms },
+    runs: record.runs,
+    measuredAt: record.measuredAt,
+    freshness: stale === undefined ? 'fresh' : stale === 'unknown' ? 'unknown' : 'stale',
+    staleReason: stale !== undefined && stale !== 'unknown' ? stale : null,
+    provisional: record.runs < 3,
+  };
+}
+
+function staleReason(
+  record: BenchmarkRecord,
+  stamp: RuntimeStamp | undefined,
+  fingerprintUnknown: boolean,
+): string | undefined {
+  if (fingerprintUnknown || stamp === undefined) return 'unknown';
+  if (record.runtime !== null && stamp.runtime !== null && record.runtime !== stamp.runtime) {
+    return `${record.runtime} → ${stamp.runtime}`;
+  }
+  if (record.modelStamp !== null && record.modelStamp !== stamp.model) {
+    return 'model files changed';
+  }
+  return undefined;
 }
 
 function readRecords(file: string, warn: (message: string) => void): BenchmarkRecord[] {
@@ -97,7 +206,12 @@ function isMissing(error: unknown): boolean {
 }
 
 function isStoreFile(value: unknown): value is { version: number; records: BenchmarkRecord[] } {
-  if (typeof value !== 'object' || value === null || !('version' in value) || !('records' in value)) {
+  if (
+    typeof value !== 'object' ||
+    value === null ||
+    !('version' in value) ||
+    !('records' in value)
+  ) {
     return false;
   }
   return (
@@ -110,12 +224,18 @@ function isStoreFile(value: unknown): value is { version: number; records: Bench
 function isBenchmarkRecord(value: unknown): value is BenchmarkRecord {
   if (typeof value !== 'object' || value === null) return false;
   return (
-    'jobId' in value && typeof value.jobId === 'string' &&
-    'engine' in value && typeof value.engine === 'string' &&
-    'model' in value && typeof value.model === 'string' &&
-    'status' in value && (value.status === 'ok' || value.status === 'failed') &&
-    'fingerprint' in value && typeof value.fingerprint === 'string' &&
-    'sizes' in value && Array.isArray(value.sizes)
+    'jobId' in value &&
+    typeof value.jobId === 'string' &&
+    'engine' in value &&
+    typeof value.engine === 'string' &&
+    'model' in value &&
+    typeof value.model === 'string' &&
+    'status' in value &&
+    (value.status === 'ok' || value.status === 'failed') &&
+    'fingerprint' in value &&
+    typeof value.fingerprint === 'string' &&
+    'sizes' in value &&
+    Array.isArray(value.sizes)
   );
 }
 

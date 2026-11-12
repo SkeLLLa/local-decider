@@ -9,6 +9,13 @@ import { totalmem } from 'node:os';
 import { join } from 'node:path';
 
 import { authoringPrompt } from './authoring.ts';
+import {
+  JsonBenchmarkStore,
+  measurementDetailsFor,
+  measurementsFor,
+  type BenchmarkStore,
+  type MeasurementDetails,
+} from './benchmark-store.ts';
 import { CatalogStatus, type Validation } from './catalog-status.ts';
 import type { ConfigEdit, ConfigStore } from './config-file.ts';
 import {
@@ -37,8 +44,11 @@ import type {
   EngineDescriptor,
   HostInfo,
   ModelDescriptor,
+  RuntimeStamp,
 } from './engines/descriptor.ts';
+import { familyOf, familyLabel, formatOf } from './engines/families.ts';
 import { cachedFlmVersion, FLM_INSTALL_URL } from './engines/fastflowlm/status.ts';
+import { hardwareFingerprint } from './engines/fingerprint.ts';
 import {
   invalidateHostCapabilities,
   probeHostCapabilities,
@@ -62,6 +72,7 @@ import type { Engine } from './engines/types.ts';
 import { catalogModel, MEMORY_BUDGET, modelFits, modelMemoryGb } from './models.ts';
 import type { Paths } from './paths.ts';
 import { loadPolicies, policyDirs, scopeModes, type LoadedPolicy } from './policies.ts';
+import { StampCache, stampKey } from './stamp-cache.ts';
 import {
   checkPath,
   PATH_KEYS,
@@ -184,6 +195,66 @@ function persistedSelection(sel: EngineSelection): Record<string, string> {
   };
 }
 
+function presenceByEngine(
+  models: readonly ModelDescriptor[],
+  installed: ReadonlyMap<string, boolean>,
+): ReadonlyMap<string, boolean> {
+  return new Map(
+    models.map((model) => [`${model.engine}|${model.id}`, installed.get(model.id) ?? false]),
+  );
+}
+
+function modelFamily(model: ModelDescriptor): { id: string; label: string } | null {
+  const id = familyOf(model.id, model.engine);
+  return id === null ? null : { id, label: familyLabel(id) };
+}
+
+function stampKeys(candidates: readonly { engine: string; model: string }[]): string[] {
+  return [
+    ...new Set(
+      candidates.flatMap(({ engine, model }) =>
+        engineDescriptor(engine)?.runtimeStamp === undefined ||
+        catalogModel(model, engine as EngineId) === undefined
+          ? []
+          : [stampKey(engine, model)],
+      ),
+    ),
+  ];
+}
+
+function displayedMeasurements(
+  engine: string,
+  model: string,
+  details: ReadonlyMap<string, MeasurementDetails>,
+): Record<string, unknown>[] {
+  const prefix = `${engine}|${model}|`;
+  return [...details]
+    .filter(
+      ([key, entry]) => key.startsWith(prefix) && entry.record !== null && entry.view.ok !== null,
+    )
+    .map(([, entry]) => {
+      const record = entry.record!;
+      const measured = entry.view.ok!;
+      return {
+        device: record.device,
+        typical: measured.typical,
+        long: measured.long,
+        sizes: record.sizes.map(({ targetTokens, inputTokens, p50Ms, p95Ms }) => ({
+          targetTokens,
+          inputTokens,
+          p50Ms,
+          p95Ms,
+        })),
+        runs: measured.runs,
+        provisional: measured.provisional,
+        measuredAt: measured.measuredAt,
+        freshness: measured.freshness,
+        staleReason: measured.staleReason,
+        failed: entry.view.failed,
+      };
+    });
+}
+
 export function parseLifecycle(body: unknown): LifecycleOptions {
   const record = isRecord(body) ? body : {};
   const lifecycle = record['lifecycle'];
@@ -290,6 +361,8 @@ export interface EngineControlOptions {
   readonly capabilities?: (strandsDecider: string) => Promise<HostCapabilities>;
   /** Injected in tests: cooldown clock and backoff for automatic fallback. */
   readonly fallback?: FallbackOptions;
+  /** Injected in tests; production reads benchmarks.json once from the data directory. */
+  readonly benchmarkStore?: BenchmarkStore;
 }
 
 function lifecycleFrom(config: GatewayConfig): LifecycleOptions {
@@ -333,6 +406,8 @@ export class EngineControl {
   #generation = 0;
   readonly #fallback: FallbackPolicy;
   readonly #fallbackNow: () => number;
+  readonly #benchmarkStore: BenchmarkStore;
+  readonly #stamps: StampCache;
   /** Engines whose failure was already handled, so one failure backs off once. */
   readonly #reported = new WeakSet<ManagedEngine>();
   #booted = false;
@@ -377,6 +452,12 @@ export class EngineControl {
     this.#fallback = new FallbackPolicy(options.fallback);
     this.pathsEditable = options.pathsEditable ?? true;
     this.#tools = toolchain(config, paths, this.#env);
+    this.#benchmarkStore =
+      options.benchmarkStore ??
+      new JsonBenchmarkStore(join(paths.data, 'benchmarks.json'), (message) =>
+        console.warn(`local-decider: ${message}`),
+      );
+    this.#stamps = new StampCache((engine, model) => this.#resolveStamp(engine, model));
     this.#status = new CatalogStatus(this.#context());
     this.switchable =
       config.engine.type !== 'systemone-remote' &&
@@ -837,6 +918,12 @@ export class EngineControl {
     const life = this.#engine.lifecycle;
     const device = this.#deviceResolution();
     const memoryDevice = device?.resolved ?? this.#selected?.device;
+    const ranking = this.#recommendation(presenceByEngine(models, installed));
+    const details = measurementDetailsFor(
+      this.#benchmarkStore.records(),
+      this.#fingerprint(this.#capabilities),
+      (engine, model) => this.#stamps.get(engine, model),
+    );
     return {
       active: {
         engine: this.#engine.id,
@@ -852,6 +939,7 @@ export class EngineControl {
         state: health.state,
         detail: health.detail ?? null,
         selectionMode: this.#auto ? 'auto' : 'manual',
+        preferredFamily: this.#config.selection?.family ?? ranking.machine?.family ?? null,
         ...(this.#fallbackNote === null
           ? {}
           : {
@@ -884,8 +972,11 @@ export class EngineControl {
         installed: installed.get(m.id) ?? false,
         latencyHint: m.latencyHint,
         recommended: m.recommended === true,
+        family: modelFamily(m),
+        format: formatOf(m.quant),
+        measured: displayedMeasurements(m.engine, m.id, details),
       })),
-      recommendation: this.#recommendation(),
+      recommendation: ranking,
       downloads: this.#downloads.list(),
       paths: resolveAll(this.#config, this.#paths, this.#env, this.#host),
       pathsEditable: this.pathsEditable,
@@ -893,12 +984,16 @@ export class EngineControl {
   }
 
   /** Ranked candidates from cached capabilities; the first call kicks the probe and shows unknowns. */
-  #recommendation(): Ranking {
+  #recommendation(present?: ReadonlyMap<string, boolean>): Ranking {
     this.#refreshCapabilities();
-    return this.#rank(this.#capabilities, this.#auto ? null : this.#selected);
+    return this.#rank(this.#capabilities, this.#auto ? null : this.#selected, present);
   }
 
-  #rank(capabilities: HostCapabilities | undefined, explicit: EngineSelection | null): Ranking {
+  #rank(
+    capabilities: HostCapabilities | undefined,
+    explicit: EngineSelection | null,
+    present?: ReadonlyMap<string, boolean>,
+  ): Ranking {
     const installed = new Set<string>();
     if (this.#tools.strandsDecider !== undefined) {
       installed.add('strands-decider');
@@ -914,7 +1009,32 @@ export class EngineControl {
       engines: ENGINES,
       installed,
       explicit,
+      measurements: measurementsFor(
+        this.#benchmarkStore.records(),
+        this.#fingerprint(capabilities),
+        (engine, model) => this.#stamps.get(engine, model),
+      ),
+      ...(present === undefined ? {} : { present }),
+      preferredFamily: this.#config.selection?.family ?? null,
+      active:
+        this.#selected === null
+          ? null
+          : {
+              engine: this.#selected.engine,
+              model: this.#selected.model,
+              device: this.#selected.device,
+              resolvedDevice: this.#deviceResolution()?.resolved ?? null,
+            },
     });
+  }
+
+  async #rankWithFreshStamps(
+    capabilities: HostCapabilities | undefined,
+    explicit: EngineSelection | null,
+  ): Promise<Ranking> {
+    const before = this.#rank(capabilities, explicit);
+    await this.#stamps.refreshNow(stampKeys(before.candidates), 5000);
+    return this.#rank(capabilities, explicit);
   }
 
   /** Cached capabilities, probing once if needed; unknown (undefined) when the probe fails. */
@@ -1001,6 +1121,7 @@ export class EngineControl {
         label: engine.label,
         description: engine.description,
         tag: this.#tag(engine.id),
+        version: this.#engineVersion(engine.id),
         calibrated: engine.calibrated,
         capabilities: { validate: engine.validation !== undefined },
         installed: existing?.['installed'] ?? false,
@@ -1151,6 +1272,25 @@ export class EngineControl {
       return this.#config.engine;
     }
     return engineDefaults(id, undefined, this.#config.engines?.[id]);
+  }
+
+  #configuredModel(id: EngineId): string | undefined {
+    if (this.#selected?.engine === id) return this.#selected.model;
+    if (this.#config.engine.type === id) return this.#config.engine.model;
+    const model = this.#config.engines?.[id]?.model;
+    if (typeof model === 'string') return model;
+    const descriptor = engineDescriptor(id);
+    return (
+      descriptor?.models.find((entry) => entry.recommended === true)?.id ??
+      descriptor?.models[0]?.id
+    );
+  }
+
+  #engineVersion(id: EngineId): string | null {
+    const descriptor = engineDescriptor(id);
+    const model = this.#configuredModel(id);
+    if (descriptor?.runtimeStamp === undefined || model === undefined) return null;
+    return this.#stamps.get(id, model)?.runtime ?? null;
   }
 
   /** The llama-server the engine would spawn: engine `binary` override, else tools.llamaServer. */
@@ -1360,7 +1500,7 @@ export class EngineControl {
   async #moveToBest(): Promise<void> {
     this.#attempting = undefined;
     const capabilities = await this.#ensureCapabilities();
-    const ranking = this.#rank(capabilities, null);
+    const ranking = await this.#rankWithFreshStamps(capabilities, null);
     const models = ranking.candidates.flatMap(
       (c) => catalogModel(c.model, c.engine as EngineId) ?? [],
     );
@@ -1422,6 +1562,44 @@ export class EngineControl {
       return this.#installedOverride(models.map((model) => model.id));
     }
     return this.#status.installed(models);
+  }
+
+  #fingerprint(capabilities: HostCapabilities | undefined): string | undefined {
+    return hardwareFingerprint({ ...this.#host, totalMemoryBytes: this.#memory }, capabilities);
+  }
+
+  async #resolveStamp(engine: string, model: string): Promise<RuntimeStamp> {
+    const descriptor = engineDescriptor(engine);
+    const modelDescriptor = catalogModel(model, engine as EngineId);
+    if (descriptor === undefined || modelDescriptor === undefined) {
+      return { runtime: null, model: null };
+    }
+    const typed = descriptor as EngineDescriptor<EngineConfig>;
+    const resolve = typed.runtimeStamp;
+    if (resolve === undefined) return { runtime: null, model: null };
+    const id = engine as EngineId;
+    const config =
+      this.#config.engine.type === id
+        ? this.#config.engine
+        : engineDefaults(id, model, this.#config.engines?.[id]);
+    const tools =
+      config.type === 'llama-vulkan'
+        ? {
+            ...this.#tools,
+            llamaServer:
+              config.url === undefined ? effectiveLlamaBinary(config, this.#tools) : undefined,
+          }
+        : config.type === 'fastflowlm'
+          ? { ...this.#tools, flm: config.binary ?? this.#tools.flm }
+          : this.#tools;
+    const stamp = await resolve(modelDescriptor as ModelDescriptor<EngineConfig['type']>, {
+      ...this.#context(),
+      tools,
+    });
+    const attached =
+      (config.type === 'llama-vulkan' || config.type === 'strands-decider') &&
+      config.url !== undefined;
+    return attached ? { ...stamp, runtime: null } : stamp;
   }
 
   async #checkPathValue(key: PathKey, value: string): Promise<void> {

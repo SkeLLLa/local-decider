@@ -1,12 +1,28 @@
 import assert from 'node:assert/strict';
-import { existsSync, readFileSync, readdirSync } from 'node:fs';
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  readdirSync,
+  writeFileSync,
+} from 'node:fs';
 import { request } from 'node:http';
 import { connect } from 'node:net';
 import { join } from 'node:path';
 import { after, before, describe, it } from 'node:test';
 
+import { MemoryConfigStore } from '../src/config-file.ts';
+import { EngineControl } from '../src/engine-control.ts';
 import { startGateway, type Gateway } from '../src/runtime.ts';
-import { controlHeaders, FakeEngine, readLog, tempPaths, testConfig } from './helpers.ts';
+import {
+  controlHeaders,
+  FakeEngine,
+  NO_CAPABILITIES,
+  readLog,
+  tempPaths,
+  testConfig,
+} from './helpers.ts';
 
 async function json(res: Response): Promise<Record<string, unknown>> {
   return (await res.json()) as Record<string, unknown>;
@@ -637,6 +653,58 @@ describe('gateway auth', () => {
       assert.notEqual(bearerOnly.status, 401);
       const controlOnly = await fetch(route, { headers: controlHeaders(paths) });
       assert.equal(controlOnly.status, 401);
+    } finally {
+      await gw.close();
+    }
+  });
+});
+
+describe('engine status stamps', () => {
+  it('returns cached status without awaiting a blocked llama version probe', async () => {
+    const paths = tempPaths();
+    const bin = join(paths.data, 'bin');
+    mkdirSync(bin, { recursive: true });
+    const llama = join(bin, 'llama-server');
+    writeFileSync(llama, `#!${process.execPath}\nsetInterval(() => undefined, 1000)\n`);
+    chmodSync(llama, 0o755);
+    const env = {
+      PATH: bin,
+      FLM_MODEL_PATH: join(paths.data, 'flm-models'),
+      HF_HUB_CACHE: join(paths.data, 'hf-cache'),
+    };
+    const config = testConfig();
+    const store = new MemoryConfigStore(config);
+    const control = new EngineControl({
+      store,
+      paths,
+      env,
+      capabilities: async () => NO_CAPABILITIES,
+      installed: async (ids) => new Map(ids.map((id) => [id, false])),
+      create: () => new FakeEngine(),
+    });
+    const gw = await startGateway({ config, store, paths, env, engineControl: control });
+    try {
+      const started = performance.now();
+      const response = await fetch(`${gw.url}/v1/engines`, { headers: controlHeaders(paths) });
+      const elapsedMs = performance.now() - started;
+      assert.equal(response.status, 200);
+      assert.ok(elapsedMs < 500, `status took ${String(elapsedMs)} ms`);
+      const body = await json(response);
+      const engines = body['engines'] as { id: string; version?: string | null }[];
+      assert.equal('version' in (engines.find((entry) => entry.id === 'llama-vulkan') ?? {}), true);
+      const models = body['models'] as {
+        id: string;
+        engine: string;
+        family?: { id: string; label: string } | null;
+        format?: { short: string; label: string } | null;
+        measured?: unknown[];
+      }[];
+      const llamaModel = models.find(
+        (entry) => entry.engine === 'llama-vulkan' && entry.id === 'd3-mini-q4_k_m',
+      );
+      assert.deepEqual(llamaModel?.family, { id: 'vllm-sr/d3-mini', label: 'd3 mini' });
+      assert.deepEqual(llamaModel?.format, { short: 'Q4_K_M', label: '4-bit (Q4_K_M)' });
+      assert.deepEqual(llamaModel?.measured, []);
     } finally {
       await gw.close();
     }
