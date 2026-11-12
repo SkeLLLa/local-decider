@@ -1,6 +1,6 @@
 {
   "name": "@ziptie-soft/local-decider-agent-plugin",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "Claude Code and Codex plugin for local-decider: command guard, permission triage, routing hints and turn outcomes from a local decision model; fails open.",
   "keywords": [
     "ai-agents",
