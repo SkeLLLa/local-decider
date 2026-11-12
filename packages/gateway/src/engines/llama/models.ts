@@ -68,6 +68,9 @@ export const LLAMA_MODELS: readonly ModelDescriptor<'llama-vulkan'>[] = [
     recommended: true,
     quality: { decisionIndex: 50 },
     source: 'https://huggingface.co/ggml-org/vllm-d3-mini-GGUF',
+    // Verified from ggml-org/vllm-d3-mini-GGUF cardData.base_model, 2026-11-12.
+    baseModel: 'vllm-sr/d3-mini',
+    quant: 'Q4_K_M',
   },
   {
     id: 'd3-nano-q8_0',
@@ -78,6 +81,9 @@ export const LLAMA_MODELS: readonly ModelDescriptor<'llama-vulkan'>[] = [
     latencyHint: null,
     quality: { decisionIndex: 34.3 },
     source: 'https://huggingface.co/ggml-org/vllm-d3-nano-GGUF',
+    // Verified from ggml-org/vllm-d3-nano-GGUF cardData.base_model, 2026-11-12.
+    baseModel: 'vllm-sr/d3-nano',
+    quant: 'Q8_0',
   },
   {
     id: 'd3-lite-q8_0',
@@ -87,6 +93,9 @@ export const LLAMA_MODELS: readonly ModelDescriptor<'llama-vulkan'>[] = [
     memoryGb: 2,
     latencyHint: '~0.15–0.6 s (Radeon 880M Vulkan, measured here)',
     source: 'https://huggingface.co/ggml-org/vllm-d3-lite-GGUF',
+    // Verified from ggml-org/vllm-d3-lite-GGUF cardData.base_model, 2026-11-12.
+    baseModel: 'vllm-sr/d3-lite',
+    quant: 'Q8_0',
   },
   {
     id: 'd3-mini-q8_0',
@@ -96,6 +105,9 @@ export const LLAMA_MODELS: readonly ModelDescriptor<'llama-vulkan'>[] = [
     memoryGb: 6.5,
     latencyHint: null,
     source: 'https://huggingface.co/ggml-org/vllm-d3-mini-GGUF',
+    // Verified from ggml-org/vllm-d3-mini-GGUF cardData.base_model, 2026-11-12.
+    baseModel: 'vllm-sr/d3-mini',
+    quant: 'Q8_0',
   },
   {
     id: 'd3-flash-q4_k_m',
@@ -105,6 +117,9 @@ export const LLAMA_MODELS: readonly ModelDescriptor<'llama-vulkan'>[] = [
     memoryGb: 8,
     latencyHint: null,
     source: 'https://huggingface.co/ggml-org/vllm-d3-flash-GGUF',
+    // Verified from ggml-org/vllm-d3-flash-GGUF cardData.base_model, 2026-11-12.
+    baseModel: 'vllm-sr/d3-flash',
+    quant: 'Q4_K_M',
   },
 ];
 
