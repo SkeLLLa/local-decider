@@ -227,6 +227,112 @@ describe('suggestion', () => {
     });
   });
 
+  it('names Vulkan and suggests installing or switching to its calibrated engine', () => {
+    assert.equal(backendName('Vulkan'), 'GPU (Vulkan)');
+    const target = {
+      engine: 'llama-vulkan',
+      model: 'd3-mini-q4_k_m',
+      device: null,
+      reason: 'Vulkan GPU: available',
+      explicit: false,
+    };
+    const missing = rec({
+      recommended: target,
+      automatic: target,
+      candidates: [
+        cand({
+          engine: 'llama-vulkan',
+          model: target.model,
+          device: null,
+          backend: 'Vulkan',
+          ready: false,
+        }),
+        cand({ device: 'cpu', backend: 'CPU' }),
+      ],
+    });
+    assert.deepEqual(suggestionView(cpu, missing, NAMES), {
+      kind: 'install',
+      hint: 'GPU (Vulkan) is faster here but not installed.',
+      command: 'local-decider engine install --engine llama-vulkan --model d3-mini-q4_k_m',
+    });
+    const installed = rec({
+      recommended: target,
+      automatic: target,
+      candidates: [
+        cand({
+          engine: 'llama-vulkan',
+          model: target.model,
+          device: null,
+          backend: 'Vulkan',
+          ready: true,
+        }),
+        cand({ device: 'cpu', backend: 'CPU' }),
+      ],
+    });
+    assert.equal(suggestionView(cpu, installed, NAMES)?.kind, 'switch');
+  });
+
+  it('follows the CUDA, Vulkan, CPU recommendation order', () => {
+    const cudaTarget = {
+      engine: 'strands-decider',
+      model: 'm',
+      device: 'cuda',
+      reason: 'NVIDIA GPU',
+      explicit: false,
+    };
+    const cudaRec = rec({
+      recommended: cudaTarget,
+      automatic: cudaTarget,
+      candidates: [
+        cand({ device: 'cuda', backend: 'CUDA' }),
+        cand({ engine: 'llama-vulkan', device: null, backend: 'Vulkan' }),
+      ],
+    });
+    assert.equal(
+      suggestionView(
+        active({ device: 'cuda', resolvedDevice: 'cuda', backend: 'CUDA' }),
+        cudaRec,
+        NAMES,
+      ),
+      null,
+    );
+    const vulkanActive = active({
+      engine: 'llama-vulkan',
+      model: 'd3-mini-q4_k_m',
+      device: null,
+      backend: 'Vulkan',
+    });
+    const cudaPick = rec({
+      recommended: cudaTarget,
+      automatic: cudaTarget,
+      candidates: [cand({ device: 'cuda', backend: 'CUDA', ready: true })],
+    });
+    assert.equal(suggestionView(vulkanActive, cudaPick, NAMES)?.kind, 'switch');
+
+    const vulkanTarget = {
+      engine: 'llama-vulkan',
+      model: 'd3-mini-q4_k_m',
+      device: null,
+      reason: 'Vulkan GPU',
+      explicit: false,
+    };
+    const vulkanRec = rec({
+      recommended: vulkanTarget,
+      automatic: vulkanTarget,
+      candidates: [
+        cand({
+          engine: 'llama-vulkan',
+          model: vulkanTarget.model,
+          device: null,
+          backend: 'Vulkan',
+          ready: true,
+        }),
+        cand({ device: 'cpu', backend: 'CPU' }),
+      ],
+    });
+    assert.equal(suggestionView(vulkanActive, vulkanRec, NAMES), null);
+  });
+
   it('points to the install command when the pick is not installed', () => {
     const missing = rec({
       candidates: [cand({ ready: false }), cand({ device: 'cpu', backend: 'CPU' })],

@@ -162,6 +162,7 @@ export function parseFallback(value: unknown): Fallback | null {
 const BACKEND_NAMES: Record<string, string> = {
   NPU: 'AMD NPU',
   CUDA: 'NVIDIA GPU (CUDA)',
+  Vulkan: 'GPU (Vulkan)',
   MLX: 'Apple GPU (MLX)',
   MPS: 'Apple GPU (PyTorch MPS)',
   CPU: 'CPU',
@@ -183,6 +184,9 @@ const DEVICE_BACKENDS: Record<string, string> = {
 function backendOf(engine: string | null, device: string | null): string | null {
   if (engine === 'fastflowlm') {
     return 'NPU';
+  }
+  if (engine === 'llama-vulkan') {
+    return 'Vulkan';
   }
   return device === null ? null : (DEVICE_BACKENDS[device] ?? null);
 }
@@ -304,6 +308,9 @@ function installCommand(t: Target, backend: string | null): string {
       `local-decider engine install --engine fastflowlm --model ${t.model}`,
     ].join('\n');
   }
+  if (t.engine === 'llama-vulkan') {
+    return `local-decider engine install --engine llama-vulkan --model ${t.model}`;
+  }
   const flavor =
     backend === 'MLX' || backend === 'CUDA' ? ` --flavor ${backend.toLowerCase()}` : '';
   return `local-decider engine install${flavor}`;
@@ -312,7 +319,7 @@ function installCommand(t: Target, backend: string | null): string {
 /** FastFlowLM is installed by the user; local-decider never downloads it. */
 const FLM_INSTALL_URL = 'https://github.com/FastFlowLM/FastFlowLM';
 
-const LADDER = ['NPU', 'CUDA', 'MLX', 'MPS', 'CPU'];
+const LADDER = ['NPU', 'CUDA', 'Vulkan', 'MLX', 'MPS', 'CPU'];
 
 function fasterThan(better: string | null, worse: string | null): boolean {
   const a = better === null ? -1 : LADDER.indexOf(better);
