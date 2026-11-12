@@ -646,6 +646,13 @@ export class EngineControl {
     return { ok: error === null, error };
   }
 
+  /** Engine changes that would fight the job for the engine are refused while it runs. */
+  #guardBenchmark(): void {
+    if (this.#lease !== null) {
+      throw new EngineSwitchError(409, 'an engine benchmark is running; cancel it first');
+    }
+  }
+
   activeTag(): string {
     return this.#tag(this.#engine.id as EngineId);
   }
@@ -737,11 +744,13 @@ export class EngineControl {
 
   // fallow-ignore-next-line unused-class-member -- called through the CONTROL_ROUTES table
   async load(): Promise<void> {
+    this.#guardBenchmark();
     void this.#engine.load();
   }
 
   // fallow-ignore-next-line unused-class-member -- called through the CONTROL_ROUTES table
   async unload(): Promise<void> {
+    this.#guardBenchmark();
     await this.#engine.unload();
   }
 
@@ -855,6 +864,7 @@ export class EngineControl {
    */
   // fallow-ignore-next-line unused-class-member -- called through the settings-routes table
   async saveEngineConnection(connection: EngineConnection): Promise<EngineConnectionView> {
+    this.#guardBenchmark();
     // Where the gateway connects (and which env var it reads): not from a remote client.
     if (!this.pathsEditable) {
       throw new EngineSwitchError(
@@ -933,6 +943,7 @@ export class EngineControl {
   }
 
   setLifecycle(options: LifecycleOptions): LifecycleOptions {
+    this.#guardBenchmark();
     this.#engine.setLifecycle(options);
     this.#save([
       { path: ['lifecycle', 'mode'], value: options.lifecycle },
@@ -1024,6 +1035,7 @@ export class EngineControl {
   }
 
   async setPath(key: PathKey, value: string | null): Promise<PathEntry> {
+    this.#guardBenchmark();
     if (!this.pathsEditable) {
       throw new EngineSwitchError(403, 'tool paths can only be changed on a loopback gateway');
     }

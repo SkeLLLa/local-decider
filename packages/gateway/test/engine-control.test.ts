@@ -529,6 +529,54 @@ describe('EngineControl benchmark accounting', () => {
   });
 });
 
+const REFUSED = (error: unknown): boolean =>
+  error instanceof EngineSwitchError &&
+  error.status === 409 &&
+  error.message === 'an engine benchmark is running; cancel it first';
+
+const connection = {
+  engine: 'lmstudio',
+  url: 'http://127.0.0.1:1234/v1',
+  model: 'qwen',
+  tokenEnv: undefined,
+} as const;
+
+describe('EngineControl benchmark guards', () => {
+  it('refuses load, unload, lifecycle, paths and connection changes during a lease, and allows them after', async () => {
+    const { control } = setup();
+    const lease = control.beginBenchmark();
+    await assert.rejects(control.load(), REFUSED);
+    await assert.rejects(control.unload(), REFUSED);
+    assert.throws(
+      () => control.setLifecycle({ lifecycle: 'eager', idleUnloadMinutes: 30 }),
+      REFUSED,
+    );
+    await assert.rejects(control.setPath('tools.flm', null), REFUSED);
+    await assert.rejects(control.saveEngineConnection(connection), REFUSED);
+    assert.equal(control.settings.lifecycle.mode, 'lazy');
+
+    await control.endBenchmark(lease, { restore: false });
+    await control.load();
+    await control.unload();
+    assert.deepEqual(control.setLifecycle({ lifecycle: 'eager', idleUnloadMinutes: 30 }), {
+      lifecycle: 'eager',
+      idleUnloadMinutes: 30,
+    });
+    assert.equal((await control.setPath('tools.flm', null)).value, null);
+    assert.equal((await control.saveEngineConnection(connection)).model, 'qwen');
+  });
+
+  it('still allows downloads, validation, status and policy changes during a lease', async () => {
+    const { control } = setup();
+    const lease = control.beginBenchmark();
+    assert.throws(() => control.download('fastflowlm', E2B), /unknown fastflowlm model/);
+    assert.equal((await control.validate('fastflowlm')).ok, true);
+    assert.ok((await control.status())['active']);
+    control.setPolicyMode('routing', 'shadow');
+    await control.endBenchmark(lease, { restore: false });
+  });
+});
+
 describe('EngineControl switching', () => {
   it('reports starting while the previous engine is stopping', async () => {
     const { control, created } = setup();
