@@ -2,6 +2,8 @@
 
 Status: accepted (2026-11-10)
 
+Storage details are superseded in part by [ADR-0010](0010-sqlite-decision-store.md).
+
 ## Decision
 
 - A policy may name a harness input key as its precedent subject. Adapters normalize that subject;

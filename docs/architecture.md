@@ -20,7 +20,7 @@ flowchart LR
     DEC["Decider: redact, state, cache, rules, precedent"]
     POL["Policies (YAML) + config.yaml (live reload)"]
     Q["Engine queue (one at a time, by priority)"]
-    LOG[("Shadow log JSONL")]
+    LOG[("SQLite decision store")]
     ST["Stats: agreement, calibration, savings"]
   end
   subgraph Engines
@@ -46,7 +46,7 @@ flowchart LR
 | Piece | Path | What it does |
 |---|---|---|
 | Core | `packages/core` | `/v1/systemone` types and answer normalisation, policy schema and rules, redaction, truncation, gateway client |
-| Gateway | `packages/gateway` | HTTP service, engine supervisor, decider, shadow log, stats, MCP server, `local-decider` CLI, service units |
+| Gateway | `packages/gateway` | HTTP service, engine supervisor, decider, SQLite decision store, stats, MCP server, `local-decider` CLI, service units |
 | Hooks | `packages/hooks` → `plugins/local-decider/dist/local-decider-hook.mjs`, `hooks/local-decider-auto-mode.mjs` (built at release, published as `@ziptie-soft/local-decider-agent-plugin`) | One zero-dependency hook runner for Claude Code and Codex, with the deterministic guard, and the Claude Code auto-mode mod |
 | Paseo plugin | `packages/paseo-plugin` | Hooks, decision rows, settings and status screens; never runs a model in-process |
 | Policies | `policies/` | Default policies and eval fixtures |
@@ -59,7 +59,7 @@ sequenceDiagram
   participant A as Hook or plugin
   participant G as Gateway
   participant E as Engine
-  participant L as Shadow log
+  participant L as SQLite store
   H->>A: event (tool call, permission, turn end, new agent)
   opt Claude Code or Codex PreToolUse
     A->>A: deterministic guard, deny on a hit
@@ -156,7 +156,7 @@ flowchart LR
   S --> A["Agreement, Brier, reliability buckets"]
   S --> C["Calibration hints (advisory)"]
   S --> SV["Savings: potential (shadow), realized (act)"]
-  LOG -->|"rebuilt at start and on policy reload"| PR["Precedent store"]
+  LOG -->|"rebuilt at start and when precedent settings change"| PR["Precedent store"]
   PR --> R["Precedent rule in the next decision"]
 ```
 
@@ -166,8 +166,15 @@ flowchart LR
   calibration hints; every outcome remains in agreement and reliability stats. No state text is
   logged. They live in a SQLite database at `~/.local/share/local-decider/decider.db`, pruned
   after `logs.retainDays` (default 365; range 90–3650 days). It is hash-only, uses WAL for
-  concurrent reads, and has no encryption at rest. `local-decider logs backup` and `export`
-  provide SQLite backup and JSONL portability.
+  concurrent reads, stores hashes and structured decision metadata rather than state text, and
+  has no encryption at rest. `local-decider logs backup <file>` uses
+  `VACUUM INTO`; `local-decider logs export [--since YYYY-MM-DD] <dir>` writes JSONL portability
+  files. JSONL is not a live storage backend. Schema changes use `PRAGMA user_version` migrations.
+- **Statistics.** `GET /v1/stats?days=N` and `local-decider stats --days N` use a 30-day default;
+  `N` must be from 1 through `logs.retainDays`. The gateway computes statistics in a worker
+  thread using its own read-only SQLite connection. A 30-second timeout returns HTTP 503.
+- **Precedent.** Startup rebuilds only the largest `precedent.maxAgeDays` window configured by
+  the policies. A policy reload skips rebuilding when precedent settings are unchanged.
 - **Who reports.** Only the Paseo plugin reports outcomes and usage today. The Claude Code and
   Codex hooks cannot see the user's answer.
 - **Calibration hints.** For probability-based allow rules, `stats` may suggest a lower threshold
@@ -213,7 +220,7 @@ how to add an engine or a model, and the macOS notes
 | `POST /v1/systemone`, `POST /invocations` | Pass-through to the active engine (keys sorted, secrets redacted) |
 | `POST /v1/outcomes`, `POST /v1/usage` | Report what happened, and token usage, for a decision |
 | `GET /v1/calls/:id` | What each policy decided for a harness tool call (`call.id` of a decide request), its permission mode and the effective mode per scope; kept in memory for 10 minutes, 404 when unknown |
-| `GET /health`, `GET /ping`, `GET /v1/stats` | Engine state and latency; stats as JSON |
+| `GET /health`, `GET /ping`, `GET /v1/stats?days=N` | Engine state and latency; stats as JSON (30-day default, bounded by retention) |
 | `GET /models`, `GET /v1/engines`, `POST /v1/engine`, `/v1/engine/load`, `/unload`, `/lifecycle` | Model catalogue, engine status, switching and lifecycle |
 | `POST /v1/models/download`, `/v1/engines/validate`, `/v1/paths` | Downloads, `flm validate`, tool paths (loopback gateway only) |
 | `GET /v1/policies`, `POST /v1/policies/:id/mode`, `/variant`, `/thresholds`, `/v1/policies/reload` | Policy settings, written to `config.yaml` |

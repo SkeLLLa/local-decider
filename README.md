@@ -49,7 +49,7 @@ harness behaves as if they were not installed.
 ```mermaid
 flowchart LR
   H["Harness: Paseo, Claude Code, Codex"] -->|event| P["Plugin or hook (thin client)"]
-  P -->|"POST /v1/decide/:policy"| G["Gateway 127.0.0.1:8765: redact, policy, rules, shadow log"]
+  P -->|"POST /v1/decide/:policy"| G["Gateway 127.0.0.1:8765: redact, policy, rules, SQLite store"]
   G -->|"/v1/systemone"| E["Engine: strands-decider, FastFlowLM or remote"]
   E --> G
   G -->|"action, enforced"| P
@@ -82,7 +82,9 @@ See [docs/architecture.md](docs/architecture.md) for the full pipeline.
 - **Fails open.** A missing, slow or broken gateway changes nothing.
 - **Measure before you enforce.** In `shadow` mode every decision is logged with what it *would*
   have done. `local-decider stats` reports agreement, Brier score, calibration buckets, advisory
-  threshold hints and estimated savings. Switch a policy to `act` when the numbers look right.
+  threshold hints and estimated savings; `--days N` selects a window from 1 day through the
+  configured retention period (30 days by default). Switch a policy to `act` when the numbers
+  look right.
 - **Learns from your answers (Paseo).** Exact-match precedent: after three allows of the same
   request in the same project, and no deny, a lower threshold (p ≥ 0.6) applies. Any deny vetoes
   it.
@@ -125,7 +127,7 @@ Read [docs/security.md](docs/security.md) before you turn on `act`.
 
 Requirements:
 
-- Node >= 24 for the gateway (Node 20+ is enough for the Claude Code and Codex hooks).
+- Node >= 24.15 for the gateway (Node 20+ is enough for the Claude Code and Codex hooks).
 - [uv](https://docs.astral.sh/uv/) for the strands-decider engine.
 - Linux or macOS. Optional: an AMD Ryzen AI NPU (FastFlowLM, Linux), Apple Silicon (MLX) or CUDA.
 
@@ -302,13 +304,19 @@ highlighted in the chat row. In Claude Code and Codex it is logged only.
 
 ```sh
 local-decider policies eval permission policies/fixtures/permission.jsonl
-local-decider stats                          # agreement, Brier, calibration, savings
+local-decider stats --days 30               # agreement, Brier, calibration, savings
 local-decider policies mode permission act   # when the high-confidence buckets are accurate
 ```
 
 `policies eval` prints the expected action, the returned action and the selected answer's
 probability for each `{"input": {...}, "expect": "allow"}` line. It reports differences; it does
 not fail on them. See [docs/policies.md](docs/policies.md#testing-a-policy).
+
+The gateway requires Node >= 24.15 for its built-in SQLite decision store. Records live in
+`~/.local/share/local-decider/decider.db`; use `local-decider logs backup <file>` for a SQLite
+snapshot or `local-decider logs export [--since YYYY-MM-DD] <dir>` for daily JSONL export files.
+See [install and try it](docs/install.md#log-storage-and-portability) and
+[ADR-0010](docs/adr/0010-sqlite-decision-store.md) for details.
 
 ## Results
 

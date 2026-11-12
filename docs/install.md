@@ -26,7 +26,8 @@ flowchart TD
 
 ## 1. Gateway
 
-Requirements: Node >= 24, and [uv](https://docs.astral.sh/uv/) for the strands-decider engine.
+Requirements: Node >= 24.15 (for the built-in SQLite API), and
+[uv](https://docs.astral.sh/uv/) for the strands-decider engine.
 
 ```sh
 npm install --global @ziptie-soft/local-decider
@@ -166,10 +167,10 @@ local-decider gateway status
   foreground.
 - The engine loads lazily on the first decision (about 5 s on FastFlowLM, longer on CPU) and
   unloads after 15 idle minutes. Set `lifecycle: {mode: eager}` to keep it loaded.
-- Logs: `~/.local/share/local-decider/logs/` (`gateway.log`, `engine-<id>.log`,
-  `decisions-YYYY-MM-DD.jsonl`).
-- Decision logs are retained for 365 days by default. Set `logs.retainDays` to a value from 90
-  to 3650 to change this. Engine logs rotate at 10 MiB and retain one previous file.
+- Logs: `~/.local/share/local-decider/logs/` (`gateway.log`, `engine-<id>.log`). Decisions,
+  outcomes and usage are stored in `~/.local/share/local-decider/decider.db` and retained for 365
+  days by default. Set `logs.retainDays` to a value from 90 to 3650 to change this. Engine logs
+  rotate at 10 MiB and retain one previous file.
 - When upgrading from a release that logged unfiltered engine output, delete old engine logs:
   `~/.local/share/local-decider/logs/engine-*.log`.
 
@@ -207,11 +208,13 @@ Details: [Claude Code and Codex plugin README](../plugins/local-decider/README.m
 local-decider gateway status      # service active, gateway "status":"ok"
 local-decider decide turn-outcome lastMessage="All tests pass; the PR is open."
 local-decider stats
+local-decider stats --days 7
 ```
 
 - `decide` prints the answers, the action and `"enforced": false` (shadow).
-- `stats` shows one block per policy once a harness has sent decisions. Use a harness for a few
-  minutes and run it again.
+- `stats` shows one block per policy once a harness has sent decisions. It defaults to 30 days;
+  `--days N` accepts 1 through `logs.retainDays`. Use a harness for a few minutes and run it
+  again.
 
 In Paseo, a decision row appears in the chat after each agent turn. If nothing happens, check
 `local-decider gateway status` and `paseo plugin logs local-decider`.
@@ -248,7 +251,7 @@ validate edits.
 host: 127.0.0.1          # anything else requires LOCAL_DECIDER_TOKEN (>= 16 chars)
 port: 8765
 decisionTimeoutMs: 30000 # per decision, queue wait included
-logs: { store: jsonl, retainDays: 365 } # store: jsonl (default) | sqlite
+logs: { retainDays: 365 }
 engine:
   type: strands-decider  # or fastflowlm, or systemone-remote with url and tokenEnv
   model: StrandsAgents/strands-decider-2B-qwen3.5-v1-2610
@@ -278,8 +281,10 @@ See [policies.md](policies.md) for thresholds, variants and routing presets.
 ### Log storage and portability
 
 Decisions are stored in SQLite; the gateway creates `~/.local/share/local-decider/decider.db`
-(Node 24.15 or newer). The database and data directory use file modes 0600 and 0700. It is
-hash-only and does not encrypt data at rest.
+(Node 24.15 or newer). The database and data directory use file modes 0600 and 0700. A pid lock
+at `<run>/db.lock` ensures one gateway writer per data directory. It stores hashes and structured
+decision metadata, not prompt or subject text, and does not encrypt data at rest. Stats use a
+worker thread with its own read-only database handle.
 
 ```sh
 local-decider logs backup ~/local-decider-backup.db
@@ -288,7 +293,7 @@ local-decider logs export --since 2026-01-01 ~/local-decider-export
 ```
 
 `backup` writes a consistent SQLite snapshot. `export` writes daily `decisions-YYYY-MM-DD.jsonl`
-files.
+files; JSONL is only an export format. `logs import` is no longer available.
 
 ### Remote gateway
 
