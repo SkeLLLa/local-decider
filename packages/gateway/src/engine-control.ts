@@ -12,6 +12,7 @@ import { authoringPrompt } from './authoring.ts';
 import { buildInventory } from './benchmark-inventory.ts';
 import {
   BenchmarkError,
+  BenchmarkRunner,
   type BenchEngine,
   type BenchSelection,
   type BenchmarkHost,
@@ -478,6 +479,8 @@ function startupKey(config: GatewayConfig): string {
  * config.yaml is applied with `applyConfig`.
  */
 export class EngineControl implements BenchmarkHost {
+  /** Runs benchmark jobs on this control's engines; shares the store the ranking reads. */
+  readonly benchmark: BenchmarkRunner;
   readonly switchable: boolean;
   /** False in remote mode (LOCAL_DECIDER_TOKEN set): paths, engine connections, discovery and routing presets stay frozen, so a bearer cannot make the host run binaries or reach new URLs. Loopback writes are guarded by the control token (server.ts). */
   readonly pathsEditable: boolean;
@@ -559,6 +562,7 @@ export class EngineControl implements BenchmarkHost {
       (isOpenAILike(config.engine.type) || config.engine.url === undefined);
     this.#selected = this.switchable ? this.#initialSelection() : null;
     this.#engine = this.#build(this.#selected);
+    this.benchmark = new BenchmarkRunner({ host: this, store: this.#benchmarkStore });
   }
 
   get #config(): GatewayConfig {
@@ -1305,6 +1309,7 @@ export class EngineControl implements BenchmarkHost {
       detail: health.detail ?? null,
       selectionMode: this.#auto ? 'auto' : 'manual',
       preferredFamily: this.#config.selection?.family ?? ranking.machine?.family ?? null,
+      benchmark: this.benchmark.progress(),
       ...(this.#fallbackNote === null
         ? {}
         : {

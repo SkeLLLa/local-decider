@@ -1,3 +1,4 @@
+import type { SystemOneResponse } from '@ziptie-soft/local-decider-core';
 import assert from 'node:assert/strict';
 import {
   chmodSync,
@@ -16,6 +17,7 @@ import { stringify } from 'yaml';
 
 import {
   BenchmarkError,
+  parseBenchmarkRequest,
   type BenchSelection,
   type BenchmarkHost,
   type BenchmarkLease,
@@ -62,6 +64,9 @@ interface Flags {
   on: boolean;
   ready?: boolean;
   breakOnDecide?: boolean;
+  /** Answer decisions with a choice, once `gate` (when set) has settled. */
+  answers?: boolean;
+  gate?: Promise<void>;
 }
 
 class ModelEngine implements Engine {
@@ -86,7 +91,14 @@ class ModelEngine implements Engine {
     }
     return { state: this.#failing?.ready === true ? 'ready' : 'starting', model: this.model };
   }
-  async decide(): Promise<never> {
+  async decide(): Promise<SystemOneResponse> {
+    if (this.#failing?.answers === true) {
+      await this.#failing.gate;
+      return {
+        answers: { outcome: { type: 'choice', choice: 'done' } },
+        usage: { input_tokens: 5 },
+      } as unknown as SystemOneResponse;
+    }
     if (this.#failing?.breakOnDecide === true) {
       this.#failing.on = true;
     }
@@ -185,6 +197,8 @@ interface SetupOptions {
   /** While `on`, every engine reports `failed`; with `ready`, `ready` instead of `starting`. */
   readonly failing?: Flags;
   readonly preemptCapMs?: number;
+  /** Which models count as downloaded; defaults to all, or none with `installed: false`. */
+  readonly downloaded?: (id: string) => boolean;
 }
 
 const LINUX_HOST: HostInfo = {
@@ -235,7 +249,8 @@ function setup(options: SetupOptions = {}): Setup {
     capabilities: options.capabilities ?? stubCapabilities,
     ...(options.host === undefined ? {} : { host: options.host }),
     totalMemory: options.totalMemory ?? 1e12,
-    installed: async (ids) => new Map(ids.map((id) => [id, options.installed ?? true])),
+    installed: async (ids) =>
+      new Map(ids.map((id) => [id, options.downloaded?.(id) ?? options.installed ?? true])),
     ...(options.benchmarkStore === undefined ? {} : { benchmarkStore: options.benchmarkStore }),
     ...(options.preemptCapMs === undefined ? {} : { preemptCapMs: options.preemptCapMs }),
     create: (c) => {
@@ -924,6 +939,80 @@ describe('EngineControl benchmark host', () => {
     assert.match(fingerprint ?? '', /^[0-9a-f]{16}$/);
     await control.benchmarkInventory();
     assert.equal(control.fingerprint(), fingerprint);
+  });
+});
+
+describe('EngineControl benchmark job', () => {
+  it('measures the installed targets, stores them, restores the selection and releases decisions', async () => {
+    const gate = deferred<void>();
+    const flags: Flags = { on: false, ready: true, answers: true, gate: gate.promise };
+    const capabilities: HostCapabilities = {
+      ...NO_CAPABILITIES,
+      npu: { status: 'available', evidence: 'accel0: job test' },
+      vulkan: { status: 'available', evidence: 'Vulkan0: job test' },
+    };
+    const benchmarks = new MemoryBenchmarkStore();
+    const { control, decider } = setup({
+      host: LINUX_HOST,
+      capabilities: () => Promise.resolve(capabilities),
+      benchmarkStore: benchmarks,
+      llamaServer: true,
+      failing: flags,
+      downloaded: (id) => id === 'd3:lite' || id === 'd3-lite-q8_0',
+    });
+    const prior = control.current();
+    const configBefore = stringify(control.settings);
+    const activeOf = async (): Promise<{ benchmark: unknown }> =>
+      (await control.status())['active'] as { benchmark: unknown };
+    assert.equal((await activeOf()).benchmark, null);
+
+    const started = await control.benchmark.start(
+      parseBenchmarkRequest({ scope: 'installed', sizes: [256, 1024], runs: 3 }),
+    );
+    assert.equal(started.state, 'running');
+    assert.deepEqual(
+      started.targets.map((t) => `${t.engine}:${t.model}`),
+      ['fastflowlm:d3:lite', 'llama-vulkan:d3-lite-q8_0'],
+    );
+    assert.deepEqual((await activeOf()).benchmark, { completed: 0, total: 2 });
+    assert.equal(await isHeld(decider), true);
+
+    gate.resolve();
+    await control.benchmark.settled();
+    const view = await control.benchmark.view();
+    assert.equal(view.state, 'done');
+    assert.equal(view.completed, 2);
+    assert.equal(view.restoredOk, true);
+    assert.equal((await activeOf()).benchmark, null);
+
+    const records = benchmarks.records();
+    assert.deepEqual(
+      records.map((r) => [r.engine, r.model, r.status, r.runs]),
+      [
+        ['fastflowlm', 'd3:lite', 'ok', 3],
+        ['llama-vulkan', 'd3-lite-q8_0', 'ok', 3],
+      ],
+    );
+    assert.deepEqual(
+      records[0]?.sizes.map((s) => s.targetTokens),
+      [256, 1024],
+    );
+
+    await control.refreshStamps(['fastflowlm|d3:lite', 'llama-vulkan|d3-lite-q8_0'], 5000);
+    const models = (await control.status())['models'] as {
+      id: string;
+      measured: { runs: number; provisional: boolean }[];
+    }[];
+    for (const id of ['d3:lite', 'd3-lite-q8_0']) {
+      const measured = models.find((m) => m.id === id)?.measured ?? [];
+      assert.equal(measured.length, 1, `${id} shows its record`);
+      assert.equal(measured[0]?.runs, 3);
+      assert.equal(measured[0]?.provisional, false);
+    }
+
+    assert.deepEqual(control.current(), prior);
+    assert.equal(stringify(control.settings), configBefore);
+    assert.equal(await isHeld(decider), false);
   });
 });
 
