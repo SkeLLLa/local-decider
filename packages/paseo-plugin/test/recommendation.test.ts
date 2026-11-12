@@ -192,7 +192,7 @@ describe('current engine', () => {
       'Now using Strands Decider · Apple GPU (MLX). Falls back to the next engine if it fails.',
     );
     assert.equal(autoHint(null, NAMES), 'Falls back to the next engine if it fails.');
-    assert.match(USE_AUTO_HINT, /fastest engine this Mac supports/);
+    assert.match(USE_AUTO_HINT, /fastest engine this computer supports/);
     assert.equal(LEAVES_AUTO_HINT, 'Picking an engine turns off automatic selection.');
     assert.equal(AUTO_ENGINE, '__auto__');
   });
@@ -272,7 +272,7 @@ describe('suggestion', () => {
   });
 });
 
-describe('engines on this Mac', () => {
+describe('engines on this computer', () => {
   it('hides unsupported engines and absent hardware and explains the rest plainly', () => {
     const view = enginesView(rec(), NAMES);
     assert.equal(view?.summary, '3 ready');
@@ -300,7 +300,7 @@ describe('engines on this Mac', () => {
     );
     assert.deepEqual(
       view?.rows.map((r) => r.detail),
-      ['Not installed', 'Not detected on this Mac', 'Not enough memory'],
+      ['Not installed', 'Not detected on this computer', 'Not enough memory'],
     );
     assert.equal(view?.summary, '0 ready');
   });

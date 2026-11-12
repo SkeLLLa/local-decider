@@ -257,7 +257,7 @@ function EnginesCard({ view }: { view: EnginesView }): ReactNode {
   return (
     <SettingsCard>
       <SettingsAction
-        label="Engines on this Mac"
+        label="Engines on this computer"
         hint={view.summary}
         actionLabel={open ? 'Hide' : 'Show'}
         onPress={() => setOpen(!open)}
@@ -535,7 +535,7 @@ export function EngineSection({
   return (
     <SettingsSection
       title="Engine and model"
-      info="Automatic picks the fastest engine this Mac supports and switches to the next one if it fails. Manual keeps the engine you choose and never changes it on its own."
+      info="Automatic picks the fastest engine this computer supports and switches to the next one if it fails. Manual keeps the engine you choose and never changes it on its own."
     >
       {reachable ? (
         <EnginePicker theme={theme} catalog={data} />

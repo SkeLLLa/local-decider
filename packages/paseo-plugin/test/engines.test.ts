@@ -364,7 +364,10 @@ describe('engine selection helpers', () => {
   it('offers Automatic first only when the gateway reports its mode', () => {
     const catalog = parseEngineCatalog(BODY);
     const withAuto = engineOptions(catalog.engines, null, true);
-    assert.deepEqual(withAuto[0], { label: 'Automatic — best for this Mac', value: '__auto__' });
+    assert.deepEqual(withAuto[0], {
+      label: 'Automatic — best for this computer',
+      value: '__auto__',
+    });
     assert.equal(withAuto.length, engineOptions(catalog.engines).length + 1);
     assert.ok(engineOptions(catalog.engines, null, false).every((o) => o.value !== '__auto__'));
     assert.ok(engineOptions(catalog.engines).every((o) => o.value !== '__auto__'));

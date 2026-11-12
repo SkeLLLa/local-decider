@@ -273,7 +273,7 @@ export function runningView(active: ActiveInfo | null, names: Names): RunningVie
 
 /** The Engine select's value for automatic selection; never sent as an engine id. */
 export const AUTO_ENGINE = '__auto__';
-export const AUTO_OPTION_LABEL = 'Automatic — best for this Mac';
+export const AUTO_OPTION_LABEL = 'Automatic — best for this computer';
 
 /** Hint when Automatic is selected and the gateway already runs in automatic mode. */
 export function autoHint(active: ActiveInfo | null, names: Names): string {
@@ -284,7 +284,7 @@ export function autoHint(active: ActiveInfo | null, names: Names): string {
 
 /** Hint when Automatic is selected but the gateway is in manual mode. */
 export const USE_AUTO_HINT =
-  'Picks the fastest engine this Mac supports and falls back if it fails.';
+  'Picks the fastest engine this computer supports and falls back if it fails.';
 
 /** Hint on a specific engine while the gateway is in automatic mode. */
 export const LEAVES_AUTO_HINT = 'Picking an engine turns off automatic selection.';
@@ -410,7 +410,7 @@ export interface EnginesView {
 const HIDDEN: readonly (CandidateCode | null)[] = ['no-hardware', 'unsupported-platform'];
 
 const NOTE: Partial<Record<CandidateCode, string>> = {
-  'not-confirmed': 'Not detected on this Mac',
+  'not-confirmed': 'Not detected on this computer',
   'no-memory': 'Not enough memory',
   'uncalibrated': "Manual only · its confidence isn't calibrated for automatic use",
 };
@@ -434,7 +434,7 @@ function speedNote(c: RankedCandidate, firstReady: boolean, onlyOne: boolean): s
   return firstReady && !onlyOne ? ' · fastest' : '';
 }
 
-/** Engines that can run on this Mac, with a plain status each; null when there is no ranking. */
+/** Engines that can run on this computer, with a plain status each; null when there is no ranking. */
 export function enginesView(rec: Recommendation | null, names: Names): EnginesView | null {
   if (rec === null) {
     return null;
