@@ -2,6 +2,7 @@ import { z } from 'zod';
 
 import type { EngineContext, EngineDescriptor, ModelDescriptor } from './descriptor.ts';
 import { fastflowlmEngine } from './fastflowlm/index.ts';
+import { llamaVulkanEngine } from './llama/index.ts';
 import { lmStudioEngine } from './lmstudio/index.ts';
 import { openaiCompatibleEngine } from './openai/index.ts';
 import { remoteEngine } from './remote.ts';
@@ -12,6 +13,7 @@ export const ENGINES = [
   strandsEngine,
   remoteEngine,
   fastflowlmEngine,
+  llamaVulkanEngine,
   openaiCompatibleEngine,
   lmStudioEngine,
 ] as const;

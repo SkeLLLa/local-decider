@@ -10,6 +10,12 @@ import { engineDescriptor } from './engines/registry.ts';
 const FLAVORS: readonly InstallFlavor[] = ['cpu', 'mlx', 'cuda'];
 const FLM_HOST_REFUSAL =
   'fastflowlm runs on Linux x86_64 with an AMD XDNA2 NPU; on macOS use strands-decider (MLX) or openai-compatible';
+const LLAMA_HOST_REFUSAL =
+  'llama-vulkan runs on Linux x86_64 with a Vulkan GPU; on macOS use strands-decider (MLX)';
+const HOST_REFUSAL: Readonly<Record<string, string>> = {
+  'fastflowlm': FLM_HOST_REFUSAL,
+  'llama-vulkan': LLAMA_HOST_REFUSAL,
+};
 
 export class EngineInstallUsageError extends Error {
   override readonly name = 'EngineInstallUsageError';
@@ -98,6 +104,12 @@ export type InstallPlan =
       readonly model?: string;
       readonly noDownload: boolean;
       readonly reason?: string;
+    }
+  | {
+      readonly engine: 'llama-vulkan';
+      readonly model?: string;
+      readonly noDownload: boolean;
+      readonly reason?: string;
     };
 
 function refusal(engine: string): never {
@@ -137,8 +149,11 @@ function parseInstallArgs(argv: readonly string[]): InstallArgs {
   }
 }
 
-function supportedTarget(engine: string, host: HostInfo): 'strands-decider' | 'fastflowlm' {
-  if (engine !== 'strands-decider' && engine !== 'fastflowlm') {
+function supportedTarget(
+  engine: string,
+  host: HostInfo,
+): 'strands-decider' | 'fastflowlm' | 'llama-vulkan' {
+  if (engine !== 'strands-decider' && engine !== 'fastflowlm' && engine !== 'llama-vulkan') {
     return refusal(engine);
   }
   const descriptor = engineDescriptor(engine);
@@ -146,8 +161,9 @@ function supportedTarget(engine: string, host: HostInfo): 'strands-decider' | 'f
     return refusal(engine);
   }
   const support = descriptor.supports(host);
-  if (engine === 'fastflowlm' && (!support.ok || host.arch !== 'x64')) {
-    throw new EngineInstallUsageError(FLM_HOST_REFUSAL);
+  const hostRefusal = HOST_REFUSAL[engine];
+  if (hostRefusal !== undefined && (!support.ok || host.arch !== 'x64')) {
+    throw new EngineInstallUsageError(hostRefusal);
   }
   if (!support.ok) {
     throw new EngineInstallUsageError(`${engine} is not supported: ${support.reason}`);
@@ -176,7 +192,8 @@ function strandsPlan(
   };
 }
 
-function fastFlowPlan(
+function binaryPlan(
+  engine: 'fastflowlm' | 'llama-vulkan',
   values: InstallArgs,
   model: string | undefined,
   auto?: AutoTarget,
@@ -186,7 +203,7 @@ function fastFlowPlan(
   }
 
   return {
-    engine: 'fastflowlm',
+    engine,
     ...(model === undefined ? {} : { model }),
     noDownload: values['no-download'] === true,
     ...(auto === undefined ? {} : { reason: auto.reason }),
@@ -226,9 +243,9 @@ export function planInstall(
   const fromConfig =
     auto === undefined && engine === configuredEngine ? configuredModel : undefined;
   const model = values.model ?? fromConfig ?? picked?.model;
-  return engine === 'fastflowlm'
-    ? fastFlowPlan(values, model, picked)
-    : strandsPlan(values, host, model, picked);
+  return engine === 'strands-decider'
+    ? strandsPlan(values, host, model, picked)
+    : binaryPlan(engine, values, model, picked);
 }
 
 /**

@@ -84,6 +84,40 @@ describe('engine install planning', () => {
     );
   });
 
+  it('plans a llama Vulkan model download on Linux and rejects its flavor', () => {
+    assert.deepEqual(planInstall(['--engine', 'llama-vulkan'], linux, 'strands-decider'), {
+      engine: 'llama-vulkan',
+      noDownload: false,
+    });
+    assert.deepEqual(
+      planInstall(
+        ['--engine', 'llama-vulkan', '--model', 'd3-nano-q8_0'],
+        linux,
+        'strands-decider',
+      ),
+      {
+        engine: 'llama-vulkan',
+        model: 'd3-nano-q8_0',
+        noDownload: false,
+      },
+    );
+    assert.deepEqual(
+      planInstall(['--engine', 'llama-vulkan', '--no-download'], linux, 'strands-decider'),
+      {
+        engine: 'llama-vulkan',
+        noDownload: true,
+      },
+    );
+    assert.throws(
+      () => planInstall(['--engine', 'llama-vulkan', '--flavor', 'cpu'], linux, 'strands-decider'),
+      /--flavor is only valid/,
+    );
+    assert.throws(
+      () => planInstall(['--engine', 'llama-vulkan'], darwin, 'strands-decider'),
+      /llama-vulkan runs on Linux x86_64/,
+    );
+  });
+
   it('refuses FastFlowLM on Darwin and non-x64 Linux', () => {
     for (const host of [darwin, { ...linux, arch: 'arm64' as const }]) {
       assert.throws(
@@ -167,13 +201,17 @@ describe('automatic install planning', () => {
   const YES = { status: 'available', evidence: 'ok' } as const;
   const base: HostCapabilities = { npu: NO, nvidia: NO, apple: NO, vulkan: NO, probedAt: 0 };
 
-  function auto(host: HostInfo, caps: Partial<HostCapabilities> = {}): AutoInstall {
+  function auto(
+    host: HostInfo,
+    caps: Partial<HostCapabilities> = {},
+    installed: ReadonlySet<string> = new Set(),
+  ): AutoInstall {
     return {
       ranking: rankEngines({
         host,
         capabilities: { ...base, ...caps },
         engines: ENGINES,
-        installed: new Set(),
+        installed,
         explicit: null,
       }),
     };
@@ -206,6 +244,19 @@ describe('automatic install planning', () => {
     assert.equal(cuda.engine === 'strands-decider' && cuda.flavor, 'cuda');
     const cpu = planAuto([], linux, auto(linux));
     assert.equal(cpu.engine === 'strands-decider' && cpu.flavor, 'cpu');
+  });
+
+  it('keeps generic install on CPU without llama-server but honors an explicit llama request', () => {
+    const vulkan = auto(linux, { vulkan: YES });
+    assert.equal(planAuto([], linux, vulkan).engine, 'strands-decider');
+    const explicit = planAuto(['--engine', 'llama-vulkan'], linux, vulkan);
+    assert.equal(explicit.engine, 'llama-vulkan');
+    assert.equal(explicit.model, 'd3-mini-q4_k_m');
+    assert.equal(explicit.engine === 'llama-vulkan' && explicit.noDownload, false);
+    assert.equal(
+      planAuto([], linux, auto(linux, { vulkan: YES }, new Set(['llama-vulkan']))).engine,
+      'llama-vulkan',
+    );
   });
 
   it('lets CLI flags beat the ranking', () => {

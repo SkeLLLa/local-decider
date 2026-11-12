@@ -27,6 +27,7 @@ describe('engine registry', () => {
     assert.deepEqual(SELECTABLE_IDS, [
       'strands-decider',
       'fastflowlm',
+      'llama-vulkan',
       'openai-compatible',
       'lmstudio',
     ]);

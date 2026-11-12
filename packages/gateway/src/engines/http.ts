@@ -84,7 +84,11 @@ async function requestJson(
   }
   const text = await readLimited(res, options.maxBytes ?? MAX_RESPONSE_BYTES);
   if (!res.ok) {
-    throw new EngineError(`engine HTTP ${String(res.status)}: ${text.slice(0, 300)}`);
+    throw new EngineError(`engine HTTP ${String(res.status)}: ${text.slice(0, 300)}`, {
+      status: res.status,
+      path: new URL(url).pathname,
+      body: text.slice(0, 300),
+    });
   }
   try {
     return JSON.parse(text) as unknown;

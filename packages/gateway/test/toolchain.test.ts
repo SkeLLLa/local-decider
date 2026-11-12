@@ -82,11 +82,30 @@ describe('toolchain discovery', () => {
     const linuxKeys = resolveAll(config, paths, { PATH: '' }, LINUX_HOST).map(({ key }) => key);
     assert.deepEqual(linuxKeys, [
       'tools.flm',
+      'tools.llamaServer',
       'tools.strandsDecider',
       'tools.uv',
       'dirs.flmModels',
       'dirs.hfCache',
     ]);
+  });
+
+  it('finds llama-server on PATH and honors the tools.llamaServer override', () => {
+    const paths = tempPaths();
+    const config = parseConfig({});
+    const bin = join(paths.data, 'bin');
+    const system = executable(join(bin, 'llama-server'));
+    const found = resolveEntry('tools.llamaServer', config, paths, { PATH: bin });
+    assert.deepEqual([found.source, found.effective], ['path', system]);
+    const override = executable(join(paths.data, 'custom', 'llama-server'));
+    const configured = parseConfig({ tools: { llamaServer: override } });
+    assert.deepEqual(
+      [
+        resolveEntry('tools.llamaServer', configured, paths, { PATH: '' }).source,
+        toolchain(configured, paths, { PATH: '' }).llamaServer,
+      ],
+      ['config', override],
+    );
   });
 
   it('only accepts absolute paths to the expected tool or an existing directory', () => {
