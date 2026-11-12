@@ -6,9 +6,9 @@ import { describe, it } from 'node:test';
 import { setTimeout as sleep } from 'node:timers/promises';
 
 import { Decider, QUEUE_MAX, renderValue, UnknownPolicyError } from '../src/decider.ts';
+import type { LogStore } from '../src/log-store.ts';
 import { defaultPolicyDir, type LoadedPolicy } from '../src/policies.ts';
-import { ShadowLog } from '../src/shadow.ts';
-import { FakeEngine, tempPaths } from './helpers.ts';
+import { FakeEngine, tempLog } from './helpers.ts';
 
 function policies(mode: Mode, ttlSeconds = 0): Map<string, LoadedPolicy> {
   const source = join(defaultPolicyDir(), 'permission.yaml');
@@ -19,7 +19,7 @@ function policies(mode: Mode, ttlSeconds = 0): Map<string, LoadedPolicy> {
 interface Setup {
   readonly decider: Decider;
   readonly engine: FakeEngine;
-  readonly log: ShadowLog;
+  readonly log: LogStore;
 }
 
 function setup(
@@ -27,7 +27,7 @@ function setup(
   engine = new FakeEngine({ allow: 0.97, ask: 0.02, deny: 0.01 }),
   ttl = 0,
 ): Setup {
-  const log = new ShadowLog(tempPaths().logs);
+  const log = tempLog();
   const decider = new Decider({
     engine,
     policies: policies(mode, ttl),
@@ -140,7 +140,7 @@ describe('Decider', () => {
       await sleep(5000, undefined, { signal: s });
       throw new Error('unreachable');
     };
-    const log = new ShadowLog(tempPaths().logs);
+    const log = tempLog();
     const decider = new Decider({ engine, policies: policies('act'), log, decisionTimeoutMs: 50 });
     const res = await decider.decide('permission', req, signal());
     assert.equal(res.error, 'decision timed out');
@@ -288,7 +288,7 @@ function routingSetup(): Setup {
     loaded.set(policy.id, { policy, mode: policy.id === 'routing' ? 'act' : 'off', source });
   }
   const engine = new FakeEngine({ cheap: 0.9, standard: 0.05, premium: 0.05 });
-  const log = new ShadowLog(tempPaths().logs);
+  const log = tempLog();
   return {
     decider: new Decider({ engine, policies: loaded, log, decisionTimeoutMs: 2000 }),
     engine,

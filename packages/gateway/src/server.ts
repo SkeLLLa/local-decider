@@ -29,12 +29,12 @@ import {
   type EngineControl,
 } from './engine-control.ts';
 import { allModels } from './engines/registry.ts';
+import type { LogStore } from './log-store.ts';
 import { handleMcpHttp } from './mcp.ts';
 import { modelFits } from './models.ts';
 import { withConfiguredRoutes, withRoute } from './routing.ts';
 import type { Pricing } from './savings.ts';
 import { settingsHandler } from './settings-routes.ts';
-import type { LogStore } from './shadow.ts';
 import { computeStats } from './stats.ts';
 
 const MAX_BODY_BYTES = 256 * 1024;

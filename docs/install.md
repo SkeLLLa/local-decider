@@ -277,21 +277,18 @@ See [policies.md](policies.md) for thresholds, variants and routing presets.
 
 ### Log storage and portability
 
-JSONL remains the default. To opt in to SQLite, set `logs.store: sqlite`; the gateway creates
-`~/.local/share/local-decider/decider.db` and imports existing daily JSONL files once. The
-database and data directory use file modes 0600 and 0700. SQLite is hash-only like JSONL and does
-not encrypt data at rest.
+Decisions are stored in SQLite; the gateway creates `~/.local/share/local-decider/decider.db`
+(Node 24.15 or newer). The database and data directory use file modes 0600 and 0700. It is
+hash-only and does not encrypt data at rest.
 
 ```sh
 local-decider logs backup ~/local-decider-backup.db
 local-decider logs export ~/local-decider-export
 local-decider logs export --since 2026-01-01 ~/local-decider-export
-local-decider logs import ~/old-local-decider-logs
 ```
 
 `backup` writes a consistent SQLite snapshot. `export` writes daily `decisions-YYYY-MM-DD.jsonl`
-files. `import` is idempotent and leaves the source files in place. These commands require
-`logs.store: sqlite`.
+files.
 
 ### Remote gateway
 

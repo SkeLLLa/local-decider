@@ -17,8 +17,7 @@ import {
 } from '../src/engines/types.ts';
 import type { Paths } from '../src/paths.ts';
 import { loadPolicies, policyDirs } from '../src/policies.ts';
-import { ShadowLog } from '../src/shadow.ts';
-import { FakeEngine, NO_CAPABILITIES, tempPaths } from './helpers.ts';
+import { FakeEngine, NO_CAPABILITIES, tempLog, tempPaths } from './helpers.ts';
 
 const LINUX: HostInfo = { platform: 'linux', arch: 'x64', totalMemoryBytes: 64e9 };
 const NPU: HostCapabilities = {
@@ -155,7 +154,7 @@ function setup(raw: Record<string, unknown>, timeoutMs = 1000): Setup {
         { ...loaded, policy: { ...loaded.policy, cache: { ttlSeconds: 60 } } },
       ]),
     ),
-    log: new ShadowLog(paths.logs),
+    log: tempLog(),
     decisionTimeoutMs: timeoutMs,
   });
   control.bind(decider);

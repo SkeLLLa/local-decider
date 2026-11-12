@@ -10,8 +10,7 @@ import type { Engine, EngineHealth } from '../src/engines/types.ts';
 import type { Paths } from '../src/paths.ts';
 import { loadPolicies, policyDirs } from '../src/policies.ts';
 import { settingsHandler } from '../src/settings-routes.ts';
-import { ShadowLog } from '../src/shadow.ts';
-import { stubCapabilities, tempPaths } from './helpers.ts';
+import { stubCapabilities, tempLog, tempPaths } from './helpers.ts';
 
 class StubEngine implements Engine {
   readonly id: string;
@@ -73,7 +72,7 @@ function setup(options: Options = {}): Setup {
     new Decider({
       engine: control.engine,
       policies: loadPolicies(config, policyDirs(config, paths)),
-      log: new ShadowLog(paths.logs),
+      log: tempLog(),
       decisionTimeoutMs: 1000,
     }),
   );

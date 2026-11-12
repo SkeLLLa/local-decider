@@ -71,7 +71,7 @@ jobs:
       fail-fast: false
       matrix:
         # `node` is the label only: mise.toml pins the current Node and mise.node24.toml the previous
-        # major (engines.node >=24); both are in mise lockfiles, which `mise install --locked` needs.
+        # major (engines.node >=24.15); both are in mise lockfiles, which `mise install --locked` needs.
         # Linux covers both Node majors; macOS covers the current Node and Apple Silicon/MLX.
         include:
           - os: ubuntu-latest

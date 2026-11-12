@@ -5,15 +5,12 @@ import {
   type UsageRecord,
 } from '@ziptie-soft/local-decider-core';
 import assert from 'node:assert/strict';
-import { appendFileSync, mkdirSync, readFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { readFileSync } from 'node:fs';
 import { describe, it } from 'node:test';
 
 import type { ClassifierAgreement } from '../src/classifier-agreement.ts';
 import type { LoadedPolicy } from '../src/policies.ts';
-import { ShadowLog } from '../src/shadow.ts';
 import { computeStats, formatStats, type PolicyStats } from '../src/stats.ts';
-import { tempPaths } from './helpers.ts';
 
 function decision(
   id: string,
@@ -236,30 +233,6 @@ describe('savings', () => {
       waitP50Ms: 4000,
     });
     assert.equal(s?.savings, undefined);
-  });
-});
-
-describe('ShadowLog', () => {
-  it('appends daily JSONL and skips malformed lines when reading', () => {
-    const { logs } = tempPaths();
-    const log = new ShadowLog(logs);
-    assert.deepEqual(log.read(), []);
-    log.append(decision('a', 'allow', 0.9));
-    mkdirSync(logs, { recursive: true });
-    appendFileSync(join(logs, 'decisions-2026-11-10.jsonl'), 'garbage\n{"kind":"other"}\n\n');
-    assert.equal(log.read().length, 1);
-    assert.equal(log.dir, logs);
-  });
-
-  it('reads only the date window requested for precedent rebuilds', () => {
-    const { logs } = tempPaths();
-    const log = new ShadowLog(logs);
-    log.append({ ...decision('old', 'ask', 0.8), ts: '2026-10-01T00:00:00.000Z' });
-    log.append({ ...decision('recent', 'ask', 0.8), ts: '2026-11-09T00:00:00.000Z' });
-    assert.deepEqual(
-      log.readRecent(2, Date.parse('2026-11-10T00:00:00.000Z')).map((record) => record.decisionId),
-      ['recent'],
-    );
   });
 });
 

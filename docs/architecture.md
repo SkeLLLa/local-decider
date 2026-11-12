@@ -164,11 +164,10 @@ flowchart LR
   project and redacted subject), answers, action, model and latency. `outcome` and `usage`
   records join them by `decisionId`. Only token-verified outcomes update precedent and
   calibration hints; every outcome remains in agreement and reliability stats. No state text is
-  logged. `logs.store` selects daily JSONL files (the default) or an opt-in SQLite database at
-  `~/.local/share/local-decider/decider.db`. Both are pruned after `logs.retainDays` (default
-  365; range 90–3650 days). SQLite remains hash-only, uses WAL for concurrent reads, and has no
-  encryption at rest. `local-decider logs backup`, `export` and `import` provide SQLite backup
-  and JSONL portability.
+  logged. They live in a SQLite database at `~/.local/share/local-decider/decider.db`, pruned
+  after `logs.retainDays` (default 365; range 90–3650 days). It is hash-only, uses WAL for
+  concurrent reads, and has no encryption at rest. `local-decider logs backup` and `export`
+  provide SQLite backup and JSONL portability.
 - **Who reports.** Only the Paseo plugin reports outcomes and usage today. The Claude Code and
   Codex hooks cannot see the user's answer.
 - **Calibration hints.** For probability-based allow rules, `stats` may suggest a lower threshold

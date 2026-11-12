@@ -66,8 +66,8 @@ including this config path.
 
 ## Decision log storage
 
-The JSONL backend is the default. The opt-in SQLite backend stores the same hashes, answers,
-actions, outcome labels and numeric usage data. It stores no state, subject or prompt text. The
+Decisions are stored in SQLite as hashes, answers, actions, outcome labels and numeric usage
+data. It stores no state, subject or prompt text. The
 database is `~/.local/share/local-decider/decider.db`, mode 0600, in a mode 0700 data directory.
 SQLite does not encrypt data at rest; access is controlled by the operating system file
 permissions. WAL mode permits read-only stats and backup handles while the gateway writes. JSONL

@@ -4,7 +4,6 @@ import type {
   ShadowRecord,
   UsageRecord,
 } from '@ziptie-soft/local-decider-core';
-import { createHash } from 'node:crypto';
 import {
   chmodSync,
   closeSync,
@@ -16,20 +15,16 @@ import {
   lstatSync,
   openSync,
   readFileSync,
-  readdirSync,
   rmSync,
   unlinkSync,
   writeFileSync,
 } from 'node:fs';
 import { basename, dirname, join } from 'node:path';
 
+import type { LogStore } from './log-store.ts';
 import type { Paths } from './paths.ts';
-import { parseLogLine, ShadowLog, type LogStore } from './shadow.ts';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
-const JSONL_FILE = /^decisions-\d{4}-\d{2}-\d{2}\.jsonl$/;
-const SCHEMA_VERSION = '1';
-let fallbackWarned = false;
 
 type SqlValue = null | number | bigint | string | NodeJS.ArrayBufferView;
 type Row = Record<string, SqlValue>;
@@ -52,9 +47,11 @@ interface DatabaseOptions {
   readonly timeout?: number;
 }
 
+type DatabaseConstructor = new (path: string, options: DatabaseOptions) => Database;
+
 interface DatabaseModule {
-  readonly Database?: new (path: string, options: DatabaseOptions) => Database;
-  readonly DatabaseSync?: new (path: string, options: DatabaseOptions) => Database;
+  readonly Database?: DatabaseConstructor;
+  readonly DatabaseSync?: DatabaseConstructor;
 }
 
 interface Lock {
@@ -66,46 +63,37 @@ interface Lock {
 
 export interface OpenLogOptions {
   readonly readOnly?: boolean;
-  readonly warn?: (message: string) => void;
-  readonly autoImport?: boolean;
-  /** Tests can model a runtime where the built-in module cannot be loaded. */
-  readonly openSqlite?: typeof SqliteLog.open;
+  /** Writers hold this pid lock file so a second gateway cannot open the same database. */
+  readonly lockPath?: string;
 }
 
-/** SQLite JSONL-compatible backend. The directory is the legacy JSONL import/export directory. */
+/** The single durable store, backed by `node:sqlite`. */
 export class SqliteLog implements LogStore {
   readonly #database: Database;
-  readonly #dir: string;
   readonly #lock: Lock | undefined;
+  readonly #statements = new Map<string, Statement>();
   #closed = false;
 
-  constructor(database: Database, dir: string, lock?: Lock) {
+  constructor(database: Database, lock?: Lock) {
     this.#database = database;
-    this.#dir = dir;
     this.#lock = lock;
   }
 
-  static async open(
-    file: string,
-    dir: string,
-    options: { readonly readOnly?: boolean; readonly lockPath?: string } = {},
-  ): Promise<SqliteLog> {
+  /** Synchronous: throws a clear error when `node:sqlite` is unavailable. */
+  static open(file: string, options: OpenLogOptions = {}): SqliteLog {
     ensureSupportedNode();
-    const sqlite = await importSqlite();
-    const Db = sqlite.Database ?? sqlite.DatabaseSync;
-    if (Db === undefined) {
-      throw new SqliteUnavailableError('node:sqlite exports no Database constructor');
-    }
-    return openDatabase(Db, file, dir, options);
-  }
-
-  get dir(): string {
-    return this.#dir;
+    return openDatabase(loadDatabase(), file, options);
   }
 
   append(record: LogRecord): void {
     try {
-      this.#insert(record, false);
+      if (record.kind === 'decision') {
+        this.#insertDecision(record);
+      } else if (record.kind === 'outcome') {
+        this.#insertOutcome(record);
+      } else {
+        this.#insertUsage(record);
+      }
     } catch (error) {
       // A storage problem must not turn a decision into an enforcement failure.
       console.error(`sqlite log: ${errorMessage(error)}`);
@@ -124,18 +112,16 @@ export class SqliteLog implements LogStore {
   /** Small startup query for precedent: only the first verified outcome can teach a key. */
   readVerifiedPrecedent(maxAgeDays: number, now = Date.now()): LogRecord[] {
     const from = utcDateStart(now - maxAgeDays * DAY_MS);
-    const rows = this.#database
-      .prepare(
-        `SELECT d.*, o.seq AS outcome_seq, o.ts AS outcome_ts, o.outcome, o.source, o.verified
-         FROM decision d
-         LEFT JOIN outcome o ON o.seq = (
-           SELECT MIN(first.seq) FROM outcome first
-           WHERE first.decision_id = d.id AND first.verified = 1
-         )
-         WHERE d.action = 'ask' AND d.precedent_key IS NOT NULL AND d.ts >= ?
-         ORDER BY d.ts, d.id`,
-      )
-      .all(from);
+    const rows = this.#statement(
+      `SELECT d.*, o.seq AS outcome_seq, o.ts AS outcome_ts, o.outcome, o.source, o.verified
+       FROM decision d
+       LEFT JOIN outcome o ON o.seq = (
+         SELECT MIN(first.seq) FROM outcome first
+         WHERE first.decision_id = d.id AND first.verified = 1
+       )
+       WHERE d.action = 'ask' AND d.precedent_key IS NOT NULL AND d.ts >= ?
+       ORDER BY d.ts, d.id`,
+    ).all(from);
     return rows.flatMap((row) =>
       row['outcome_seq'] === null || row['outcome_seq'] === undefined
         ? [decisionRecord(row)]
@@ -145,19 +131,19 @@ export class SqliteLog implements LogStore {
 
   prune(retainDays: number, now = Date.now()): number {
     const cutoff = utcDateStart(now - retainDays * DAY_MS);
-    const removeUsage = this.#database.prepare(
+    const removeUsage = this.#statement(
       `DELETE FROM usage WHERE decision_id IN (SELECT id FROM decision WHERE ts < ?)
        OR (usage.ts < ? AND NOT EXISTS (
          SELECT 1 FROM decision d WHERE d.id = usage.decision_id
        ))`,
     );
-    const removeOutcomes = this.#database.prepare(
+    const removeOutcomes = this.#statement(
       `DELETE FROM outcome WHERE decision_id IN (SELECT id FROM decision WHERE ts < ?)
        OR (outcome.ts < ? AND NOT EXISTS (
          SELECT 1 FROM decision d WHERE d.id = outcome.decision_id
        ))`,
     );
-    const removeDecisions = this.#database.prepare('DELETE FROM decision WHERE ts < ?');
+    const removeDecisions = this.#statement('DELETE FROM decision WHERE ts < ?');
     this.#database.exec('BEGIN IMMEDIATE');
     try {
       removeUsage.run(cutoff, cutoff);
@@ -172,27 +158,7 @@ export class SqliteLog implements LogStore {
     }
   }
 
-  /** Import each distinct JSONL content once. The source files are left in place. */
-  importDirectory(source: string): number {
-    if (!existsSync(source)) {
-      return 0;
-    }
-    let imported = 0;
-    const files = readdirSync(source)
-      .filter((name) => JSONL_FILE.test(name))
-      .toSorted();
-    for (const name of files) {
-      const content = readFileSync(join(source, name));
-      const identity = createHash('sha256').update(content).digest('hex');
-      if (this.#isImported(identity)) {
-        continue;
-      }
-      imported += this.#importFile(content, name, identity);
-    }
-    return imported;
-  }
-
-  /** Export records into the established daily JSONL format. */
+  /** Export records as daily `decisions-YYYY-MM-DD.jsonl` files, the portability format. */
   exportDirectory(destination: string, since?: string): void {
     const records = this.read().filter((record) => since === undefined || record.ts >= since);
     const grouped = new Map<string, string[]>();
@@ -230,6 +196,7 @@ export class SqliteLog implements LogStore {
       return;
     }
     this.#closed = true;
+    this.#statements.clear();
     try {
       this.#database.close();
     } finally {
@@ -237,210 +204,121 @@ export class SqliteLog implements LogStore {
     }
   }
 
+  /** Each distinct SQL text is prepared once and reused. */
+  #statement(sql: string): Statement {
+    let statement = this.#statements.get(sql);
+    if (statement === undefined) {
+      statement = this.#database.prepare(sql);
+      this.#statements.set(sql, statement);
+    }
+    return statement;
+  }
+
   #readRows(from: number | undefined): LogRecord[] {
     const predicate = from === undefined ? '' : ' WHERE ts >= ?';
     const args = from === undefined ? [] : [from];
-    const decisions = this.#database
-      .prepare(`SELECT * FROM decision${predicate} ORDER BY ts`)
+    const decisions = this.#statement(`SELECT * FROM decision${predicate} ORDER BY ts`)
       .all(...args)
       .map(decisionRecord);
     // Stats folds outcomes in record order; seq preserves latest-appended semantics if clocks move.
-    const outcomes = this.#database
-      .prepare(`SELECT * FROM outcome${predicate} ORDER BY seq`)
+    const outcomes = this.#statement(`SELECT * FROM outcome${predicate} ORDER BY seq`)
       .all(...args)
       .map(outcomeRecord);
-    const usage = this.#database
-      .prepare(`SELECT * FROM usage${predicate} ORDER BY ts, seq`)
+    const usage = this.#statement(`SELECT * FROM usage${predicate} ORDER BY ts, seq`)
       .all(...args)
       .map(usageRecord);
     return [...decisions, ...outcomes, ...usage];
   }
 
-  #insert(record: LogRecord, ignore: boolean): void {
-    const conflict = ignore ? ' OR IGNORE' : '';
-    if (record.kind === 'decision') {
-      this.#insertDecision(record, conflict);
-    } else if (record.kind === 'outcome') {
-      if (ignore && this.#hasOutcome(record)) {
-        return;
-      }
-      this.#insertOutcome(record, conflict);
-    } else {
-      if (ignore && this.#hasUsage(record)) {
-        return;
-      }
-      this.#insertUsage(record, conflict);
-    }
-  }
-
-  #hasOutcome(record: OutcomeRecord): boolean {
-    return (
-      this.#database
-        .prepare(
-          'SELECT 1 AS present FROM outcome WHERE decision_id = ? AND ts = ? AND outcome = ? AND source = ?',
-        )
-        .get(record.decisionId, epoch(record.ts), record.outcome, record.source) !== undefined
-    );
-  }
-
-  #hasUsage(record: UsageRecord): boolean {
-    return (
-      this.#database
-        .prepare('SELECT 1 AS present FROM usage WHERE decision_id = ? AND ts = ? AND turn_id IS ?')
-        .get(record.decisionId, epoch(record.ts), nullable(record.turnId)) !== undefined
-    );
-  }
-
-  #insertDecision(record: ShadowRecord, conflict: string): void {
+  #insertDecision(record: ShadowRecord): void {
     const extras = record as ShadowRecord & {
       readonly templateKey?: string;
       readonly queueMs?: number;
       readonly engineMs?: number;
     };
-    this.#database
-      .prepare(
-        `INSERT${conflict} INTO decision (
-          id, ts, policy, variant, mode, scope, harness, session_id, call_id,
-          permission_mode, subagent, input_hash, precedent_key, template_key,
-          state_tokens, action, enforced, engine, model, latency_ms, queue_ms,
-          engine_ms, error, power, requested_model, routed_model, answers
-        ) VALUES (${Array.from({ length: 27 }, () => '?').join(', ')})`,
-      )
-      .run(
-        record.decisionId,
-        epoch(record.ts),
-        record.policy,
-        nullable(record.variant),
-        record.mode,
-        nullable(record.scope),
-        record.harness,
-        nullable(record.sessionId),
-        nullable(record.callId),
-        nullable(record.permissionMode),
-        nullableBoolean(record.subagent),
-        record.inputHash,
-        nullable(record.precedentKey),
-        nullable(extras.templateKey),
-        nullable(record.stateTokens),
-        record.action,
-        record.enforced ? 1 : 0,
-        record.engine,
-        record.model,
-        record.latencyMs,
-        nullable(extras.queueMs),
-        nullable(extras.engineMs),
-        nullable(record.error),
-        null,
-        nullable(record.requestedModel),
-        nullable(record.routedModel),
-        JSON.stringify(record.answers),
-      );
-  }
-
-  #insertOutcome(record: OutcomeRecord, conflict: string): void {
-    this.#database
-      .prepare(
-        `INSERT${conflict} INTO outcome (decision_id, ts, outcome, source, verified)
-         VALUES (?, ?, ?, ?, ?)`,
-      )
-      .run(
-        record.decisionId,
-        epoch(record.ts),
-        record.outcome,
-        record.source,
-        record.verified === true ? 1 : 0,
-      );
-  }
-
-  #insertUsage(record: UsageRecord, conflict: string): void {
-    this.#database
-      .prepare(
-        `INSERT${conflict} INTO usage (
-          decision_id, ts, turn_id, model, input_tokens, cached_input_tokens,
-          output_tokens, cost_usd
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-      )
-      .run(
-        record.decisionId,
-        epoch(record.ts),
-        nullable(record.turnId),
-        nullable(record.model),
-        record.inputTokens,
-        record.cachedInputTokens,
-        record.outputTokens,
-        nullable(record.costUsd),
-      );
-  }
-
-  #isImported(identity: string): boolean {
-    return (
-      this.#database
-        .prepare('SELECT 1 AS imported FROM meta WHERE key = ?')
-        .get(`import:sha256:${identity}`) !== undefined
+    this.#statement(
+      `INSERT INTO decision (
+        id, ts, policy, variant, mode, scope, harness, session_id, call_id,
+        permission_mode, subagent, input_hash, precedent_key, template_key,
+        state_tokens, action, enforced, engine, model, latency_ms, queue_ms,
+        engine_ms, error, power, requested_model, routed_model, answers
+      ) VALUES (${Array.from({ length: 27 }, () => '?').join(', ')})`,
+    ).run(
+      record.decisionId,
+      epoch(record.ts),
+      record.policy,
+      nullable(record.variant),
+      record.mode,
+      nullable(record.scope),
+      record.harness,
+      nullable(record.sessionId),
+      nullable(record.callId),
+      nullable(record.permissionMode),
+      nullableBoolean(record.subagent),
+      record.inputHash,
+      nullable(record.precedentKey),
+      nullable(extras.templateKey),
+      nullable(record.stateTokens),
+      record.action,
+      record.enforced ? 1 : 0,
+      record.engine,
+      record.model,
+      record.latencyMs,
+      nullable(extras.queueMs),
+      nullable(extras.engineMs),
+      nullable(record.error),
+      null,
+      nullable(record.requestedModel),
+      nullable(record.routedModel),
+      JSON.stringify(record.answers),
     );
   }
 
-  #importFile(content: Buffer, name: string, identity: string): number {
-    let count = 0;
-    const lines = content.toString('utf8').split('\n');
-    this.#database.exec('BEGIN IMMEDIATE');
-    try {
-      for (const line of lines) {
-        const record = parseLogLine(line);
-        if (record !== undefined) {
-          this.#insert(record, true);
-          count += 1;
-        }
-      }
-      this.#database
-        .prepare('INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)')
-        .run(`import:sha256:${identity}`, name);
-      this.#database.exec('COMMIT');
-      return count;
-    } catch (error) {
-      this.#database.exec('ROLLBACK');
-      throw error;
-    }
+  #insertOutcome(record: OutcomeRecord): void {
+    this.#statement(
+      `INSERT INTO outcome (decision_id, ts, outcome, source, verified)
+       VALUES (?, ?, ?, ?, ?)`,
+    ).run(
+      record.decisionId,
+      epoch(record.ts),
+      record.outcome,
+      record.source,
+      record.verified === true ? 1 : 0,
+    );
+  }
+
+  #insertUsage(record: UsageRecord): void {
+    this.#statement(
+      `INSERT INTO usage (
+        decision_id, ts, turn_id, model, input_tokens, cached_input_tokens,
+        output_tokens, cost_usd
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      record.decisionId,
+      epoch(record.ts),
+      nullable(record.turnId),
+      nullable(record.model),
+      record.inputTokens,
+      record.cachedInputTokens,
+      record.outputTokens,
+      nullable(record.costUsd),
+    );
   }
 }
 
-export class SqliteUnavailableError extends Error {}
-
-/** Select the configured backend and import existing JSONL once when SQLite is first selected. */
-export async function openLogStore(
+/** Open the store under the data directory; writers take the pid lock. */
+export function openLogStore(
   paths: Paths,
-  selection: 'jsonl' | 'sqlite',
-  options: OpenLogOptions = {},
-): Promise<LogStore> {
-  if (selection === 'jsonl') {
-    return new ShadowLog(paths.logs);
-  }
-  try {
-    const open =
-      options.openSqlite ?? ((file, dir, openOptions) => SqliteLog.open(file, dir, openOptions));
-    const log = await open(join(paths.data, 'decider.db'), paths.logs, {
-      ...(options.readOnly === undefined ? {} : { readOnly: options.readOnly }),
-      ...(options.readOnly === true ? {} : { lockPath: join(paths.run, 'db.lock') }),
-    });
-    if (options.autoImport !== false && options.readOnly !== true) {
-      log.importDirectory(paths.logs);
-    }
-    return log;
-  } catch (error) {
-    if (!(error instanceof SqliteUnavailableError)) {
-      throw error;
-    }
-    warnFallback(options.warn, error.message);
-    return new ShadowLog(paths.logs);
-  }
+  options: { readonly readOnly?: boolean } = {},
+): SqliteLog {
+  const readOnly = options.readOnly === true;
+  return SqliteLog.open(join(paths.data, 'decider.db'), {
+    readOnly,
+    ...(readOnly ? {} : { lockPath: join(paths.run, 'db.lock') }),
+  });
 }
 
-function openDatabase(
-  Db: new (path: string, options: DatabaseOptions) => Database,
-  file: string,
-  dir: string,
-  options: { readonly readOnly?: boolean; readonly lockPath?: string },
-): SqliteLog {
+function openDatabase(Db: DatabaseConstructor, file: string, options: OpenLogOptions): SqliteLog {
   const readOnly = options.readOnly === true;
   let lock: Lock | undefined;
   let database: Database | undefined;
@@ -460,7 +338,7 @@ function openDatabase(
       configureDatabase(database);
       chmodSync(file, 0o600);
     }
-    return new SqliteLog(database, dir, lock);
+    return new SqliteLog(database, lock);
   } catch (error) {
     try {
       database?.close();
@@ -473,28 +351,39 @@ function openDatabase(
 }
 
 function configureDatabase(database: Database): void {
-  const previousAutoVacuum = Number(
-    database.prepare('PRAGMA auto_vacuum').get()?.['auto_vacuum'] ?? 0,
-  );
-  const hadTables =
-    database
-      .prepare("SELECT 1 AS present FROM sqlite_schema WHERE type = 'table' LIMIT 1")
-      .get() !== undefined;
+  // auto_vacuum only takes effect before the first table exists.
   database.exec('PRAGMA auto_vacuum=INCREMENTAL');
-  if (hadTables && previousAutoVacuum !== 2) {
-    database.exec('VACUUM');
-  }
   database.exec('PRAGMA journal_mode=WAL');
   database.exec('PRAGMA synchronous=NORMAL');
   database.exec('PRAGMA busy_timeout=2000');
-  database.exec(SCHEMA_SQL);
-  database
-    .prepare('INSERT OR IGNORE INTO meta (key, value) VALUES (?, ?)')
-    .run('schema_version', SCHEMA_VERSION);
+  migrate(database);
 }
 
-const SCHEMA_SQL = `
-CREATE TABLE IF NOT EXISTS decision(
+/** Apply pending steps from `PRAGMA user_version`; each step and its version bump is atomic. */
+function migrate(database: Database): void {
+  const current = Number(database.prepare('PRAGMA user_version').get()?.['user_version'] ?? 0);
+  if (current > MIGRATIONS.length) {
+    throw new Error(
+      `SQLite log schema version ${String(current)} is newer than this build supports (${String(MIGRATIONS.length)})`,
+    );
+  }
+  for (let version = current; version < MIGRATIONS.length; version += 1) {
+    database.exec('BEGIN IMMEDIATE');
+    try {
+      database.exec(MIGRATIONS[version] as string);
+      database.exec(`PRAGMA user_version = ${String(version + 1)}`);
+      database.exec('COMMIT');
+    } catch (error) {
+      database.exec('ROLLBACK');
+      throw error;
+    }
+  }
+}
+
+/** Append only: step N takes a database from `user_version` N to N + 1. */
+const MIGRATIONS: readonly string[] = [
+  `
+CREATE TABLE decision(
   id TEXT PRIMARY KEY, ts INTEGER NOT NULL, policy TEXT NOT NULL, variant TEXT,
   mode TEXT NOT NULL, scope TEXT, harness TEXT NOT NULL, session_id TEXT, call_id TEXT,
   permission_mode TEXT, subagent INTEGER, input_hash TEXT NOT NULL,
@@ -502,32 +391,36 @@ CREATE TABLE IF NOT EXISTS decision(
   action TEXT NOT NULL, enforced INTEGER NOT NULL, engine TEXT, model TEXT,
   latency_ms INTEGER, queue_ms INTEGER, engine_ms INTEGER, error TEXT, power TEXT,
   requested_model TEXT, routed_model TEXT, answers TEXT NOT NULL) STRICT;
-CREATE INDEX IF NOT EXISTS decision_policy_ts ON decision(policy, ts);
-CREATE INDEX IF NOT EXISTS decision_scope_ts ON decision(scope, ts) WHERE scope IS NOT NULL;
-CREATE INDEX IF NOT EXISTS decision_prec ON decision(precedent_key, ts)
+CREATE INDEX decision_ts ON decision(ts);
+CREATE INDEX decision_policy_ts ON decision(policy, ts);
+CREATE INDEX decision_scope_ts ON decision(scope, ts) WHERE scope IS NOT NULL;
+CREATE INDEX decision_prec ON decision(precedent_key, ts)
   WHERE action = 'ask' AND precedent_key IS NOT NULL;
-CREATE INDEX IF NOT EXISTS decision_tmpl ON decision(template_key, ts)
+CREATE INDEX decision_tmpl ON decision(template_key, ts)
   WHERE action = 'ask' AND template_key IS NOT NULL;
-CREATE TABLE IF NOT EXISTS outcome(
+CREATE TABLE outcome(
   seq INTEGER PRIMARY KEY, decision_id TEXT NOT NULL, ts INTEGER NOT NULL,
   outcome TEXT NOT NULL, source TEXT NOT NULL, verified INTEGER NOT NULL) STRICT;
-CREATE INDEX IF NOT EXISTS outcome_decision ON outcome(decision_id, seq);
-CREATE TABLE IF NOT EXISTS usage(
+CREATE INDEX outcome_ts ON outcome(ts);
+CREATE INDEX outcome_decision ON outcome(decision_id, seq);
+CREATE TABLE usage(
   seq INTEGER PRIMARY KEY, decision_id TEXT NOT NULL, ts INTEGER NOT NULL, turn_id TEXT,
   model TEXT, input_tokens INTEGER NOT NULL, cached_input_tokens INTEGER NOT NULL,
   output_tokens INTEGER NOT NULL, cost_usd REAL) STRICT;
-CREATE INDEX IF NOT EXISTS usage_decision ON usage(decision_id);
-CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY, value TEXT NOT NULL) STRICT;
-`;
+CREATE INDEX usage_ts ON usage(ts);
+CREATE INDEX usage_decision ON usage(decision_id);
+`,
+];
 
-async function importSqlite(): Promise<DatabaseModule> {
-  try {
-    return await import('node:sqlite');
-  } catch (error) {
-    throw new SqliteUnavailableError(`node:sqlite is unavailable: ${errorMessage(error)}`, {
-      cause: error,
-    });
+function loadDatabase(): DatabaseConstructor {
+  const sqlite = process.getBuiltinModule('node:sqlite') as DatabaseModule | undefined;
+  const Db = sqlite?.Database ?? sqlite?.DatabaseSync;
+  if (Db === undefined) {
+    throw new Error(
+      'node:sqlite is unavailable in this runtime; local-decider needs Node >= 24.15',
+    );
   }
+  return Db;
 }
 
 function ensureSupportedNode(): void {
@@ -535,18 +428,10 @@ function ensureSupportedNode(): void {
   const major = Number(majorText);
   const minor = Number(minorText);
   if (major < 24 || (major === 24 && minor < 15)) {
-    throw new SqliteUnavailableError(
-      `Node ${process.versions.node} is below the SQLite minimum 24.15`,
+    throw new Error(
+      `Node ${process.versions.node} is below the SQLite minimum 24.15; local-decider needs Node >= 24.15`,
     );
   }
-}
-
-function warnFallback(warn: ((message: string) => void) | undefined, reason: string): void {
-  if (fallbackWarned) {
-    return;
-  }
-  fallbackWarned = true;
-  (warn ?? console.warn)(`SQLite log unavailable; using JSONL shadow log: ${reason}`);
 }
 
 function createPrivateFile(file: string): void {

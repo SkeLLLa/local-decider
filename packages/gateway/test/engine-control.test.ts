@@ -31,8 +31,14 @@ import type { Engine, EngineHealth } from '../src/engines/types.ts';
 import type { Paths } from '../src/paths.ts';
 import { defaultPolicyDir, loadPolicies, policyDirs } from '../src/policies.ts';
 import { startGateway } from '../src/runtime.ts';
-import { ShadowLog } from '../src/shadow.ts';
-import { FakeEngine, NO_CAPABILITIES, stubCapabilities, tempPaths, testConfig } from './helpers.ts';
+import {
+  FakeEngine,
+  NO_CAPABILITIES,
+  stubCapabilities,
+  tempLog,
+  tempPaths,
+  testConfig,
+} from './helpers.ts';
 
 class ModelEngine implements Engine {
   readonly id: string;
@@ -186,7 +192,7 @@ function setup(options: SetupOptions = {}): Setup {
   const decider = new Decider({
     engine: control.engine,
     policies: loadPolicies(config, policyDirs(config, paths)),
-    log: new ShadowLog(paths.logs),
+    log: tempLog(),
     decisionTimeoutMs: 1000,
   });
   control.bind(decider);

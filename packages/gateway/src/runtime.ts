@@ -7,12 +7,12 @@ import { isLoopback, type GatewayConfig } from './config.ts';
 import { Decider } from './decider.ts';
 import { EngineControl } from './engine-control.ts';
 import type { Engine } from './engines/types.ts';
+import type { LogStore } from './log-store.ts';
 import type { Paths } from './paths.ts';
 import { loadPolicies, policyDirs, type LoadedPolicy } from './policies.ts';
 import { ensureReportToken } from './report-token.ts';
 import { writeSchemas } from './schemas.ts';
 import { createGatewayServer, type ServerOptions } from './server.ts';
-import type { LogStore } from './shadow.ts';
 import { openLogStore } from './sqlite-log.ts';
 
 export interface Gateway {
@@ -36,7 +36,7 @@ export interface StartOptions {
   /** Injected in tests: a prepared engine control (with fakes). */
   readonly engineControl?: EngineControl;
   readonly policies?: ReadonlyMap<string, LoadedPolicy>;
-  /** Injected storage; otherwise selected from `config.logs.store`. */
+  /** Injected storage; otherwise SQLite under the data directory. */
   readonly logStore?: LogStore;
 }
 
@@ -70,7 +70,7 @@ export async function startGateway(options: StartOptions): Promise<Gateway> {
   const engine = options.engine ?? (engineControl as EngineControl).engine;
   const reportToken = ensureReportToken(paths);
   const policies = options.policies ?? loadPolicies(config, policyDirs(config, paths));
-  const log = options.logStore ?? (await openLogStore(paths, config.logs.store));
+  const log = options.logStore ?? openLogStore(paths);
   pruneLogs(log, config.logs.retainDays, report);
   const decider = new Decider({
     engine,
@@ -135,9 +135,7 @@ function scheduleLogPruning(
 }
 
 function closeLogStore(log: LogStore): void {
-  if ('close' in log && typeof log.close === 'function') {
-    log.close();
-  }
+  log.close();
 }
 
 async function listenGatewayServer(

@@ -30,10 +30,10 @@ import { randomUUID } from 'node:crypto';
 
 import { CallStore, type CallDecision } from './call-store.ts';
 import type { Engine } from './engines/types.ts';
+import type { LogStore } from './log-store.ts';
 import type { LoadedPolicy } from './policies.ts';
 import { PrecedentStore } from './precedent.ts';
 import { LatencyWindow, SerialQueue, type Priority } from './queue.ts';
-import type { LogStore } from './shadow.ts';
 
 const CACHE_MAX = 500;
 /** Decisions waiting for the engine before new ones are refused (fail open, logged). */
@@ -250,13 +250,7 @@ export class Decider {
   }
 
   #recentPrecedentRecords(): LogRecord[] {
-    const log = this.#log as LogStore & {
-      readVerifiedPrecedent?: (days: number, now?: number) => LogRecord[];
-    };
-    return (
-      log.readVerifiedPrecedent?.(90, this.#now().getTime()) ??
-      this.#log.readRecent(90, this.#now().getTime())
-    );
+    return this.#log.readVerifiedPrecedent(90, this.#now().getTime());
   }
 
   /**
