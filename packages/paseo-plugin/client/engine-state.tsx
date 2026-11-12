@@ -42,6 +42,7 @@ function stateNote(status: Status | undefined, active: ActiveEngine | null): str
     model: status.model,
     engineTag: engineTag(status.engine, status.engineTag),
     lifecycle: active?.lifecycle ?? null,
+    benchmark: status.benchmark ?? active?.benchmark ?? null,
   });
 }
 

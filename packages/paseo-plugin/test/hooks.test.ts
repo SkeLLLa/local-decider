@@ -728,10 +728,23 @@ describe('rpc handlers', () => {
       detail: null,
       model: 'm',
       p50Ms: 5,
+      benchmark: null,
       gatewayUrl: 'http://127.0.0.1:8765',
       downStreak: 0,
       checkedAt: '1970-01-01T00:00:00.000Z',
     });
+  });
+
+  it('reads the benchmark progress from health, leniently', async () => {
+    const gw = fakeGateway(() => null);
+    let benchmark: unknown = { completed: 3, total: 6 };
+    gw.health = async () => ({ status: 'ok', benchmark });
+    const status = createStatusHandler(deps(settings(), gw), () => new Date(0));
+    assert.deepEqual((await status()).benchmark, { completed: 3, total: 6 });
+    benchmark = { completed: 'x' };
+    assert.equal((await status()).benchmark, null);
+    benchmark = null;
+    assert.equal((await status()).benchmark, null);
   });
 
   it('manual decide appends an unenforced row, and throws when the gateway is down', async () => {

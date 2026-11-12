@@ -124,9 +124,7 @@ function parseSizeRow(value: unknown): BenchmarkTarget['sizes'][number] | null {
 }
 
 /** The runtime of a job target or the current one: `engine`, `model`, `device`, `family`. */
-function placed(
-  value: unknown,
-): {
+function placed(value: unknown): {
   v: Record<string, unknown>;
   engine: string;
   model: string;
