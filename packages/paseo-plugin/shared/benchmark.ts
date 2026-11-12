@@ -4,6 +4,8 @@
  */
 import { z } from 'zod';
 
+import { fields, items, num, oneOf, runtimeOf, str } from './parse.ts';
+
 const text = z.string().nullable();
 const count = z.number().nullable();
 
@@ -101,44 +103,9 @@ export const benchmarkStartInput = z.object({
 
 export type BenchmarkView = z.output<typeof benchmarkSchema>;
 export type BenchmarkTarget = z.output<typeof targetSchema>;
-export type BenchmarkState = NonNullable<BenchmarkView['state']>;
 
 const MAX_ITEMS = 200;
 const MAX_SIZES = 12;
-const MAX_TEXT = 500;
-
-type Fields = Record<string, unknown>;
-
-function fields(value: unknown): Fields | null {
-  return typeof value === 'object' && value !== null && !Array.isArray(value)
-    ? (value as Fields)
-    : null;
-}
-
-function str(value: unknown): string | null {
-  return typeof value === 'string' && value !== '' ? value.slice(0, MAX_TEXT) : null;
-}
-
-function num(value: unknown): number | null {
-  return typeof value === 'number' && Number.isFinite(value) ? value : null;
-}
-
-function oneOf<T extends string>(value: unknown, allowed: readonly T[]): T | null {
-  return typeof value === 'string' && (allowed as readonly string[]).includes(value)
-    ? (value as T)
-    : null;
-}
-
-function items<T>(value: unknown, max: number, parse: (entry: unknown) => T | null): T[] {
-  const out: T[] = [];
-  for (const entry of Array.isArray(value) ? (value as unknown[]).slice(0, max) : []) {
-    const parsed = parse(entry);
-    if (parsed !== null) {
-      out.push(parsed);
-    }
-  }
-  return out;
-}
 
 function parseSizeRow(value: unknown): BenchmarkTarget['sizes'][number] | null {
   const v = fields(value);
@@ -156,18 +123,28 @@ function parseSizeRow(value: unknown): BenchmarkTarget['sizes'][number] | null {
   };
 }
 
+/** The runtime of a job target or the current one: `engine`, `model`, `device`, `family`. */
+function placed(
+  value: unknown,
+): {
+  v: Record<string, unknown>;
+  engine: string;
+  model: string;
+  device: string | null;
+  family: string | null;
+} | null {
+  const r = runtimeOf(value);
+  return r === null ? null : { ...r, family: str(r.v['family']) };
+}
+
 function parseTarget(value: unknown): BenchmarkTarget | null {
-  const v = fields(value);
-  const engine = str(v?.['engine']);
-  const model = str(v?.['model']);
-  if (v === null || engine === null || model === null) {
+  const p = placed(value);
+  if (p === null) {
     return null;
   }
+  const { v, ...where } = p;
   return {
-    engine,
-    model,
-    device: str(v['device']),
-    family: str(v['family']),
+    ...where,
     state: oneOf(v['state'], TARGET_STATES),
     loadMs: num(v['loadMs']),
     error: str(v['error']),
@@ -176,19 +153,12 @@ function parseTarget(value: unknown): BenchmarkTarget | null {
 }
 
 function parseCurrent(value: unknown): BenchmarkView['current'] {
-  const v = fields(value);
-  const engine = str(v?.['engine']);
-  const model = str(v?.['model']);
-  if (v === null || engine === null || model === null) {
+  const p = placed(value);
+  if (p === null) {
     return null;
   }
-  return {
-    engine,
-    model,
-    device: str(v['device']),
-    family: str(v['family']),
-    promptTokens: num(v['promptTokens']),
-  };
+  const { v, ...where } = p;
+  return { ...where, promptTokens: num(v['promptTokens']) };
 }
 
 function parseRestore(value: unknown): BenchmarkView['restore'] {

@@ -336,6 +336,27 @@ describe('GET /v1/engines recommend fields', () => {
       { targetTokens: 256, inputTokens: 301, p50Ms: 160, p95Ms: 184 },
     ]);
     assert.equal(m?.measured[0]?.freshness, 'fresh');
+  });
+
+  it('parses the §4.1 machine recommendation', () => {
+    const catalog = parseEngineCatalog({
+      active: {
+        engine: 'x',
+        preferredFamily: 'vllm-sr/d3-lite',
+        benchmark: { completed: 3, total: 6 },
+      },
+      engines: [{ id: 'llama-vulkan', version: 'llama.cpp b12318' }],
+      models: [
+        {
+          id: 'm',
+          engine: 'x',
+          family: { id: 'vllm-sr/d3-lite', label: 'd3 lite' },
+          format: { short: 'Q8_0', label: '8-bit (Q8_0)' },
+          measured: [MEASURED, 'junk'],
+        },
+      ],
+      recommendation: { candidates: [], machine: MACHINE },
+    });
     const machine = catalog.recommendation?.machine;
     assert.equal(machine?.familyLabel, 'd3 lite');
     assert.equal(machine?.reason, 'fastest-measured');
