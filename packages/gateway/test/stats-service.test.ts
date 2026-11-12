@@ -5,7 +5,7 @@ import { describe, it } from 'node:test';
 import { loadPolicies, policyDirs } from '../src/policies.ts';
 import { startGateway } from '../src/runtime.ts';
 import { openLogStore } from '../src/sqlite-log.ts';
-import { runStats } from '../src/stats-job.ts';
+import { runStats, runStatsFromFile } from '../src/stats-job.ts';
 import { StatsFailedError, StatsService, StatsTimeoutError } from '../src/stats-service.ts';
 import { FakeEngine, tempLog, tempPaths, testConfig } from './helpers.ts';
 
@@ -96,9 +96,42 @@ describe('StatsService', () => {
     await assert.rejects(service.compute({ days: 30 }), StatsTimeoutError);
   });
 
-  it('reports a failing worker generically', async () => {
+  it('reports a failing worker generically but keeps the open failure as detail', async () => {
     const service = new StatsService({ log: tempLog(), paths: tempPaths() });
+    await assert.rejects(service.compute({ days: 30 }), (error: unknown) => {
+      assert.ok(error instanceof StatsFailedError);
+      assert.equal(error.message, 'stats computation failed');
+      assert.match(error.detail ?? '', /does not exist/);
+      return true;
+    });
+  });
+
+  it('close terminates the active worker, fails queued runs and refuses new ones', async () => {
+    const service = new StatsService({
+      log: tempLog(),
+      paths: seeded(),
+      timeoutMs: 60_000,
+      workerFile: new URL('./fixtures/slow-worker.mjs', import.meta.url),
+    });
+    const active = service.compute({ days: 30 });
+    const queued = service.compute({ days: 90 });
+    const settled = [
+      assert.rejects(active, StatsFailedError),
+      assert.rejects(queued, StatsFailedError),
+    ];
+    service.close();
+    await Promise.all(settled);
     await assert.rejects(service.compute({ days: 30 }), StatsFailedError);
+  });
+});
+
+describe('runStatsFromFile', () => {
+  it('reads as empty stats when the database file does not exist yet', () => {
+    const paths = tempPaths();
+    const log = tempLog();
+    const job = { days: 30 };
+    assert.deepEqual(runStatsFromFile(paths, job), runStats(log, job));
+    log.close();
   });
 });
 

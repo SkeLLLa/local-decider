@@ -50,8 +50,7 @@ import {
   stopService,
   uninstallService,
 } from './service.ts';
-import { openLogStore } from './sqlite-log.ts';
-import { parseDays, runStats } from './stats-job.ts';
+import { parseDays, runStatsFromFile } from './stats-job.ts';
 import { formatStats } from './stats.ts';
 import { toolchain } from './toolchain.ts';
 
@@ -353,18 +352,13 @@ async function stats(ctx: Context): Promise<void> {
   if ('error' in window) {
     throw new SettingsUsageError(window.error);
   }
-  const log = openLogStore(ctx.paths, { readOnly: true });
-  try {
-    const result = runStats(log, {
-      days: window.days,
-      scope: values.scope as Scope | undefined,
-      pricing: ctx.config.pricing,
-      policies: loadPolicies(ctx.config, policyDirs(ctx.config, ctx.paths)),
-    });
-    console.log(values.json === true ? JSON.stringify(result, null, 2) : formatStats(result));
-  } finally {
-    log.close();
-  }
+  const result = runStatsFromFile(ctx.paths, {
+    days: window.days,
+    scope: values.scope as Scope | undefined,
+    pricing: ctx.config.pricing,
+    policies: loadPolicies(ctx.config, policyDirs(ctx.config, ctx.paths)),
+  });
+  console.log(values.json === true ? JSON.stringify(result, null, 2) : formatStats(result));
 }
 
 function checkPolicy(file: string): void {

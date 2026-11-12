@@ -121,6 +121,24 @@ describe('SqliteLog', () => {
     }
   });
 
+  it('skips a verified unverified-source outcome like live precedent does', () => {
+    const log = tempLog();
+    try {
+      const decision = makeShadowRecord('odd-source', {
+        precedentKey: 'sha256:odd',
+        ts: '2026-11-10T12:00:00.000Z',
+      });
+      log.append(decision);
+      log.append(outcome(decision.decisionId, { outcome: 'deny', source: 'unverified' }));
+      log.append(outcome(decision.decisionId, { outcome: 'allow', source: 'user' }));
+      const precedent = log.readVerifiedPrecedent(90, Date.parse('2026-11-11T00:00:00.000Z'));
+      const picked = precedent[1];
+      assert.equal(picked?.kind === 'outcome' && picked.source, 'user');
+    } finally {
+      log.close();
+    }
+  });
+
   it('keeps pending ask decisions available for a later verified outcome', () => {
     const log = tempLog();
     try {

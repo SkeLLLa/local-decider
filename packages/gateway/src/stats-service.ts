@@ -16,8 +16,11 @@ export class StatsTimeoutError extends Error {
 }
 
 export class StatsFailedError extends Error {
-  constructor() {
+  /** The underlying message, for the gateway log only; never sent to a client. */
+  readonly detail: string | undefined;
+  constructor(detail?: string) {
     super('stats computation failed');
+    this.detail = detail;
   }
 }
 
@@ -40,12 +43,23 @@ export class StatsService {
   readonly #options: StatsServiceOptions;
   readonly #shared = new Map<string, Promise<PolicyStats[]>>();
   #tail: Promise<unknown> = Promise.resolve();
+  #closed = false;
+  #abort: (() => void) | undefined;
 
   constructor(options: StatsServiceOptions) {
     this.#options = options;
   }
 
+  /** Stop the active worker and fail queued and in-flight runs; later `compute` calls reject. */
+  close(): void {
+    this.#closed = true;
+    this.#abort?.();
+  }
+
   compute(job: StatsJob): Promise<PolicyStats[]> {
+    if (this.#closed) {
+      return Promise.reject(new StatsFailedError('stats service closed'));
+    }
     const { paths } = this.#options;
     if (paths === undefined) {
       return Promise.resolve().then(() => runStats(this.#options.log, job));
@@ -63,6 +77,9 @@ export class StatsService {
   }
 
   #spawn(paths: Paths, job: StatsJob): Promise<PolicyStats[]> {
+    if (this.#closed) {
+      return Promise.reject(new StatsFailedError('stats service closed'));
+    }
     const timeoutMs = this.#options.timeoutMs ?? STATS_TIMEOUT_MS;
     const worker = new Worker(this.#options.workerFile ?? defaultWorkerFile(), {
       workerData: { ...job, paths },
@@ -75,14 +92,19 @@ export class StatsService {
       const finish = (error: Error | undefined, result?: PolicyStats[]): void => {
         clearTimeout(timer);
         void worker.terminate();
+        if (this.#abort === abort) {
+          this.#abort = undefined;
+        }
         if (error === undefined) {
           resolve(result as PolicyStats[]);
         } else {
           reject(error);
         }
       };
-      worker.once('message', (m: { ok: boolean; result?: PolicyStats[] }) =>
-        finish(m.ok ? undefined : new StatsFailedError(), m.result),
+      const abort = (): void => finish(new StatsFailedError('stats service closed'));
+      this.#abort = abort;
+      worker.once('message', (m: { ok: boolean; result?: PolicyStats[]; error?: string }) =>
+        finish(m.ok ? undefined : new StatsFailedError(m.error), m.result),
       );
       worker.once('error', () => finish(new StatsFailedError()));
       worker.once('exit', () => finish(new StatsFailedError()));

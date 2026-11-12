@@ -1,8 +1,12 @@
 import type { Scope } from '@ziptie-soft/local-decider-core';
+import { existsSync } from 'node:fs';
+import { join } from 'node:path';
 
 import type { LogStore } from './log-store.ts';
+import type { Paths } from './paths.ts';
 import type { LoadedPolicy } from './policies.ts';
 import type { Pricing } from './savings.ts';
+import { openLogStore } from './sqlite-log.ts';
 import { computeStats, type PolicyStats } from './stats.ts';
 
 /** Everything a stats computation needs; plain data, so it crosses a worker boundary. */
@@ -23,6 +27,19 @@ export function runStats(log: LogStore, job: StatsJob): PolicyStats[] {
     job.policies,
     job.scope === undefined ? {} : { scope: job.scope },
   );
+}
+
+/** CLI read: a fresh install has no database file yet, which reads as no records. */
+export function runStatsFromFile(paths: Paths, job: StatsJob): PolicyStats[] {
+  if (!existsSync(join(paths.data, 'decider.db'))) {
+    return runStats({ readRecent: () => [] } as unknown as LogStore, job);
+  }
+  const log = openLogStore(paths, { readOnly: true });
+  try {
+    return runStats(log, job);
+  } finally {
+    log.close();
+  }
 }
 
 /** `?days=` / `--days`: an integer from 1 to the retention window; absent means the default. */

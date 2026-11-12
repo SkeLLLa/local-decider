@@ -117,7 +117,7 @@ export class SqliteLog implements LogStore {
        FROM decision d
        LEFT JOIN outcome o ON o.seq = (
          SELECT MIN(first.seq) FROM outcome first
-         WHERE first.decision_id = d.id AND first.verified = 1
+         WHERE first.decision_id = d.id AND first.verified = 1 AND first.source <> 'unverified'
        )
        WHERE d.action = 'ask' AND d.precedent_key IS NOT NULL AND d.ts >= ?
        ORDER BY d.ts, d.id`,
@@ -145,17 +145,19 @@ export class SqliteLog implements LogStore {
     );
     const removeDecisions = this.#statement('DELETE FROM decision WHERE ts < ?');
     this.#database.exec('BEGIN IMMEDIATE');
+    let deleted: number;
     try {
       removeUsage.run(cutoff, cutoff);
       removeOutcomes.run(cutoff, cutoff);
-      const deleted = Number(removeDecisions.run(cutoff).changes);
+      deleted = Number(removeDecisions.run(cutoff).changes);
       this.#database.exec('COMMIT');
-      this.#database.exec('PRAGMA incremental_vacuum');
-      return deleted;
     } catch (error) {
       this.#database.exec('ROLLBACK');
       throw error;
     }
+    // After COMMIT: a vacuum failure must not reach the ROLLBACK above.
+    this.#database.exec('PRAGMA incremental_vacuum');
+    return deleted;
   }
 
   /** Export records as daily `decisions-YYYY-MM-DD.jsonl` files, the portability format. */

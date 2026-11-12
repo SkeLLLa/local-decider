@@ -89,14 +89,16 @@ export async function startGateway(options: StartOptions): Promise<Gateway> {
   });
   decider.rebuildPrecedent();
   engineControl?.bind(decider);
+  const stats = statsService(options, log);
   const server = await listenGatewayServer(log, config.host, config.port, {
+    report,
     decider,
     log,
     token: hasToken ? token : undefined,
     reportToken,
     engineControl,
     pricing: config.pricing,
-    stats: statsService(options, log),
+    stats,
     settings: () => engineControl?.settings ?? store.current,
   });
   startEngine(engine, engineControl);
@@ -116,6 +118,7 @@ export async function startGateway(options: StartOptions): Promise<Gateway> {
       stopPruning();
       await engineControl?.idle();
       await decider.engine.stop();
+      stats.close();
       closeLogStore(log);
       server.closeAllConnections();
       await new Promise<void>((resolve) => server.close(() => resolve()));

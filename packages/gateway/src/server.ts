@@ -55,6 +55,8 @@ export interface ServerOptions {
   readonly settings?: (() => GatewayConfig) | undefined;
   /** Windowed stats off the event loop; default: computed in-process from `log`. */
   readonly stats?: StatsService | undefined;
+  /** Diagnostics sink for internal failures that the client only sees generically. */
+  readonly report?: ((line: string) => void) | undefined;
 }
 
 class HttpError extends Error {
@@ -593,7 +595,7 @@ function validReportToken(req: IncomingMessage, token: string | undefined): bool
   );
 }
 
-function sendError(res: ServerResponse, error: unknown): void {
+function sendError(res: ServerResponse, error: unknown, report?: (line: string) => void): void {
   if (res.headersSent) {
     res.destroy();
     return;
@@ -609,6 +611,9 @@ function sendError(res: ServerResponse, error: unknown): void {
   } else if (error instanceof StatsTimeoutError) {
     send(res, 503, { error: error.message });
   } else if (error instanceof StatsFailedError) {
+    if (error.detail !== undefined) {
+      report?.(`stats failed: ${error.detail}`);
+    }
     send(res, 500, { error: error.message });
   } else {
     send(res, 502, { error: error instanceof Error ? error.message : 'engine error' });
@@ -645,6 +650,6 @@ export function createGatewayServer(options: ServerOptions): Server {
       send(res, 404, { error: 'not found' });
       return;
     }
-    handler(req, res, options).catch((error: unknown) => sendError(res, error));
+    handler(req, res, options).catch((error: unknown) => sendError(res, error, options.report));
   });
 }
