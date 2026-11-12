@@ -3,7 +3,6 @@ import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import {
   chmodSync,
-  existsSync,
   mkdirSync,
   readFileSync,
   readdirSync,
@@ -141,7 +140,7 @@ describe('local token files', () => {
     const paths = tempPaths();
     const file = join(paths.config, 'control-token');
     assert.equal(readControlToken(paths), undefined);
-    assert.equal(existsSync(file), false);
+    assert.throws(() => readFileSync(file), { code: 'ENOENT' });
     mkdirSync(paths.config, { recursive: true });
     writeFileSync(file, '');
     assert.equal(readControlToken(paths), undefined);
