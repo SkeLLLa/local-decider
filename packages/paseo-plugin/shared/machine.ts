@@ -5,6 +5,7 @@
  */
 import { z } from 'zod';
 
+import { fields, items, num, oneOf, runtimeOf, str } from './parse.ts';
 import { parseCode } from './recommendation.ts';
 
 const text0 = z.string().nullable();
@@ -108,49 +109,14 @@ export const progressSchema = z.object({ completed: z.number(), total: z.number(
 
 export type Measured = z.output<typeof measuredSchema>;
 export type MachineOption = z.output<typeof optionSchema>;
-export type RuntimeGroup = z.output<typeof runtimeSchema>;
+type RuntimeGroup = z.output<typeof runtimeSchema>;
 export type MachineRecommendation = z.output<typeof machineSchema>;
-export type MachineReason = NonNullable<MachineRecommendation['reason']>;
-export type MachineAction = NonNullable<MachineRecommendation['action']>;
-export type Freshness = NonNullable<Measured['freshness']>;
+type MachineReason = NonNullable<MachineRecommendation['reason']>;
+type Freshness = NonNullable<Measured['freshness']>;
 export type Labeled = z.output<typeof familySchema>;
-
-type Fields = Record<string, unknown>;
 
 const MAX_ITEMS = 50;
 const MAX_SIZES = 12;
-const MAX_TEXT = 500;
-
-function fields(value: unknown): Fields | null {
-  return typeof value === 'object' && value !== null && !Array.isArray(value)
-    ? (value as Fields)
-    : null;
-}
-
-function text(value: unknown): string | null {
-  return typeof value === 'string' && value !== '' ? value.slice(0, MAX_TEXT) : null;
-}
-
-function num(value: unknown): number | null {
-  return typeof value === 'number' && Number.isFinite(value) ? value : null;
-}
-
-function oneOf<T extends string>(value: unknown, allowed: readonly T[]): T | null {
-  return typeof value === 'string' && (allowed as readonly string[]).includes(value)
-    ? (value as T)
-    : null;
-}
-
-function items<T>(value: unknown, max: number, parse: (entry: unknown) => T | null): T[] {
-  const out: T[] = [];
-  for (const entry of Array.isArray(value) ? (value as unknown[]).slice(0, max) : []) {
-    const parsed = parse(entry);
-    if (parsed !== null) {
-      out.push(parsed);
-    }
-  }
-  return out;
-}
 
 function parsePercentiles(value: unknown): { p50Ms: number; p95Ms: number } | null {
   const v = fields(value);
@@ -171,28 +137,28 @@ function parseSize(value: unknown): Measured['sizes'][number] | null {
 
 function parseFailure(value: unknown): Measured['failed'] {
   const v = fields(value);
-  const error = text(v?.['error']);
-  return v === null || error === null ? null : { error, at: text(v['at']) };
+  const error = str(v?.['error']);
+  return v === null || error === null ? null : { error, at: str(v['at']) };
 }
 
 const FRESHNESS: readonly Freshness[] = ['fresh', 'stale', 'unknown'];
 
 /** Lenient read of one `models[].measured[]` entry (or a machine option's `measured`). */
-export function parseMeasured(value: unknown): Measured | null {
+function parseMeasured(value: unknown): Measured | null {
   const v = fields(value);
   if (v === null) {
     return null;
   }
   return {
-    device: text(v['device']),
+    device: str(v['device']),
     typical: parsePercentiles(v['typical']),
     long: parsePercentiles(v['long']),
     sizes: items(v['sizes'], MAX_SIZES, parseSize),
     runs: num(v['runs']),
     provisional: v['provisional'] === true,
-    measuredAt: text(v['measuredAt']),
+    measuredAt: str(v['measuredAt']),
     freshness: oneOf(v['freshness'], FRESHNESS),
-    staleReason: text(v['staleReason']),
+    staleReason: str(v['staleReason']),
     failed: parseFailure(v['failed']),
   };
 }
@@ -202,24 +168,23 @@ export function parseMeasuredList(value: unknown): Measured[] {
 }
 
 function parseOption(value: unknown): MachineOption | null {
-  const v = fields(value);
-  const engine = text(v?.['engine']);
-  const model = text(v?.['model']);
-  if (v === null || engine === null || model === null) {
+  const r = runtimeOf(value);
+  if (r === null) {
     return null;
   }
+  const { v, engine, model } = r;
   return {
     engine,
     model,
-    device: text(v['device']),
-    backend: text(v['backend']),
+    device: str(v['device']),
+    backend: str(v['backend']),
     code: parseCode(v['code']),
     eligible: v['eligible'] === true,
     supported: v['supported'] !== false,
     ready: v['ready'] === true,
-    reason: text(v['reason']) ?? '',
-    family: text(v['family']) ?? '',
-    quant: text(v['quant']),
+    reason: str(v['reason']) ?? '',
+    family: str(v['family']) ?? '',
+    quant: str(v['quant']),
     downloaded: v['downloaded'] === true,
     calibrated: v['calibrated'] !== false,
     active: v['active'] === true,
@@ -230,14 +195,14 @@ function parseOption(value: unknown): MachineOption | null {
 
 function parseRuntime(value: unknown): RuntimeGroup | null {
   const v = fields(value);
-  const engine = text(v?.['engine']);
+  const engine = str(v?.['engine']);
   if (v === null || engine === null) {
     return null;
   }
   return {
     engine,
-    device: text(v['device']),
-    backend: text(v['backend']),
+    device: str(v['device']),
+    backend: str(v['backend']),
     pick: parseOption(v['pick']),
     variants: items(v['variants'], MAX_ITEMS, parseOption),
   };
@@ -245,13 +210,13 @@ function parseRuntime(value: unknown): RuntimeGroup | null {
 
 function parseFasterFamily(value: unknown): MachineRecommendation['fasterFamily'] {
   const v = fields(value);
-  const family = text(v?.['family']);
+  const family = str(v?.['family']);
   if (v === null || family === null) {
     return null;
   }
   return {
     family,
-    label: text(v['label']) ?? family,
+    label: str(v['label']) ?? family,
     best: parseOption(v['best']),
     ratio: num(v['ratio']),
   };
@@ -270,13 +235,13 @@ const REASONS: readonly MachineReason[] = [
 /** Lenient read of `recommendation.machine`; null when absent or without a family. */
 export function parseMachine(value: unknown): MachineRecommendation | null {
   const v = fields(value);
-  const family = text(v?.['family']);
+  const family = str(v?.['family']);
   if (v === null || family === null) {
     return null;
   }
   return {
     family,
-    familyLabel: text(v['familyLabel']) ?? family,
+    familyLabel: str(v['familyLabel']) ?? family,
     source: oneOf(v['source'], ['manual', 'preferred', 'default']),
     availability: oneOf(v['availability'], ['ok', 'family-unavailable']),
     best: parseOption(v['best']),
@@ -286,7 +251,7 @@ export function parseMachine(value: unknown): MachineRecommendation | null {
     action: oneOf(v['action'], ['none', 'use', 'download', 'install']),
     partial: v['partial'] === true,
     stale: v['stale'] === true,
-    staleReason: text(v['staleReason']),
+    staleReason: str(v['staleReason']),
     runtimes: items(v['runtimes'], MAX_ITEMS, parseRuntime),
     fasterFamily: parseFasterFamily(v['fasterFamily']),
   };
@@ -295,15 +260,15 @@ export function parseMachine(value: unknown): MachineRecommendation | null {
 /** `models[].family`: the id is required, the label falls back to it. */
 export function parseFamily(value: unknown): Labeled | null {
   const v = fields(value);
-  const id = text(v?.['id']);
-  return v === null || id === null ? null : { id, label: text(v['label']) ?? id };
+  const id = str(v?.['id']);
+  return v === null || id === null ? null : { id, label: str(v['label']) ?? id };
 }
 
 /** `models[].format`: `short` is required, `label` falls back to it. */
 export function parseFormat(value: unknown): { short: string; label: string } | null {
   const v = fields(value);
-  const short = text(v?.['short']);
-  return v === null || short === null ? null : { short, label: text(v['label']) ?? short };
+  const short = str(v?.['short']);
+  return v === null || short === null ? null : { short, label: str(v['label']) ?? short };
 }
 
 /** `active.benchmark`: progress of a running benchmark job. */

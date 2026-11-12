@@ -3,6 +3,8 @@
  * (`active.selectionMode`, `active.fallback`): lenient parsers and the text the settings screen
  * shows. Older gateways send none of it, so every field here may be missing.
  */
+import { fields, runtimeOf, str } from './parse.ts';
+
 export interface Target {
   readonly engine: string;
   readonly model: string;
@@ -70,33 +72,19 @@ export function parseCode(value: unknown): CandidateCode | null {
   return typeof value === 'string' && CODES.includes(value) ? (value as CandidateCode) : null;
 }
 
-type Fields = Record<string, unknown>;
-
 const MAX_ITEMS = 50;
-const MAX_TEXT = 500;
-
-function fields(value: unknown): Fields | null {
-  return typeof value === 'object' && value !== null && !Array.isArray(value)
-    ? (value as Fields)
-    : null;
-}
-
-function text(value: unknown): string | null {
-  return typeof value === 'string' && value !== '' ? value.slice(0, MAX_TEXT) : null;
-}
 
 function parseTarget(value: unknown): Target | null {
-  const v = fields(value);
-  const engine = text(v?.['engine']);
-  const model = text(v?.['model']);
-  if (v === null || engine === null || model === null) {
+  const r = runtimeOf(value);
+  if (r === null) {
     return null;
   }
+  const { v, engine, model } = r;
   return {
     engine,
     model,
-    device: text(v['device']),
-    reason: text(v['reason']) ?? '',
+    device: str(v['device']),
+    reason: str(v['reason']) ?? '',
     explicit: v['explicit'] === true,
   };
 }
@@ -111,7 +99,7 @@ function parseCandidate(value: unknown): RankedCandidate | null {
     engine: target.engine,
     model: target.model,
     device: target.device,
-    backend: text(v['backend']),
+    backend: str(v['backend']),
     code: parseCode(v['code']),
     eligible: v['eligible'] === true,
     supported: v['supported'] !== false,
@@ -148,14 +136,14 @@ export function parseSelectionMode(value: unknown): SelectionMode | null {
 /** Lenient read of `active.fallback`; absent while no fallback is in effect. */
 export function parseFallback(value: unknown): Fallback | null {
   const v = fields(value);
-  const reason = text(v?.['reason']);
+  const reason = str(v?.['reason']);
   return v === null || reason === null
     ? null
     : {
         reason,
-        engine: text(v['engine']),
-        device: text(v['device']),
-        retryAt: text(v['retryAt']),
+        engine: str(v['engine']),
+        device: str(v['device']),
+        retryAt: str(v['retryAt']),
       };
 }
 

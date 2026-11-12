@@ -17,6 +17,7 @@ import {
   parseProgress,
   progressSchema,
 } from './machine.ts';
+import { bool, fields, items, MAX_TEXT, num, str } from './parse.ts';
 import { httpsUrl, parsePaths, pathEntrySchema } from './paths.ts';
 import {
   AUTO_ENGINE,
@@ -168,41 +169,9 @@ export type EngineCatalog = z.output<typeof engineCatalogSchema>;
 
 const MAX_ITEMS = 200;
 const MAX_LINES = 200;
-const MAX_TEXT = 500;
 
-type Fields = Record<string, unknown>;
-
-function fields(value: unknown): Fields | null {
-  return typeof value === 'object' && value !== null && !Array.isArray(value)
-    ? (value as Fields)
-    : null;
-}
-
-function str(value: unknown): string | null {
-  return typeof value === 'string' && value !== '' ? value.slice(0, MAX_TEXT) : null;
-}
-
-function num(value: unknown): number | null {
-  return typeof value === 'number' && Number.isFinite(value) ? value : null;
-}
-
-function bool(value: unknown, fallback: boolean): boolean {
-  return typeof value === 'boolean' ? value : fallback;
-}
-
-function list<T>(value: unknown, parse: (entry: unknown) => T | null): T[] {
-  if (!Array.isArray(value)) {
-    return [];
-  }
-  const out: T[] = [];
-  for (const entry of value.slice(0, MAX_ITEMS)) {
-    const parsed = parse(entry);
-    if (parsed !== null) {
-      out.push(parsed);
-    }
-  }
-  return out;
-}
+const list = <T>(value: unknown, parse: (entry: unknown) => T | null): T[] =>
+  items(value, MAX_ITEMS, parse);
 
 export function parseValidation(value: unknown): Validation | null {
   const v = fields(value);
