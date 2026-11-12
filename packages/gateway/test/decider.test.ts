@@ -6,6 +6,7 @@ import { describe, it, mock } from 'node:test';
 import { setTimeout as sleep } from 'node:timers/promises';
 
 import { Decider, QUEUE_MAX, renderValue, UnknownPolicyError } from '../src/decider.ts';
+import { ENGINE_BENCHMARK_RUNNING_ERROR, EngineBusyError } from '../src/engine-busy.ts';
 import { ManagedEngine } from '../src/engines/lazy.ts';
 import type { Engine } from '../src/engines/types.ts';
 import type { LogStore } from '../src/log-store.ts';
@@ -366,6 +367,43 @@ describe('Decider', () => {
       JSON.stringify(engine.requests[0]?.state),
       '{"a":1,"b":"[REDACTED:anthropic-key]"}',
     );
+  });
+
+  it('fails open before the warm cache while held and clears it on release', async () => {
+    const { decider, engine } = setup('shadow', undefined, 60);
+    const first = await decider.decide('permission', req, signal());
+    assert.equal(first.cached, false);
+    const latencyBeforeHold = decider.latency(50);
+    let failures = 0;
+    decider.onEngineFailure(() => {
+      failures += 1;
+    });
+
+    decider.hold(ENGINE_BENCHMARK_RUNNING_ERROR);
+    const held = await decider.decide('permission', req, signal());
+    assert.deepEqual(held.answers, {});
+    assert.equal(held.error, ENGINE_BENCHMARK_RUNNING_ERROR);
+    assert.equal(held.cached, false);
+    assert.equal(held.latencyMs, 0);
+    assert.equal(engine.requests.length, 1, 'the held decision bypasses the warm cache and engine');
+    assert.equal(decider.latency(50), latencyBeforeHold, 'held work adds no latency sample');
+    assert.equal(failures, 0, 'the hold is not reported as an engine failure');
+
+    decider.hold(null);
+    const released = await decider.decide('permission', req, signal());
+    assert.equal(released.cached, false);
+    assert.equal(engine.requests.length, 2, 'release also leaves the cache empty');
+  });
+
+  it('throws EngineBusyError for systemOne while held', async () => {
+    const { decider } = setup('shadow');
+    decider.hold(ENGINE_BENCHMARK_RUNNING_ERROR);
+    await assert.rejects(
+      decider.systemOne({ state: 's', questions: {} }, signal()),
+      (error: unknown) =>
+        error instanceof EngineBusyError && error.message === ENGINE_BENCHMARK_RUNNING_ERROR,
+    );
+    assert.equal(decider.latency(50), undefined, 'held pass-through work adds no latency');
   });
 });
 

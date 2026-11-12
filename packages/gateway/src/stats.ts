@@ -10,6 +10,7 @@ import type {
 } from '@ziptie-soft/local-decider-core';
 
 import { classifierAgreement, type ClassifierAgreement } from './classifier-agreement.ts';
+import { ENGINE_BENCHMARK_RUNNING_ERROR } from './engine-busy.ts';
 import { percentile, sortedLatencies, wilsonUpper } from './numbers.ts';
 import {
   comparableOutcome,
@@ -169,7 +170,11 @@ function samplesForRule(
   for (const decision of decisions) {
     const outcome = verified.get(decision.decisionId);
     const cls = outcome === undefined ? 'other' : outcomeClass(outcome);
-    if (decision.action !== 'ask' || (cls !== 'allow' && cls !== 'veto')) {
+    if (
+      decision.error === ENGINE_BENCHMARK_RUNNING_ERROR ||
+      decision.action !== 'ask' ||
+      (cls !== 'allow' && cls !== 'veto')
+    ) {
       continue;
     }
     const probability = decision.answers[rule.when.question]?.probabilities[rule.when.answer];
@@ -237,6 +242,9 @@ function labelledDecisions(
 ): Labelled[] {
   const labelled: Labelled[] = [];
   for (const d of decisions) {
+    if (d.error === ENGINE_BENCHMARK_RUNNING_ERROR) {
+      continue;
+    }
     const record = outcomes.get(d.decisionId);
     const value = record === undefined ? undefined : comparableOutcome(record.outcome);
     const answer = value === undefined ? undefined : labelledAnswer(d, value);
