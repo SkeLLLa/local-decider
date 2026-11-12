@@ -89,9 +89,14 @@ Step by step:
    are rendered in policy order, objects as key-sorted JSON, and trimmed to `state.maxTokens`
    (`core/truncate.ts`).
 3. **Engine.** Answers are cached by input hash for the policy's `cache.ttlSeconds`. Otherwise the
-   request joins the engine queue: one request at a time, `high` priority policies first, at most
-   8 waiting. A full queue, an engine error or the deadline (`decisionTimeoutMs`, 30 s) returns an
-   `error` with the policy default and `enforced: false`.
+   request joins the engine queue: one request at a time, `high` priority policies first; shadow
+   decisions run at `low`. At most 8 decisions wait or run; `normal` ones are refused from 6, and a
+   `high` one arriving at 8 evicts the oldest waiting `low` one. While a managed engine loads,
+   `normal` and `low` decisions are refused once 6/8 are waiting (counting the load); `high` ones
+   are not. A caller that gives up leaves the queue at once; a managed engine loads before its
+   request takes the queue; a job that ignores its deadline loses the engine 1 s later. A full
+   queue, an engine error or the deadline (`decisionTimeoutMs`, 30 s) returns an `error` with the
+   policy default and `enforced: false`.
 4. **Rules.** The first matching rule wins. A precedent rule also needs enough recent allows of
    the exact subject and no deny ([policies.md](policies.md#precedent)).
 5. **Log and answer.** `enforced = mode is act and no error`. A shadow decision keeps running
