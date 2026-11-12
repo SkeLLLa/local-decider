@@ -12,6 +12,7 @@ import {
 import { createServer, type Server, type ServerResponse } from 'node:http';
 import { join } from 'node:path';
 import { describe, it } from 'node:test';
+import { stringify } from 'yaml';
 
 import {
   BENCH_VERSION,
@@ -22,6 +23,7 @@ import {
 import { ConfigFile, MemoryConfigStore } from '../src/config-file.ts';
 import { parseConfig, type EngineConfig } from '../src/config.ts';
 import { Decider } from '../src/decider.ts';
+import { EngineBusyError } from '../src/engine-busy.ts';
 import {
   EngineControl,
   EngineSwitchError,
@@ -32,6 +34,7 @@ import {
   parseThresholds,
 } from '../src/engine-control.ts';
 import type { HostInfo } from '../src/engines/descriptor.ts';
+import { hardwareFingerprint } from '../src/engines/fingerprint.ts';
 import type { HostCapabilities } from '../src/engines/host-capabilities.ts';
 import type { Engine, EngineHealth } from '../src/engines/types.ts';
 import type { Paths } from '../src/paths.ts';
@@ -111,6 +114,12 @@ function fakeStrands(paths: Paths): void {
   chmodSync(join(dir, 'strands-decider'), 0o755);
 }
 
+function fakeLlama(paths: Paths): void {
+  const binary = join(binDir(paths), 'llama-server');
+  writeFileSync(binary, `#!${process.execPath}\n`);
+  chmodSync(binary, 0o755);
+}
+
 async function withModelServer(
   respond: (response: ServerResponse) => void,
   run: (url: string) => Promise<void>,
@@ -141,6 +150,7 @@ interface Setup {
 
 interface SetupOptions {
   readonly engine?: Record<string, unknown>;
+  readonly selection?: Record<string, unknown>;
   readonly engines?: Record<string, unknown>;
   readonly totalMemory?: number;
   readonly installed?: boolean;
@@ -149,6 +159,7 @@ interface SetupOptions {
   readonly persist?: boolean;
   readonly host?: HostInfo;
   readonly benchmarkStore?: BenchmarkStore;
+  readonly llamaServer?: boolean;
 }
 
 const LINUX_HOST: HostInfo = {
@@ -172,11 +183,15 @@ function setup(options: SetupOptions = {}): Setup {
   const paths = options.paths ?? tempPaths();
   fakeFlm(paths);
   fakeStrands(paths);
+  if (options.llamaServer === true) fakeLlama(paths);
   const store =
     options.persist === true
       ? ConfigFile.open(paths)
       : new MemoryConfigStore(
-          parseConfig({ engine: { type: 'strands-decider', ...options.engine } }),
+          parseConfig({
+            engine: { type: 'strands-decider', ...options.engine },
+            ...(options.selection === undefined ? {} : { selection: options.selection }),
+          }),
         );
   if (options.engines !== undefined) {
     store.update(
@@ -224,6 +239,158 @@ function writeUserVariant(paths: Paths, id: string): void {
 }
 
 const E2B = 'StrandsAgents/strands-decider-E2B-gemma4-v1-2610';
+
+function measuredRecord(
+  engine: 'fastflowlm' | 'llama-vulkan',
+  model: string,
+  p50Ms: number,
+  fingerprint: string,
+): BenchmarkRecord {
+  const fastflow = engine === 'fastflowlm';
+  return {
+    jobId: `lease-${engine}-${String(p50Ms)}`,
+    engine,
+    model,
+    device: null,
+    family: 'vllm-sr/d3-mini',
+    quant: fastflow ? 'FLM' : 'Q4_K_M',
+    status: 'ok',
+    error: null,
+    measuredAt: '2026-11-12T10:04:11.000Z',
+    benchVersion: BENCH_VERSION,
+    gatewayVersion: '2.0.0',
+    runtime: null,
+    modelStamp: null,
+    fingerprint,
+    backend: fastflow ? 'NPU' : 'Vulkan',
+    resolvedDevice: null,
+    runs: 5,
+    loadMs: 1,
+    sizes: [
+      {
+        targetTokens: 1024,
+        inputTokens: 1024,
+        p50Ms,
+        p95Ms: p50Ms + 100,
+        answer: 'done',
+        error: null,
+      },
+    ],
+  };
+}
+
+describe('EngineControl benchmark lease', () => {
+  it('holds decisions through an unpersisted swap and restores the exact manual selection', async () => {
+    const { control, decider, created } = setup();
+    const selection = control.current();
+    assert.ok(selection);
+    const configBefore = stringify(control.settings);
+    const lease = control.beginBenchmark();
+    assert.equal(lease.snapshot.mode, 'manual');
+    assert.deepEqual(lease.snapshot.selection, selection);
+    await assert.rejects(
+      decider.systemOne({ state: 's', questions: {} }, new AbortController().signal),
+      /engine benchmark running/,
+    );
+
+    await control.benchmarkSwap(lease, {
+      engine: 'strands-decider',
+      model: E2B,
+      device: 'cpu',
+    });
+    assert.equal(control.current()?.model, E2B);
+    assert.equal(stringify(control.settings), configBefore);
+
+    const restore = deferred<void>();
+    created[1]!.stop = () => restore.promise;
+    const ending = control.endBenchmark(lease, { restore: true });
+    await settleEventLoop();
+    await assert.rejects(
+      decider.systemOne({ state: 's', questions: {} }, new AbortController().signal),
+      /engine benchmark running/,
+    );
+    restore.resolve();
+    assert.deepEqual(await ending, { ok: true, error: null });
+    await lease.done;
+    assert.deepEqual(control.current(), selection);
+    assert.equal(stringify(control.settings), configBefore);
+    await assert.rejects(
+      decider.systemOne({ state: 's', questions: {} }, new AbortController().signal),
+      (error: unknown) => !(error instanceof EngineBusyError),
+    );
+  });
+
+  it('rejects a second lease and keeps the decision hold after a non-restoring end', async () => {
+    const { control, decider } = setup();
+    const lease = control.beginBenchmark();
+    assert.throws(
+      () => control.beginBenchmark(),
+      (error: unknown) => error instanceof EngineSwitchError && error.status === 409,
+    );
+    assert.deepEqual(await control.endBenchmark(lease, { restore: false }), {
+      ok: true,
+      error: null,
+    });
+    await lease.done;
+    await assert.rejects(
+      decider.systemOne({ state: 's', questions: {} }, new AbortController().signal),
+      /engine benchmark running/,
+    );
+    await assert.rejects(
+      control.benchmarkSwap(lease, {
+        engine: 'strands-decider',
+        model: E2B,
+        device: 'cpu',
+      }),
+      { name: 'AbortError' },
+    );
+  });
+
+  it('re-ranks automatic mode after a benchmark and keeps the preferred family', async () => {
+    const family = 'vllm-sr/d3-mini';
+    const capabilities: HostCapabilities = {
+      ...NO_CAPABILITIES,
+      npu: { status: 'available', evidence: 'accel0: benchmark test' },
+      vulkan: { status: 'available', evidence: 'Vulkan0: benchmark test' },
+    };
+    const fingerprint = hardwareFingerprint(
+      { ...LINUX_HOST, totalMemoryBytes: 1e12 },
+      capabilities,
+    );
+    assert.ok(fingerprint);
+    const benchmarks = new MemoryBenchmarkStore();
+    benchmarks.append(measuredRecord('fastflowlm', 'd3:mini', 300, fingerprint));
+    benchmarks.append(measuredRecord('llama-vulkan', 'd3-mini-q4_k_m', 500, fingerprint));
+    const { control } = setup({
+      selection: { mode: 'auto', family },
+      host: LINUX_HOST,
+      capabilities: () => Promise.resolve(capabilities),
+      benchmarkStore: benchmarks,
+      llamaServer: true,
+    });
+    await control.reconcileAuto();
+    assert.equal(control.current()?.engine, 'fastflowlm');
+    const configBefore = stringify(control.settings);
+
+    const lease = control.beginBenchmark();
+    await control.benchmarkSwap(lease, {
+      engine: 'strands-decider',
+      model: E2B,
+      device: 'cpu',
+    });
+    benchmarks.append(measuredRecord('llama-vulkan', 'd3-mini-q4_k_m', 100, fingerprint));
+    assert.deepEqual(await control.endBenchmark(lease, { restore: true }), {
+      ok: true,
+      error: null,
+    });
+    await lease.done;
+
+    assert.equal(control.current()?.engine, 'llama-vulkan');
+    assert.equal(control.current()?.model, 'd3-mini-q4_k_m');
+    assert.deepEqual(control.settings.selection, { mode: 'auto', family });
+    assert.equal(stringify(control.settings), configBefore);
+  });
+});
 
 describe('EngineControl switching', () => {
   it('reports starting while the previous engine is stopping', async () => {
