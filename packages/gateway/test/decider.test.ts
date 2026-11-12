@@ -1,4 +1,4 @@
-import { parsePolicy, type Mode } from '@ziptie-soft/local-decider-core';
+import { parsePolicy, type LogRecord, type Mode } from '@ziptie-soft/local-decider-core';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -45,6 +45,144 @@ const INPUT = {
 };
 const req = { harness: 'cli' as const, input: INPUT };
 const signal = (): AbortSignal => new AbortController().signal;
+
+interface PrecedentLog extends LogStore {
+  readonly records: LogRecord[];
+  readonly windows: number[];
+  readVerifiedPrecedent(days: number): LogRecord[];
+}
+
+function precedentLog(records: LogRecord[] = []): PrecedentLog {
+  const windows: number[] = [];
+  return {
+    records,
+    windows,
+    append: (record) => records.push(record),
+    read: () => records,
+    readRecent: (days) => {
+      windows.push(days);
+      return records;
+    },
+    readVerifiedPrecedent: (days) => {
+      windows.push(days);
+      return records;
+    },
+    prune: () => 0,
+    close: () => undefined,
+  };
+}
+
+function policyAge(loaded: LoadedPolicy, maxAgeDays: number): LoadedPolicy {
+  const precedent = loaded.policy.precedent;
+  assert.ok(precedent);
+  return { ...loaded, policy: { ...loaded.policy, precedent: { ...precedent, maxAgeDays } } };
+}
+
+function withoutPrecedent(loaded: LoadedPolicy): LoadedPolicy {
+  const policy = { ...loaded.policy };
+  delete policy.precedent;
+  return { ...loaded, policy };
+}
+
+function createPrecedentDecider(
+  loadedPolicies: Map<string, LoadedPolicy>,
+  log: PrecedentLog,
+): Decider {
+  return new Decider({
+    engine: new FakeEngine({ allow: 0.7, ask: 0.2, deny: 0.1 }),
+    policies: loadedPolicies,
+    log,
+    decisionTimeoutMs: 2000,
+  });
+}
+
+describe('Decider precedent rebuilds', () => {
+  it('reads through the largest precedent age across policies and variants', () => {
+    const base = policies('act').get('permission');
+    assert.ok(base?.policy.precedent);
+    const variant = policyAge(
+      {
+        ...base,
+        policy: { ...base.policy, id: 'permission-variant', variantOf: 'permission' },
+      },
+      37,
+    );
+    const log = precedentLog();
+    const decider = createPrecedentDecider(
+      new Map([
+        ['permission', policyAge(base, 14)],
+        ['permission-variant', variant],
+      ]),
+      log,
+    );
+
+    decider.rebuildPrecedent();
+
+    assert.deepEqual(log.windows, [37]);
+  });
+
+  it('does not read the log when no policy has precedent settings', () => {
+    const base = policies('act').get('permission');
+    assert.ok(base);
+    const log = precedentLog();
+    const decider = createPrecedentDecider(new Map([['permission', withoutPrecedent(base)]]), log);
+
+    decider.rebuildPrecedent();
+
+    assert.deepEqual(log.windows, []);
+  });
+
+  it('keeps learned evidence on reload when precedent settings are unchanged', async () => {
+    const initial = policies('act');
+    const loaded = initial.get('permission');
+    assert.ok(loaded);
+    const log = precedentLog();
+    const decider = createPrecedentDecider(initial, log);
+    const input = { ...INPUT, subject: 'Bash: npm test' };
+    const first = await decider.decide('permission', { harness: 'cli', input }, signal());
+    assert.equal(first.action, 'ask');
+    decider.noteOutcome({
+      kind: 'outcome',
+      ts: new Date().toISOString(),
+      decisionId: first.decisionId,
+      outcome: 'allow',
+      source: 'user',
+      verified: true,
+    });
+    log.records.length = 0;
+
+    decider.replacePolicies(
+      new Map([
+        [
+          'permission',
+          {
+            ...loaded,
+            policy: {
+              ...loaded.policy,
+              version: loaded.policy.version === 1 ? 2 : 1,
+            },
+          },
+        ],
+      ]),
+    );
+    const afterReload = await decider.decide('permission', { harness: 'cli', input }, signal());
+
+    assert.deepEqual(log.windows, []);
+    assert.deepEqual(afterReload.precedent, { allows: 1, denies: 0 });
+  });
+
+  it('rebuilds on reload when maxAgeDays changes', () => {
+    const loaded = policies('act').get('permission');
+    assert.ok(loaded);
+    const log = precedentLog();
+    const decider = createPrecedentDecider(new Map([['permission', policyAge(loaded, 14)]]), log);
+    decider.rebuildPrecedent();
+
+    decider.replacePolicies(new Map([['permission', policyAge(loaded, 31)]]));
+
+    assert.deepEqual(log.windows, [14, 31]);
+  });
+});
 
 describe('Decider', () => {
   it('uses precedent only to lower the allow threshold for an exact subject', async () => {

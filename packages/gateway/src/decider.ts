@@ -36,8 +36,44 @@ import { PrecedentStore } from './precedent.ts';
 import { LatencyWindow, SerialQueue, type Priority } from './queue.ts';
 
 const CACHE_MAX = 500;
+type PrecedentSettings = NonNullable<Policy['precedent']>;
+
 /** Decisions waiting for the engine before new ones are refused (fail open, logged). */
 export const QUEUE_MAX = 8;
+
+function precedentWindow(policies: ReadonlyMap<string, LoadedPolicy>): number | undefined {
+  let days: number | undefined;
+  for (const { policy } of policies.values()) {
+    const age = policy.precedent?.maxAgeDays;
+    if (age !== undefined && (days === undefined || age > days)) {
+      days = age;
+    }
+  }
+  return days;
+}
+
+function samePrecedentSettings(
+  current: ReadonlyMap<string, LoadedPolicy>,
+  next: ReadonlyMap<string, LoadedPolicy>,
+): boolean {
+  const previous = precedentSettings(current);
+  const replacement = precedentSettings(next);
+  return (
+    previous.size === replacement.size &&
+    [...previous].every(([id, settings]) => replacement.get(id) === settings)
+  );
+}
+
+function precedentSettings(policies: ReadonlyMap<string, LoadedPolicy>): Map<string, string> {
+  const settings = new Map<string, string>();
+  for (const [id, { policy }] of policies) {
+    const precedent: PrecedentSettings | undefined = policy.precedent;
+    if (precedent !== undefined) {
+      settings.set(id, canonicalJson(precedent));
+    }
+  }
+  return settings;
+}
 
 export class UnknownPolicyError extends Error {
   override readonly name = 'UnknownPolicyError';
@@ -215,6 +251,7 @@ export class Decider {
    * only keys that still name a rule. Modes come with `next`.
    */
   replacePolicies(next: ReadonlyMap<string, LoadedPolicy>): void {
+    const precedentChanged = !samePrecedentSettings(this.#policies, next);
     this.#policies = new Map(next);
     this.#cache.clear();
     for (const [id, thresholds] of this.#thresholds) {
@@ -227,7 +264,9 @@ export class Decider {
         this.#variants.delete(id);
       }
     }
-    this.#precedent.rebuild(this.#recentPrecedentRecords());
+    if (precedentChanged) {
+      this.#precedent.rebuild(this.#recentPrecedentRecords());
+    }
   }
 
   /** Rebuild precedent once from the append-only decision log during startup. */
@@ -250,7 +289,12 @@ export class Decider {
   }
 
   #recentPrecedentRecords(): LogRecord[] {
-    return this.#log.readVerifiedPrecedent(90, this.#now().getTime());
+    const days = precedentWindow(this.#policies);
+    if (days === undefined) {
+      return [];
+    }
+    const now = this.#now().getTime();
+    return this.#log.readVerifiedPrecedent(days, now);
   }
 
   /**
