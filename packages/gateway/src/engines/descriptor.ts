@@ -24,6 +24,11 @@ export interface EngineContext {
   readonly env: NodeJS.ProcessEnv;
 }
 
+export interface RuntimeStamp {
+  readonly runtime: string | null;
+  readonly model: string | null;
+}
+
 export interface Validation {
   readonly ok: boolean;
   readonly checkedAt: string;
@@ -84,6 +89,8 @@ export interface EngineDescriptor<
   devices?(host: HostInfo): readonly Device[];
   readonly calibrated: boolean;
   readonly models: readonly ModelDescriptor<C['type']>[];
+  /** Cheap local identity for a runtime and its model files; absent means both are unknown. */
+  runtimeStamp?(this: void, model: ModelDescriptor<C['type']>, ctx: EngineContext): Promise<RuntimeStamp>;
   /** Absent means all catalogue models are present. */
   modelsPresent?(
     this: void,
@@ -115,6 +122,11 @@ export function defineEngine<
   devices?(host: HostInfo): readonly Device[];
   readonly calibrated: boolean;
   readonly models: readonly ModelDescriptor<z.output<S>['type']>[];
+  runtimeStamp?(
+    this: void,
+    model: ModelDescriptor<z.output<S>['type']>,
+    ctx: EngineContext,
+  ): Promise<RuntimeStamp>;
   modelsPresent?(
     this: void,
     models: readonly ModelDescriptor<z.output<S>['type']>[],
