@@ -102,6 +102,11 @@ default: ask              # when no rule matches or the engine failed
   key-sorted JSON.
 - `minProbability` uses the probability of the named answer. `minConfidence` uses the normalised
   confidence (0 = uniform, 1 = certain). For a 3-option choice, p = 0.95 is confidence 0.925.
+- An `allow` rule without a `precedent: allow` guard needs `minConfidence` or `minProbability`
+  of at least 0.8. A precedent-guarded rule may use a lower threshold because both the model and
+  exact-match precedent must agree; precedent rules may only use `allow` or `ask`.
+- A policy's `default` cannot be `allow`. Use a thresholded rule so a missing answer or no rule
+  match falls back to a non-allow action.
 - Actions: `allow`, `ask`, `deny`, `log`, `notify`, `abstain`, `route:<preset>`.
 - Write criteria as short, mutually exclusive descriptions with concrete examples. On the 2B
   model, `command-risk`'s "exposes secrets" scored an `~/.ssh` exfiltration p = 0.25 dangerous;
@@ -126,8 +131,8 @@ policies:
   own threshold.
 - It applies to that policy file's own rules, so a routing variant's thresholds go under the
   variant's id.
-- An `allow` threshold never goes below 0.5. The API refuses lower values with 400; a lower value
-  in `config.yaml` counts as 0.5.
+- A non-precedent `allow` threshold never goes below 0.8. The API refuses lower values with 400; a
+  lower value in `config.yaml` counts as 0.8. A `precedent: allow` rule keeps its policy threshold.
 - `GET /v1/policies` lists each rule's default and the value in effect.
   `POST /v1/policies/<id>/thresholds` sets them (`null` restores the default). Paseo's settings
   have a slider per rule and warn below 0.90 and 0.80.

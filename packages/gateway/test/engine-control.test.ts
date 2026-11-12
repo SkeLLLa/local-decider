@@ -495,11 +495,11 @@ describe('EngineControl state', () => {
       (error: unknown) =>
         error instanceof EngineSwitchError &&
         error.status === 400 &&
-        /at least 0.5/.test(error.message),
+        /at least 0.8/.test(error.message),
     );
     assert.equal(
       first.control.setPolicyThresholds('permission', {
-        'verdict.allow': 0.5,
+        'verdict.allow': 0.8,
         'verdict.deny': 0.1,
       })[1]?.value,
       0.1,
@@ -527,7 +527,7 @@ describe('EngineControl state', () => {
     assert.equal(decider.thresholdsOf('permission')[1]?.value, 0.6);
     assert.equal(
       decider.thresholdsOf('permission')[0]?.value,
-      0.5,
+      0.8,
       'allow is clamped to its floor',
     );
     writeFileSync(file, '# none\n');
@@ -1036,7 +1036,7 @@ describe('control routes', () => {
         kind: 'minProbability',
         default: 0.95,
         value: 0.9,
-        floor: 0.5,
+        floor: 0.8,
       });
       assert.equal(
         (await post('/v1/models/download', { engine: 'fastflowlm', model: 'nope' })).status,

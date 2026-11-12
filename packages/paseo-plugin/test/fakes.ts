@@ -122,7 +122,7 @@ export function fakeGateway(
             kind: 'minProbability',
             default: 0.95,
             value: 0.9,
-            floor: 0.5,
+            floor: 0.8,
           },
         ],
       },
