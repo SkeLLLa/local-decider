@@ -222,17 +222,19 @@ how to add an engine or a model, and the macOS notes
 
 ## HTTP routes
 
-| Route | Purpose |
-|---|---|
-| `POST /v1/decide/:policy` | Run a policy on harness input |
-| `POST /v1/systemone`, `POST /invocations` | Pass-through to the active engine (keys sorted, secrets redacted) |
-| `POST /v1/outcomes`, `POST /v1/usage` | Report what happened, and token usage, for a decision |
-| `GET /v1/calls/:id` | What each policy decided for a harness tool call (`call.id` of a decide request), its permission mode and the effective mode per scope; kept in memory for 10 minutes, 404 when unknown |
-| `GET /health`, `GET /ping`, `GET /v1/stats?days=N` | Engine state and latency; stats as JSON (30-day default, bounded by retention) |
-| `GET /models`, `GET /v1/engines`, `POST /v1/engine`, `/v1/engine/load`, `/unload`, `/lifecycle` | Model catalogue, engine status, switching and lifecycle |
-| `POST /v1/models/download`, `/v1/engines/validate`, `/v1/paths` | Downloads, `flm validate`, tool paths (loopback gateway only) |
-| `GET /v1/policies`, `POST /v1/policies/:id/mode`, `/variant`, `/thresholds`, `/v1/policies/reload` | Policy settings, written to `config.yaml` |
-| `GET /v1/policies/:id/prompt`, `GET /v1/config`, `POST /v1/config/reload`, `POST /v1/routing/presets` | Authoring prompt, config view and reload, preset mapping |
-| `POST /mcp` | MCP over streamable HTTP with `decide` and `policies` tools; `local-decider mcp` is the stdio form |
+| Route | Auth | Purpose |
+|---|---|---|
+| `POST /v1/decide/:policy` | Open | Run a policy on harness input |
+| `POST /v1/systemone`, `POST /invocations` | Open | Pass-through to the active engine (keys sorted, secrets redacted) |
+| `POST /v1/outcomes`, `POST /v1/usage` | Report / open | Report what happened, and token usage, for a decision |
+| `GET /v1/calls/:id` | Open | What each policy decided for a harness tool call (`call.id` of a decide request), its permission mode and the effective mode per scope; kept in memory for 10 minutes, 404 when unknown |
+| `GET /health`, `GET /ping`, `GET /v1/stats?days=N` | Open | Engine state and latency; stats as JSON (30-day default, bounded by retention) |
+| `GET /models` | Open | Model catalogue |
+| `GET /v1/engines`, `POST /v1/engine`, `/v1/engine/mode`, `/v1/engine/load`, `/v1/engine/unload`, `/v1/engine/lifecycle` | Control | Engine status, switching and lifecycle |
+| `POST /v1/models/download`, `/v1/engines/validate`, `/v1/engines/discover`, `/v1/paths` | Control | Downloads, `flm validate`, discovery and tool paths |
+| `GET /v1/policies` | Open | Policy list and variants |
+| `POST /v1/policies/:id/mode`, `/variant`, `/thresholds`, `/v1/policies/reload` | Control | Policy settings, written to `config.yaml` |
+| `GET /v1/policies/:id/prompt`, `GET /v1/config`, `POST /v1/config/reload`, `/v1/config/engine`, `/v1/routing/presets` | Control | Authoring prompt, config view and reload, engine connection and preset mapping |
+| `POST /mcp` | Open | MCP over streamable HTTP with `decide` and `policies` tools; `local-decider mcp` is the stdio form |
 
 Security controls on these routes are in [security.md](security.md).

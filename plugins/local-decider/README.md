@@ -76,6 +76,7 @@ Needs Claude Code 2.1.304 or newer (older versions are skipped) and a running ga
 `LOCAL_DECIDER_MOD=off` to switch it off. In act mode Claude Code shows the model a notice that
 the plugin's hook "was skipped" on each allow, and in Paseo-launched sessions the allow is ignored
 and the classifier decides. See [ADR-0007](../../docs/adr/0007-claude-auto-mode-mod.md).
+The mod never needs or reads the gateway's `control-token` file.
 
 `hooks/local-decider-auto-mode.mjs` is generated (not committed) from `packages/hooks/src/mod`
 by the same build as `dist/local-decider-hook.mjs`. `mise run test:mod` validates it and runs

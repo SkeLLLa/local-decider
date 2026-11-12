@@ -254,6 +254,7 @@ pricing:                        # example values; a bare id also matches `claude
 
 Secrets never go in this file. A non-loopback gateway needs `LOCAL_DECIDER_TOKEN` in the
 environment (see [docs/install.md](docs/install.md#remote-gateway)).
+Loopback control routes also require the gateway's private `control-token` file.
 
 In Paseo, a policy changes behaviour only when both the gateway's mode and the plugin's setting
 for that policy are `act`. See [packages/paseo-plugin/OVERVIEW.md](packages/paseo-plugin/OVERVIEW.md)

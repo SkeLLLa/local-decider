@@ -300,5 +300,27 @@ files; JSONL is only an export format. `logs import` is no longer available.
 Secrets never go in `config.yaml`. To bind a non-loopback address, put
 `LOCAL_DECIDER_TOKEN=...` (at least 16 characters) in `~/.config/local-decider/env` with mode
 0600; the systemd unit reads it if present. Clients read `LOCAL_DECIDER_TOKEN` and
-`LOCAL_DECIDER_URL` from their environment and send the token only over https or to a loopback
-address. Read [security.md](security.md) first.
+`LOCAL_DECIDER_URL` from their environment. The Paseo daemon sends the bearer only to loopback or
+to the pinned HTTPS origin. Set `LOCAL_DECIDER_TOKEN_ORIGIN` in the daemon's environment to the
+gateway origin, with the same scheme, host and port as its URL. In fish, for a gateway at
+`https://gw.example:8443`:
+
+```fish
+set -gx LOCAL_DECIDER_TOKEN_ORIGIN https://gw.example:8443
+```
+
+MCP injection is skipped for remote and token-mode gateways, because agent processes must not
+receive a bearer token. Read [security.md](security.md) first.
+
+The gateway creates `control-token` beside `config.yaml` on first start. If startup reports that
+the file is not a valid local-decider token, remove it and restart the gateway:
+
+```fish
+rm ~/.config/local-decider/control-token
+```
+
+If startup reports that the token file is accessible to other users, set its mode to 0600:
+
+```fish
+chmod 600 ~/.config/local-decider/control-token
+```
