@@ -1,5 +1,6 @@
 import type { OutcomeRecord, ShadowRecord } from '@ziptie-soft/local-decider-core';
 
+import { ENGINE_BENCHMARK_RUNNING_ERROR } from './engine-busy.ts';
 import { percentile, sortedLatencies, wilsonLower } from './numbers.ts';
 
 const MAX_DISAGREEMENTS = 20;
@@ -61,7 +62,9 @@ export function classifierAgreement(
   decisions: readonly ShadowRecord[],
   classifier: ReadonlyMap<string, OutcomeRecord>,
 ): ClassifierAgreement | undefined {
-  const scoped = decisions.filter((d) => d.scope === scope);
+  const scoped = decisions.filter(
+    (d) => d.scope === scope && d.error !== ENGINE_BENCHMARK_RUNNING_ERROR,
+  );
   if (scoped.length === 0) {
     return undefined;
   }

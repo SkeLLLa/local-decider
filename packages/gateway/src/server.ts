@@ -17,6 +17,7 @@ import { totalmem } from 'node:os';
 import type { GatewayConfig } from './config.ts';
 import { UnknownPolicyError, type Decider } from './decider.ts';
 import { DownloadError } from './downloads.ts';
+import { EngineBusyError } from './engine-busy.ts';
 import {
   EngineSwitchError,
   parseLifecycle,
@@ -637,6 +638,8 @@ function sendError(res: ServerResponse, error: unknown, report?: (line: string) 
     error instanceof DownloadError
   ) {
     send(res, error.status, { error: error.message });
+  } else if (error instanceof EngineBusyError) {
+    send(res, 503, { error: error.message });
   } else if (error instanceof UnknownPolicyError) {
     send(res, 404, { error: error.message });
   } else if (error instanceof StatsTimeoutError) {

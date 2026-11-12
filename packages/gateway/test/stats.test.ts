@@ -9,6 +9,7 @@ import { readFileSync } from 'node:fs';
 import { describe, it } from 'node:test';
 
 import type { ClassifierAgreement } from '../src/classifier-agreement.ts';
+import { ENGINE_BENCHMARK_RUNNING_ERROR } from '../src/engine-busy.ts';
 import type { LoadedPolicy } from '../src/policies.ts';
 import { computeStats, formatStats, type CalibrationHint, type PolicyStats } from '../src/stats.ts';
 
@@ -88,6 +89,25 @@ describe('computeStats', () => {
   it('reports an empty log', () => {
     assert.equal(formatStats(computeStats([])), 'No decisions logged yet.');
   });
+
+  it('excludes benchmark-held decisions from agreement and latency, but keeps error totals', () => {
+    const busy = decision('busy', 'allow', 0.99, {
+      action: 'allow',
+      error: ENGINE_BENCHMARK_RUNNING_ERROR,
+      latencyMs: 10_000,
+    });
+    const [stats] = computeStats([
+      decision('ok', 'allow', 0.9),
+      busy,
+      { kind: 'outcome', ts: 't', decisionId: 'ok', outcome: 'allow', source: 'user' },
+      { kind: 'outcome', ts: 't', decisionId: 'busy', outcome: 'deny', source: 'user' },
+    ]);
+    assert.equal(stats?.decisions, 2);
+    assert.equal(stats?.errors, 1);
+    assert.equal(stats?.labelled, 1);
+    assert.equal(stats?.agreement, 1);
+    assert.equal(stats?.latencyP50Ms, 100);
+  });
 });
 
 function escalations(total: number, denied: number, lowBand = 0): LogRecord[] {
@@ -130,6 +150,28 @@ describe('calibration hints', () => {
     const [stats] = computeStats(escalations(120, 3), {}, policies);
     assert.deepEqual(stats?.calibrationHints, [{ rule: 'verdict.allow', n: 120, denies: 3 }]);
     assert.match(formatStats([stats]), /not enough labelled escalations \(n=120, denies=3\)/);
+  });
+
+  it('excludes benchmark-held decisions from calibration samples', () => {
+    const records = escalations(300, 0);
+    records.push(
+      decision('busy-calibration', 'allow', 0.9, {
+        action: 'ask',
+        error: ENGINE_BENCHMARK_RUNNING_ERROR,
+      }),
+      {
+        kind: 'outcome',
+        ts: '2026-11-10T00:00:01.000Z',
+        decisionId: 'busy-calibration',
+        outcome: 'deny',
+        source: 'user',
+        verified: true,
+      },
+    );
+    const [stats] = computeStats(records, {}, policies);
+    assert.deepEqual(stats?.calibrationHints, [
+      { rule: 'verdict.allow', threshold: 0.9, n: 300, denies: 0 },
+    ]);
   });
 
   it('excludes unverified outcomes from calibration samples', () => {
@@ -298,6 +340,23 @@ describe('classifier agreement', () => {
     assert.deepEqual(a.disagreements, ['d1']);
     assert.equal(a.errors, 1);
     assert.equal(a.latencyP50Ms, 100);
+  });
+
+  it('excludes benchmark-held decisions from classifier agreement and its latency stats', () => {
+    const input: LogRecord[] = [
+      scoped('ok', 'ask'),
+      scoped('busy', 'ask', {
+        error: ENGINE_BENCHMARK_RUNNING_ERROR,
+        latencyMs: 10_000,
+      }),
+      verdict('ok', 'allow'),
+      verdict('busy', 'deny'),
+    ];
+    const stats = agreement(input);
+    assert.equal(stats.decisions, 1);
+    assert.equal(stats.n, 1);
+    assert.equal(stats.latencyP50Ms, 100);
+    assert.equal(stats.errors, 0);
   });
 
   it('filters the policy decisions to the scope', () => {

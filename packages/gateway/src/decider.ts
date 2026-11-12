@@ -29,6 +29,7 @@ import {
 import { randomUUID } from 'node:crypto';
 
 import { CallStore, type CallDecision } from './call-store.ts';
+import { EngineBusyError } from './engine-busy.ts';
 import type { Engine } from './engines/types.ts';
 import type { LogStore } from './log-store.ts';
 import type { LoadedPolicy } from './policies.ts';
@@ -143,6 +144,7 @@ export class Decider {
   readonly #queue: SerialQueue;
   /** Decisions waiting for a managed engine to load (outside the queue). */
   #preparing = 0;
+  #holdReason: string | null = null;
   readonly #latency = new LatencyWindow();
   readonly #cache = new Map<string, CacheEntry>();
   readonly #precedent: PrecedentStore;
@@ -170,6 +172,12 @@ export class Decider {
 
   get engine(): Engine {
     return this.#engine;
+  }
+
+  /** Fail open while a gateway operation temporarily owns the engine. */
+  hold(reason: string | null): void {
+    this.#holdReason = reason;
+    this.#cache.clear();
   }
 
   /** Called with the engine that errored, so a supervisor can check its health. */
@@ -357,6 +365,9 @@ export class Decider {
 
   /** Pass-through `/v1/systemone`: keys sorted, strings redacted, one request at a time. */
   async systemOne(request: SystemOneRequest, signal: AbortSignal): Promise<SystemOneResponse> {
+    if (this.#holdReason !== null) {
+      throw new EngineBusyError(this.#holdReason);
+    }
     const clean = sortKeysDeep(redactDeep(request));
     const started = performance.now();
     const bounded = this.#signal(signal);
@@ -482,6 +493,9 @@ export class Decider {
     signal: AbortSignal,
     priority: Priority = 'normal',
   ): Promise<EngineResult> {
+    if (this.#holdReason !== null) {
+      return { answers: {}, latencyMs: 0, cached: false, error: this.#holdReason };
+    }
     const hit = this.#cache.get(hash);
     if (hit !== undefined && hit.expires > Date.now()) {
       return { answers: hit.answers, latencyMs: 0, cached: true };

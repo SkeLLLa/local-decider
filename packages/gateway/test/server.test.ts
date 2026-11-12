@@ -14,6 +14,7 @@ import { after, before, describe, it } from 'node:test';
 
 import { MemoryConfigStore } from '../src/config-file.ts';
 import { EngineControl } from '../src/engine-control.ts';
+import { ENGINE_BENCHMARK_RUNNING_ERROR } from '../src/engine-busy.ts';
 import { startGateway, type Gateway } from '../src/runtime.ts';
 import {
   controlHeaders,
@@ -298,6 +299,20 @@ describe('gateway HTTP', () => {
     });
     const body = await json(res);
     assert.ok(typeof body['answers'] === 'object');
+  });
+
+  it('POST /v1/systemone returns 503 while the engine is held', async () => {
+    gw.decider.hold(ENGINE_BENCHMARK_RUNNING_ERROR);
+    try {
+      const res = await post('/v1/systemone', {
+        state: 's',
+        questions: { q: { type: 'choice', instructions: 'i', criteria: { done: 'a', stuck: 'b' } } },
+      });
+      assert.equal(res.status, 503);
+      assert.deepEqual(await json(res), { error: ENGINE_BENCHMARK_RUNNING_ERROR });
+    } finally {
+      gw.decider.hold(null);
+    }
   });
 
   it('records outcomes and serves stats', async () => {
