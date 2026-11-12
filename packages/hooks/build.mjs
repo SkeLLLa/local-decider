@@ -7,7 +7,7 @@ import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const here = dirname(fileURLToPath(import.meta.url));
-const outfile = resolve(here, '../../plugins/local-decider/dist/hook.mjs');
+const outfile = resolve(here, '../../plugins/local-decider/dist/local-decider-hook.mjs');
 
 await build({
   entryPoints: [resolve(here, 'src/main.ts')],
@@ -33,7 +33,7 @@ await build({
 console.log(`wrote ${outfile} (${statSync(outfile).size} bytes)`);
 
 // The mod runs inside Claude Code's mod host, not Node: platform-neutral, ESM, readable.
-const modOutfile = resolve(here, '../../plugins/local-decider/hooks/register.mjs');
+const modOutfile = resolve(here, '../../plugins/local-decider/hooks/local-decider-auto-mode.mjs');
 await build({
   entryPoints: [resolve(here, 'src/mod/register.ts')],
   outfile: modOutfile,

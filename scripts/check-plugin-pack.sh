@@ -8,7 +8,7 @@ cd "$root/plugins/local-decider"
 listing=$(npm pack --dry-run --json | grep '"path"')
 
 status=0
-for want in dist/hook.mjs hooks/register.mjs hooks/run-hook.sh hooks/hooks.json \
+for want in dist/local-decider-hook.mjs hooks/local-decider-auto-mode.mjs hooks/local-decider-hook.sh hooks/hooks.json \
   hooks/codex-hooks.json .claude-plugin/plugin.json .codex-plugin/plugin.json LICENSE NOTICE; do
   if ! printf '%s\n' "$listing" | grep -q "\"path\": \"$want\""; then
     echo "::error::npm pack is missing $want" >&2

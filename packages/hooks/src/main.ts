@@ -1,5 +1,5 @@
 /**
- * Hook entry point: `node dist/hook.mjs <claude|codex> <Event>`. Reads the hook JSON from stdin,
+ * Hook entry point: `node dist/local-decider-hook.mjs <claude|codex> <Event>`. Reads the hook JSON from stdin,
  * runs it, writes the harness answer to stdout and exits 0. Everything else lives in `run.ts`.
  */
 import { run, timeoutOf } from './run.ts';

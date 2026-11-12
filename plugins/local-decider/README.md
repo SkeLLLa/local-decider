@@ -6,11 +6,11 @@ directory serves both harnesses ([ADR-0004](../../docs/adr/0004-marketplace-layo
 
 ## Requirements
 
-- Node.js 20 or newer for the hook processes. The hooks start through `hooks/run-hook.sh`, which
-  uses `node` from `PATH`, then `~/.local/share/mise/shims/node`, `/opt/homebrew/bin/node` and
-  `/usr/local/bin/node`. On macOS a harness started from the Dock or Spotlight has a bare `PATH`,
-  so a Homebrew or mise node is still found. With no node at all the hook exits 0 silently (fail
-  open).
+- Node.js 20 or newer for the hook processes. The hooks start through
+  `hooks/local-decider-hook.sh`, which uses `node` from `PATH`, then
+  `~/.local/share/mise/shims/node`, `/opt/homebrew/bin/node` and `/usr/local/bin/node`. On macOS
+  a harness started from the Dock or Spotlight has a bare `PATH`, so a Homebrew or mise node is
+  still found. With no node at all the hook exits 0 silently (fail open).
 - For the auto-mode mod: Claude Code 2.1.304 or newer.
 - A running `local-decider` gateway, by default at `http://127.0.0.1:8765`
   ([install](../../docs/install.md)). Without it the hooks run only the deterministic guard.
@@ -57,12 +57,12 @@ force-pushing to `main` or `master`, and `shutdown` or `reboot`.
 ## Claude Code auto mode
 
 In auto mode there is no prompt: a server-side classifier decides, and a hook `allow` does not
-skip it. The plugin therefore also ships a mod (`hooks/register.mjs`, listed under `modules` in
-`hooks/hooks.json`; Codex does not read it) that asks the `permission` policy first. When Claude
-Code would hand a plain, unremarkable `ask` to the classifier, the mod can allow it instead. It
-never allows asks from rules, hooks or settings, outside auto mode, for subagents, or for
-anything with a path outside the project, a protected path, `git push`, publishing, network tools,
-`rm -r` or `sudo`.
+skip it. The plugin therefore also ships a mod (`hooks/local-decider-auto-mode.mjs`, listed
+under `modules` in `hooks/hooks.json`; Codex does not read it) that asks the `permission` policy
+first. When Claude Code would hand a plain, unremarkable `ask` to the classifier, the mod can
+allow it instead. It never allows asks from rules, hooks or settings, outside auto mode, for
+subagents, or for anything with a path outside the project, a protected path, `git push`,
+publishing, network tools, `rm -r` or `sudo`.
 
 **The mod never allows anything until you turn it on.** It ships with `scopes.claude-auto` in
 `shadow`: it logs what it would have allowed and nothing else. Check
@@ -77,8 +77,9 @@ Needs Claude Code 2.1.304 or newer (older versions are skipped) and a running ga
 the plugin's hook "was skipped" on each allow, and in Paseo-launched sessions the allow is ignored
 and the classifier decides. See [ADR-0007](../../docs/adr/0007-claude-auto-mode-mod.md).
 
-`hooks/register.mjs` is generated (not committed) from `packages/hooks/src/mod` by the same build as
-`dist/hook.mjs`. `mise run test:mod` validates it and runs `claude plugin test`.
+`hooks/local-decider-auto-mode.mjs` is generated (not committed) from `packages/hooks/src/mod`
+by the same build as `dist/local-decider-hook.mjs`. `mise run test:mod` validates it and runs
+`claude plugin test`.
 
 ## Fail-open
 
@@ -121,7 +122,7 @@ on the agents it launches, so there the hooks run only the guard and `command-ri
 also applies to a `claude -p` or `codex exec` the agent starts itself, since it inherits the
 environment.
 
-`dist/hook.mjs` is generated from `packages/hooks` by
+`dist/local-decider-hook.mjs` is generated from `packages/hooks` by
 `pnpm --filter @ziptie-soft/local-decider-hooks build`. Do not edit it by hand. Neither generated
 file is committed: the release workflow builds them and publishes this directory to npm as
 `@ziptie-soft/local-decider-agent-plugin`, which both marketplaces install

@@ -2,7 +2,7 @@
   "name": "@ziptie-soft/local-decider-hooks",
   "version": "1.0.0",
   "private": true,
-  "description": "Claude Code and Codex hook runner for local-decider, bundled into plugins/local-decider/dist/hook.mjs.",
+  "description": "Claude Code and Codex hook runner for local-decider, bundled into plugins/local-decider/dist/local-decider-hook.mjs.",
   "license": "Apache-2.0",
   "type": "module",
   "scripts": {

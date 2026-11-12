@@ -47,7 +47,7 @@ flowchart LR
 |---|---|---|
 | Core | `packages/core` | `/v1/systemone` types and answer normalisation, policy schema and rules, redaction, truncation, gateway client |
 | Gateway | `packages/gateway` | HTTP service, engine supervisor, decider, shadow log, stats, MCP server, `local-decider` CLI, service units |
-| Hooks | `packages/hooks` → `plugins/local-decider/dist/hook.mjs`, `hooks/register.mjs` (built at release, published as `@ziptie-soft/local-decider-agent-plugin`) | One zero-dependency hook runner for Claude Code and Codex, with the deterministic guard, and the Claude Code auto-mode mod |
+| Hooks | `packages/hooks` → `plugins/local-decider/dist/local-decider-hook.mjs`, `hooks/local-decider-auto-mode.mjs` (built at release, published as `@ziptie-soft/local-decider-agent-plugin`) | One zero-dependency hook runner for Claude Code and Codex, with the deterministic guard, and the Claude Code auto-mode mod |
 | Paseo plugin | `packages/paseo-plugin` | Hooks, decision rows, settings and status screens; never runs a model in-process |
 | Policies | `policies/` | Default policies and eval fixtures |
 
@@ -111,8 +111,9 @@ Adapters change behaviour only when `enforced` is true, and only in ways their e
 | Claude Code, Codex | `UserPromptSubmit` → `routing` | Add a hint that names the mapped model |
 | Claude Code, Codex | `Stop` → `turn-outcome` | Nothing: logged only, since Stop output would continue the turn |
 
-In Claude Code auto mode the plugin's mod (`plugins/local-decider/hooks/register.mjs`, built from
-`packages/hooks/src/mod/`) asks `permission` before the server-side classifier does:
+In Claude Code auto mode the plugin's mod
+(`plugins/local-decider/hooks/local-decider-auto-mode.mjs`, built from `packages/hooks/src/mod/`)
+asks `permission` before the server-side classifier does:
 
 ```mermaid
 sequenceDiagram

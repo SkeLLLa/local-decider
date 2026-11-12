@@ -43,6 +43,6 @@
     "provenance": true
   },
   "scripts": {
-    "prepublishOnly": "test -s dist/hook.mjs && test -s hooks/register.mjs"
+    "prepublishOnly": "test -s dist/local-decider-hook.mjs && test -s hooks/local-decider-auto-mode.mjs"
   }
 }

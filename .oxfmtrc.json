@@ -16,7 +16,7 @@
   },
   "ignorePatterns": [
     "**/dist/",
-    "plugins/local-decider/hooks/register.mjs",
+    "plugins/local-decider/hooks/local-decider-auto-mode.mjs",
     "**/coverage/",
     "**/node_modules/",
     "**/temp/",
