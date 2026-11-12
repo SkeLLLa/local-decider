@@ -11,7 +11,7 @@ import {
 } from 'node:fs';
 import { createServer, type Server, type ServerResponse } from 'node:http';
 import { join } from 'node:path';
-import { describe, it } from 'node:test';
+import { describe, it, type TestContext } from 'node:test';
 import { stringify } from 'yaml';
 
 import type { BenchmarkHost } from '../src/benchmark-job.ts';
@@ -34,6 +34,7 @@ import {
   parseSelection,
   parseThresholds,
 } from '../src/engine-control.ts';
+import { FallbackPolicy } from '../src/engine-fallback.ts';
 import type { HostInfo } from '../src/engines/descriptor.ts';
 import { hardwareFingerprint } from '../src/engines/fingerprint.ts';
 import type { HostCapabilities } from '../src/engines/host-capabilities.ts';
@@ -57,16 +58,21 @@ class ModelEngine implements Engine {
   readonly config: EngineConfig;
   started = 0;
   stopped = 0;
-  constructor(config: EngineConfig) {
+  readonly #failing: { on: boolean; ready?: boolean } | undefined;
+  constructor(config: EngineConfig, failing?: { on: boolean; ready?: boolean }) {
     this.config = config;
     this.id = config.type;
     this.model = config.model;
+    this.#failing = failing;
   }
   async start(): Promise<void> {
     this.started += 1;
   }
   health(): EngineHealth {
-    return { state: 'starting', model: this.model };
+    if (this.#failing?.on === true) {
+      return { state: 'failed', model: this.model, detail: 'boom' };
+    }
+    return { state: this.#failing?.ready === true ? 'ready' : 'starting', model: this.model };
   }
   async decide(): Promise<never> {
     throw new Error('not used');
@@ -161,6 +167,8 @@ interface SetupOptions {
   readonly host?: HostInfo;
   readonly benchmarkStore?: BenchmarkStore;
   readonly llamaServer?: boolean;
+  /** While `on`, every engine reports `failed`; with `ready`, `ready` instead of `starting`. */
+  readonly failing?: { on: boolean; ready?: boolean };
 }
 
 const LINUX_HOST: HostInfo = {
@@ -214,7 +222,7 @@ function setup(options: SetupOptions = {}): Setup {
     installed: async (ids) => new Map(ids.map((id) => [id, options.installed ?? true])),
     ...(options.benchmarkStore === undefined ? {} : { benchmarkStore: options.benchmarkStore }),
     create: (c) => {
-      const next = new ModelEngine(c);
+      const next = new ModelEngine(c, options.failing);
       created.push(next);
       return next;
     },
@@ -426,6 +434,98 @@ describe('EngineControl benchmark lease', () => {
     assert.equal(control.current()?.model, 'd3-mini-q4_k_m');
     assert.deepEqual(control.settings.selection, { mode: 'auto', family });
     assert.equal(stringify(control.settings), configBefore);
+  });
+});
+
+async function automaticControl(t: TestContext): Promise<{
+  control: EngineControl;
+  failing: { on: boolean; ready?: boolean };
+  probes: { capabilities: number };
+  spies: { success: number; failure: number; retry: number };
+  counts: () => { success: number; failure: number; retry: number };
+}> {
+  const failing: { on: boolean; ready?: boolean } = { on: false };
+  const probes = { capabilities: 0 };
+  const { control } = setup({
+    selection: { mode: 'auto' },
+    failing,
+    capabilities: async () => {
+      probes.capabilities += 1;
+      return stubCapabilities();
+    },
+  });
+  await control.reconcileAuto();
+  await control.idle();
+  await settleEventLoop();
+  const success = t.mock.method(FallbackPolicy.prototype, 'recordSuccess');
+  const failure = t.mock.method(FallbackPolicy.prototype, 'recordFailure');
+  const retry = t.mock.method(FallbackPolicy.prototype, 'nextRetryAt');
+  const counts = (): { success: number; failure: number; retry: number } => ({
+    success: success.mock.callCount(),
+    failure: failure.mock.callCount(),
+    retry: retry.mock.callCount(),
+  });
+  return { control, failing, probes, spies: counts(), counts };
+}
+
+async function fallbackOf(control: EngineControl): Promise<unknown> {
+  return ((await control.status())['active'] as Record<string, unknown>)['fallback'];
+}
+
+describe('EngineControl benchmark accounting', () => {
+  const BENCH_TARGET = { engine: 'strands-decider', model: E2B, device: 'cpu' } as const;
+
+  it('a leased engine that starts does not feed the fallback policy or queue a reconcile', async (t) => {
+    const { control, failing, probes, spies, counts } = await automaticControl(t);
+    const probed = probes.capabilities;
+    const lease = control.beginBenchmark();
+    failing.ready = true;
+    await control.benchmarkSwap(lease, BENCH_TARGET);
+    await settleEventLoop();
+    assert.deepEqual(counts(), spies);
+    assert.equal(probes.capabilities, probed);
+    await control.reconcileAuto();
+    assert.equal(probes.capabilities, probed);
+    assert.equal(await fallbackOf(control), undefined);
+    assert.deepEqual(counts(), spies);
+    await control.endBenchmark(lease, { restore: false });
+  });
+
+  it('a leased engine that fails records no failure, no note and arms no retry', async (t) => {
+    const { control, failing, probes, spies, counts } = await automaticControl(t);
+    const probed = probes.capabilities;
+    const lease = control.beginBenchmark();
+    failing.on = true;
+    await control.benchmarkSwap(lease, BENCH_TARGET);
+    await settleEventLoop();
+    await control.idle();
+    assert.equal(control.activeHealth().state, 'failed');
+    assert.deepEqual(counts(), spies);
+    assert.equal(probes.capabilities, probed);
+    assert.equal(await fallbackOf(control), undefined);
+    await control.endBenchmark(lease, { restore: false });
+  });
+
+  it('accounts for failures again once the restore has installed a normal engine', async (t) => {
+    const { control, failing, spies, counts } = await automaticControl(t);
+    const lease = control.beginBenchmark();
+    await control.benchmarkSwap(lease, BENCH_TARGET);
+    await settleEventLoop();
+    assert.deepEqual(counts(), spies);
+    failing.on = true;
+    assert.deepEqual(await control.endBenchmark(lease, { restore: true }), {
+      ok: true,
+      error: null,
+    });
+    await lease.done;
+    await control.idle();
+    await settleEventLoop();
+    // Accounting resumed: the failure was recorded against the restored engine's candidate.
+    assert.ok(counts().failure > spies.failure);
+    assert.equal(control.activeHealth().state, 'failed');
+    // `active.fallback` is not asserted: this fake fails the instant `start()` resolves, which is
+    // before the reconcile that installed it clears its own note (the same happens without any
+    // benchmark). A real engine fails later, after that reconcile has returned.
   });
 });
 
