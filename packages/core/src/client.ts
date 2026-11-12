@@ -5,6 +5,7 @@
 import type { DecideRequest, DecideResponse } from './decision.ts';
 
 export const DEFAULT_GATEWAY_URL = 'http://127.0.0.1:8765';
+export const CONTROL_HEADER = 'x-local-decider-control';
 
 /** `value` without trailing `/`. A loop, not `/\/+$/`, which backtracks quadratically on long runs. */
 export function trimTrailingSlashes(value: string): string {
@@ -20,6 +21,8 @@ export interface ClientOptions {
   readonly timeoutMs?: number;
   /** Bearer token for a remote gateway. Read from the environment by the caller; never logged. */
   readonly token?: string;
+  /** Local control token. Sent only when `baseUrl` points to loopback. */
+  readonly controlToken?: string | undefined;
   readonly fetch?: typeof fetch;
 }
 
@@ -47,13 +50,20 @@ export interface GatewayRequestResult {
 const LOOPBACK = new Set(['localhost', '[::1]', '::1']);
 const LOOPBACK_V4 = /^127\.\d{1,3}\.\d{1,3}\.\d{1,3}$/;
 
+/** True when a URL's host is this machine. */
+export function loopbackUrl(baseUrl: string): boolean {
+  try {
+    const { hostname } = new URL(baseUrl);
+    return LOOPBACK.has(hostname) || LOOPBACK_V4.test(hostname);
+  } catch {
+    return false;
+  }
+}
+
 /** True for https URLs and loopback hosts; a bearer token is only sent to those. */
 export function tokenAllowed(baseUrl: string): boolean {
   try {
-    const url = new URL(baseUrl);
-    return (
-      url.protocol === 'https:' || LOOPBACK.has(url.hostname) || LOOPBACK_V4.test(url.hostname)
-    );
+    return new URL(baseUrl).protocol === 'https:' || loopbackUrl(baseUrl);
   } catch {
     return false;
   }
@@ -63,6 +73,7 @@ export class GatewayClient {
   readonly #baseUrl: string;
   readonly #timeoutMs: number;
   readonly #token: string | undefined;
+  readonly #controlToken: string | undefined;
   readonly #fetch: typeof fetch;
 
   constructor(options: ClientOptions = {}) {
@@ -70,6 +81,8 @@ export class GatewayClient {
     this.#timeoutMs = options.timeoutMs ?? 2000;
     // Never send the token in clear text to another machine: https, or loopback only.
     this.#token = tokenAllowed(this.#baseUrl) ? options.token : undefined;
+    this.#controlToken =
+      loopbackUrl(this.#baseUrl) && options.controlToken !== '' ? options.controlToken : undefined;
     this.#fetch = options.fetch ?? globalThis.fetch;
   }
 
@@ -120,10 +133,14 @@ export class GatewayClient {
     if (this.#token !== undefined && this.#token !== '') {
       headers['authorization'] = `Bearer ${this.#token}`;
     }
+    if (this.#controlToken !== undefined) {
+      headers[CONTROL_HEADER] = this.#controlToken;
+    }
     try {
       const res = await this.#fetch(`${this.#baseUrl}${path}`, {
         method,
         headers,
+        redirect: 'error',
         signal: AbortSignal.timeout(this.#timeoutMs),
         ...(body === undefined ? {} : { body: JSON.stringify(body) }),
       });

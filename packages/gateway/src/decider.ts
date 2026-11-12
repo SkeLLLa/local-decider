@@ -33,13 +33,27 @@ import type { Engine } from './engines/types.ts';
 import type { LogStore } from './log-store.ts';
 import type { LoadedPolicy } from './policies.ts';
 import { PrecedentStore } from './precedent.ts';
-import { LatencyWindow, SerialQueue, type Priority } from './queue.ts';
+import {
+  ABANDON_GRACE_MS,
+  admissionLimit,
+  LatencyWindow,
+  QueueFullError,
+  SerialQueue,
+  type Priority,
+  type QueueLimits,
+} from './queue.ts';
 
 const CACHE_MAX = 500;
 type PrecedentSettings = NonNullable<Policy['precedent']>;
 
-/** Decisions waiting for the engine before new ones are refused (fail open, logged). */
+/** Decisions waiting for or holding the engine before new ones are refused (fail open, logged). */
 export const QUEUE_MAX = 8;
+/**
+ * Of QUEUE_MAX, slots `normal` decisions may not take. `low` ones may fill the queue: a `high`
+ * decision arriving at QUEUE_MAX evicts the oldest waiting `low` one.
+ */
+const QUEUE_HIGH_RESERVE = 2;
+const QUEUE_LIMITS: QueueLimits = { max: QUEUE_MAX, highReserve: QUEUE_HIGH_RESERVE };
 
 function precedentWindow(policies: ReadonlyMap<string, LoadedPolicy>): number | undefined {
   let days: number | undefined;
@@ -85,6 +99,8 @@ export interface DeciderOptions {
   readonly log: LogStore;
   readonly decisionTimeoutMs: number;
   readonly now?: () => Date;
+  /** How long an engine job that ignores its deadline keeps the engine; default 1 s. For tests. */
+  readonly queueGraceMs?: number;
 }
 
 interface CacheEntry {
@@ -124,7 +140,9 @@ export class Decider {
   readonly #log: LogStore;
   readonly #timeoutMs: number;
   readonly #now: () => Date;
-  readonly #queue = new SerialQueue();
+  readonly #queue: SerialQueue;
+  /** Decisions waiting for a managed engine to load (outside the queue). */
+  #preparing = 0;
   readonly #latency = new LatencyWindow();
   readonly #cache = new Map<string, CacheEntry>();
   readonly #precedent: PrecedentStore;
@@ -135,6 +153,7 @@ export class Decider {
 
   constructor(options: DeciderOptions) {
     this.#engine = options.engine;
+    this.#queue = new SerialQueue({ abandonGraceMs: options.queueGraceMs ?? ABANDON_GRACE_MS });
     this.#policies = new Map(options.policies);
     this.#log = options.log;
     this.#timeoutMs = options.decisionTimeoutMs;
@@ -327,8 +346,9 @@ export class Decider {
     return previous;
   }
 
+  /** Decisions in the engine queue or waiting for the engine to load. */
   get queueDepth(): number {
-    return this.#queue.depth;
+    return this.#queue.depth + this.#preparing;
   }
 
   latency(p: number): number | undefined {
@@ -389,15 +409,13 @@ export class Decider {
     const state = buildState(sections, policy.state.maxTokens);
     const questions = sortKeysDeep(policyQuestions(policy));
     const hash = inputHash({ id: policy.id, version: policy.version, state, questions });
-    // Nobody acts on a shadow decision, so it outlives a caller that gave up (a hook's 1.5 s
-    // budget is shorter than a CPU decision) and is still logged, within decisionTimeoutMs.
-    const callerSignal = mode === 'shadow' ? new AbortController().signal : signal;
+    const admitted = admission(mode, policy, signal);
     const result = await this.#answers(
       { state, questions },
       hash,
       policy.cache.ttlSeconds,
-      callerSignal,
-      policy.priority,
+      admitted.signal,
+      admitted.priority,
     );
     const match = evaluateRules(policy, result.answers, {
       precedentAllows: precedent?.allows ?? false,
@@ -468,26 +486,27 @@ export class Decider {
     if (hit !== undefined && hit.expires > Date.now()) {
       return { answers: hit.answers, latencyMs: 0, cached: true };
     }
-    // A managed engine loads on demand and waits inside decide(); others must already be up.
-    if (this.#engine.ensureReady === undefined && this.#engine.health().state !== 'ready') {
-      return {
-        answers: {},
-        latencyMs: 0,
-        cached: false,
-        error: `engine ${this.#engine.health().state}`,
-      };
-    }
-    if (this.#queue.depth >= QUEUE_MAX) {
-      return { answers: {}, latencyMs: 0, cached: false, error: 'engine queue full' };
+    // A managed engine (ensureReady) loads on demand, outside the queue; others must be up.
+    const engine = this.#engine;
+    if (engine.ensureReady === undefined && engine.health().state !== 'ready') {
+      return { answers: {}, latencyMs: 0, cached: false, error: `engine ${engine.health().state}` };
     }
     const started = performance.now();
-    const engine = this.#engine;
     try {
       const bounded = this.#signal(signal);
+      if (engine.ensureReady !== undefined && engine.health().state !== 'ready') {
+        await this.#prepare(engine, bounded, priority);
+      }
+      // The job reads this.#engine: after replaceEngine during the load, the new engine answers
+      // (loading inside the slot if cold) and the handlers below still name `engine`. Intended:
+      // decisions in flight on a replaced engine only need to fail open. Likewise, if the engine
+      // unloads between #prepare and the job, ManagedEngine.decide loads inside the slot (rare;
+      // the old behaviour).
       const response = await this.#queue.run(
         bounded,
         () => this.#engine.decide(request, bounded),
         priority,
+        QUEUE_LIMITS,
       );
       const answers = normaliseAnswers(request.questions, response);
       const latencyMs = performance.now() - started;
@@ -496,14 +515,44 @@ export class Decider {
       this.#successHandler?.(engine);
       return { answers, latencyMs, cached: false };
     } catch (error) {
-      this.#failureHandler?.(engine);
-      return {
-        answers: {},
-        latencyMs: performance.now() - started,
-        cached: false,
-        error: errorMessage(error),
-      };
+      return this.#failed(error, engine, started);
     }
+  }
+
+  /**
+   * Wait for a managed engine to load before taking a queue slot, so a cold load blocks no one.
+   * Waiters count toward queueDepth and the same limits as the queue; `high` ones are never
+   * refused here (they evict a waiting `low` once the engine is ready).
+   */
+  async #prepare(engine: Engine, signal: AbortSignal, priority: Priority): Promise<void> {
+    // Checked apart from the queue's limits: a burst that finishes a cold load is re-checked by
+    // the queue itself, and `high` waiting for the load is bounded only by decisionTimeoutMs.
+    if (priority !== 'high' && this.queueDepth >= admissionLimit(priority, QUEUE_LIMITS)) {
+      throw new QueueFullError();
+    }
+    this.#preparing += 1;
+    try {
+      await engine.ensureReady?.(signal);
+    } finally {
+      this.#preparing -= 1;
+    }
+  }
+
+  /**
+   * A full queue is not an engine failure: no failure handler, and `latencyMs: 0` even for a
+   * decision evicted after waiting (kept out of latency stats on purpose).
+   */
+  #failed(error: unknown, engine: Engine, started: number): EngineResult {
+    if (error instanceof QueueFullError) {
+      return { answers: {}, latencyMs: 0, cached: false, error: 'engine queue full' };
+    }
+    this.#failureHandler?.(engine);
+    return {
+      answers: {},
+      latencyMs: performance.now() - started,
+      cached: false,
+      error: errorMessage(error),
+    };
   }
 
   #remember(hash: string, answers: Answers, ttlSeconds: number): void {
@@ -554,6 +603,21 @@ export class Decider {
     this.#log.append(record);
     this.#precedent.noteDecision(record);
   }
+}
+
+/**
+ * Nobody acts on a shadow decision, so it outlives a caller that gave up (a hook's 1.5 s budget
+ * is shorter than a CPU decision), is still logged within decisionTimeoutMs, and yields to
+ * decisions someone waits on.
+ */
+function admission(
+  mode: Mode,
+  policy: Policy,
+  signal: AbortSignal,
+): { readonly signal: AbortSignal; readonly priority: Priority } {
+  return mode === 'shadow'
+    ? { signal: new AbortController().signal, priority: 'low' }
+    : { signal, priority: policy.priority };
 }
 
 /** `scope`, `callId`, `permissionMode` and `subagent`, from the request's `scope` and `call`. */

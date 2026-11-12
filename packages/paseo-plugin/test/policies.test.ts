@@ -134,7 +134,7 @@ describe('rule thresholds', () => {
     kind: 'minProbability',
     default: 0.95,
     value: 0.95,
-    floor: 0.5,
+    floor: 0.8,
   };
 
   it('lists the thresholds of the variant answering, and sets them through the gateway', async () => {
@@ -160,9 +160,9 @@ describe('rule thresholds', () => {
       thresholdLabel({ ...allow, action: 'route:fast', kind: 'minConfidence' }),
       'route to fast when verdict is allow',
     );
-    assert.equal(thresholdFloor(allow), 0.5);
+    assert.equal(thresholdFloor(allow), 0.8);
     assert.equal(thresholdFloor({ ...allow, action: 'deny', floor: 0 }), 0);
-    assert.equal(clampThreshold(allow, 0.333), 0.5);
+    assert.equal(clampThreshold(allow, 0.333), 0.8);
     assert.equal(clampThreshold(allow, 0.876), 0.88);
     assert.equal(clampThreshold(allow, 1.2), 1);
     assert.equal(clampThreshold({ ...allow, action: 'deny', floor: 0.554 }, 0.5), 0.554);
@@ -178,7 +178,7 @@ describe('rule thresholds', () => {
       value: 0.554,
       error: null,
     });
-    assert.match(parseThresholdInput(allow, '0.4').error ?? '', /0\.50 to 1\.00/);
+    assert.match(parseThresholdInput(allow, '0.4').error ?? '', /0\.80 to 1\.00/);
     assert.notEqual(parseThresholdInput(allow, 'abc').error, null);
     assert.notEqual(parseThresholdInput(allow, '150').error, null);
     assert.deepEqual(parseThresholdInput({ ...allow, action: 'deny', floor: 0 }, '0.3'), {
@@ -187,10 +187,9 @@ describe('rule thresholds', () => {
     });
   });
 
-  it('tints the strong and soft warning bands of an auto-allow slider only', () => {
+  it('tints only the soft warning band of an auto-allow slider at the floor', () => {
     assert.deepEqual(warningZones(allow), [
-      { from: 0.5, to: ALLOW_THRESHOLD.strong, strong: true },
-      { from: ALLOW_THRESHOLD.strong, to: ALLOW_THRESHOLD.soft, strong: false },
+      { from: ALLOW_THRESHOLD.floor, to: ALLOW_THRESHOLD.soft, strong: false },
     ]);
     assert.deepEqual(warningZones({ ...allow, floor: 0.85 }), [
       { from: 0.85, to: ALLOW_THRESHOLD.soft, strong: false },

@@ -16,6 +16,10 @@ const QUESTIONS: Questions = {
   level: { type: 'score', instructions: 'Angry?', criteria: ['Calm', 'Frustrated', 'Very angry'] },
 };
 
+function runWire(id: string, wire: unknown): ReturnType<typeof normaliseAnswers> {
+  return normaliseAnswers(QUESTIONS, { answers: { [id]: wire as WireAnswer } });
+}
+
 describe('confidence formulas', () => {
   it('choice: uniform is 0, one-hot is 1', () => {
     assert.equal(choiceConfidence({ a: 0.5, b: 0.5 }), 0);
@@ -120,5 +124,121 @@ describe('normaliseAnswers', () => {
       answers: { urgent: { type: 'noul', noul: Number.NaN } },
     });
     assert.deepEqual(answers, {});
+  });
+});
+
+describe('normaliseAnswers malformed wires', () => {
+  const bad: readonly [string, string, unknown][] = [
+    [
+      'choice: NaN probability',
+      'dept',
+      { type: 'choice', choice: 'billing', probabilities: { billing: Number.NaN, technical: 1 } },
+    ],
+    [
+      'choice: negative probability',
+      'dept',
+      { type: 'choice', choice: 'billing', probabilities: { billing: 1.2, technical: -0.2 } },
+    ],
+    [
+      'choice: label-keyed (unknown ids)',
+      'dept',
+      { type: 'choice', choice: 'billing', probabilities: { Money: 0.9, Tech: 0.1 } },
+    ],
+    [
+      'choice: does not sum to 1',
+      'dept',
+      { type: 'choice', choice: 'billing', probabilities: { billing: 0.3, technical: 0.3 } },
+    ],
+    ['choice: empty map', 'dept', { type: 'choice', choice: 'billing', probabilities: {} }],
+    [
+      'choice: single entry',
+      'dept',
+      { type: 'choice', choice: 'billing', probabilities: { billing: 1 } },
+    ],
+    [
+      'choice: unknown wire.choice',
+      'dept',
+      { type: 'choice', choice: 'refunds', probabilities: { billing: 0.9, technical: 0.1 } },
+    ],
+    ['choice: probabilities missing', 'dept', { type: 'choice', choice: 'billing' }],
+    ['noul: probability below 0', 'urgent', { type: 'noul', noul: -0.1 }],
+    ['noul: probability above 1', 'urgent', { type: 'noul', noul: 1.1 }],
+    [
+      'choice: array probabilities',
+      'dept',
+      { type: 'choice', choice: 'billing', probabilities: [0.9, 0.1] },
+    ],
+    [
+      'score: label-keyed',
+      'level',
+      {
+        type: 'score',
+        score: 1,
+        probabilities: { 'Calm': 0.2, 'Frustrated': 0.6, 'Very angry': 0.2 },
+      },
+    ],
+    ['score: missing probabilities', 'level', { type: 'score', score: 1 }],
+    [
+      'score: out-of-range index',
+      'level',
+      { type: 'score', score: 1, probabilities: { '1': 0.5, '7': 0.5 } },
+    ],
+    [
+      'score: score above final level',
+      'level',
+      { type: 'score', score: 3, probabilities: { '0': 0.3, '1': 0.4, '2': 0.3 } },
+    ],
+    [
+      'score: non-finite score',
+      'level',
+      { type: 'score', score: Number.NaN, probabilities: { '0': 0.3, '1': 0.4, '2': 0.3 } },
+    ],
+    [
+      'score: sums to 0',
+      'level',
+      { type: 'score', score: 1, probabilities: { '0': 0, '1': 0, '2': 0 } },
+    ],
+  ];
+  for (const [name, id, wire] of bad) {
+    it(`drops ${name}`, () => {
+      assert.deepEqual(runWire(id, wire), {});
+    });
+  }
+
+  it('drops a single-option question', () => {
+    const answers = normaliseAnswers(
+      { q: { type: 'choice', instructions: 'i', criteria: { only: 'x' } } },
+      { answers: { q: { type: 'choice', choice: 'only', probabilities: { only: 1 } } } },
+    );
+    assert.deepEqual(answers, {});
+  });
+
+  it('drops a probability map missing a known option id', () => {
+    const answers = normaliseAnswers(
+      { q: { type: 'choice', instructions: 'i', criteria: { a: 'a', b: 'b', c: 'c' } } },
+      { answers: { q: { type: 'choice', choice: 'a', probabilities: { a: 0.7, b: 0.3 } } } },
+    );
+    assert.deepEqual(answers, {});
+  });
+
+  it('accepts sums within tolerance when every option id is present', () => {
+    const answers = normaliseAnswers(
+      { q: { type: 'choice', instructions: 'i', criteria: { a: 'a', b: 'b', c: 'c' } } },
+      { answers: { q: { type: 'choice', choice: 'a', probabilities: { a: 0.68, b: 0.3, c: 0 } } } },
+    );
+    assert.deepEqual(answers['q']?.probabilities, { a: 0.68, b: 0.3, c: 0 });
+  });
+
+  it('takes the argmax even when the engine names another choice', () => {
+    const answers = runWire('dept', {
+      type: 'choice',
+      choice: 'technical',
+      probabilities: { billing: 0.9, technical: 0.1 },
+    });
+    assert.equal(answers['dept']?.answer, 'billing');
+  });
+
+  it('reads a noul tie as false', () => {
+    assert.equal(runWire('urgent', { type: 'noul', noul: 0.5 })['urgent']?.answer, 'false');
   });
 });

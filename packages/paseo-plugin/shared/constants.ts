@@ -1,6 +1,12 @@
 /** Plain values shared by the daemon and app bundles. */
 
 export const DEFAULT_GATEWAY_URL = 'http://127.0.0.1:8765';
+/** Daemon env: bearer for a remote gateway. Never in settings, never logged. */
+export const TOKEN_ENV = 'LOCAL_DECIDER_TOKEN';
+/** Daemon env: the only non-loopback origin (https) that may receive TOKEN_ENV. */
+export const TOKEN_ORIGIN_ENV = 'LOCAL_DECIDER_TOKEN_ORIGIN';
+export const REPORT_HEADER = 'x-local-decider-report';
+export const CONTROL_HEADER = 'x-local-decider-control';
 /** Name of the injected MCP server and prefix of every timeline row id. */
 export const MCP_SERVER_NAME = 'local-decider';
 
@@ -21,9 +27,9 @@ export const PLUGIN_MODES = ['off', 'shadow', 'act'] as const;
 /**
  * Lowering an auto-allow threshold (permission `verdict.allow`, default 0.95): below `soft` the
  * settings warn that more requests are auto-allowed, below `strong` that unsure ones are too.
- * `floor` mirrors core's `ALLOW_THRESHOLD_FLOOR`, which the gateway enforces (test/policies).
+ * `floor` mirrors core's `ALLOW_THRESHOLD_FLOOR` (0.8), which the gateway enforces.
  */
-export const ALLOW_THRESHOLD = { soft: 0.9, strong: 0.8, floor: 0.5 } as const;
+export const ALLOW_THRESHOLD = { soft: 0.9, strong: 0.8, floor: 0.8 } as const;
 
 /** Where the status item sits in the sidebar, or hidden. */
 export const SIDEBAR_POSITIONS = ['footer', 'header', 'hidden'] as const;

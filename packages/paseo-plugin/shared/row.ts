@@ -11,6 +11,14 @@ const LOW_CONFIDENCE = 0.7;
 /** Below this confidence the summary says `unsure` instead of presenting the answer. */
 const UNSURE_CONFIDENCE = 0.5;
 
+/** Permission-row labels (ADR-0006 addendum): only `unsafe` is reported, as a veto. */
+export const LABEL_CHOICES = ['safe', 'unsafe', 'skip'] as const;
+export type LabelChoice = (typeof LABEL_CHOICES)[number];
+/** What a permission row can be labelled as. */
+export type LabelKind = 'declined' | 'interrupted' | 'auto-allowed';
+/** Label chips stay actionable this long after the answer or auto-allow (gateway replays 25 h). */
+export const LABEL_WINDOW_MS = 24 * 60 * 60 * 1000;
+
 export const decisionRowSchema = z.object({
   decisionId: z.string(),
   policy: z.string(),
@@ -39,6 +47,15 @@ export const decisionRowSchema = z.object({
   options: z.array(z.string().max(100)).max(MAX_OPTIONS).default([]),
   /** The answer the user reported as right. */
   feedback: z.string().max(100).nullable().default(null),
+  /**
+   * Epoch ms (daemon clock) of the user's answer or our auto-allow. Null: no label chips. Display
+   * hint only: the daemon never trusts it from a client.
+   */
+  answeredAt: z.number().int().nonnegative().nullable().default(null),
+  /** The decision had a precedent key, so an `unsafe` label can veto its subject. */
+  vetoable: z.boolean().default(false),
+  /** The user's label on a permission row, once given. */
+  label: z.enum(LABEL_CHOICES).nullable().default(null),
 });
 
 export type DecisionRow = z.output<typeof decisionRowSchema>;
@@ -85,6 +102,9 @@ export function toRowData(res: DecideResponse, ctx: RowContext): DecisionRow {
     rowId: rowId(ctx.source, ctx.key),
     options: Object.keys(primary?.[1].probabilities ?? {}).slice(0, MAX_OPTIONS),
     feedback: null,
+    answeredAt: null,
+    vetoable: res.precedentKey !== undefined,
+    label: null,
   };
 }
 
@@ -164,4 +184,71 @@ export function rowDetail(row: DecisionRow): string {
     parts.push(`engine error: ${row.error}`);
   }
   return parts.filter((p) => p !== '').join(' · ');
+}
+
+/** The label kind of a row the daemon drew, or null when it offers no label chips. */
+export function rowLabelKind(row: DecisionRow): LabelKind | null {
+  if (row.source !== 'permission' || row.answeredAt === null) {
+    return null;
+  }
+  if (row.feedback === 'decline') {
+    return 'declined';
+  }
+  if (row.feedback === 'interrupted') {
+    return 'interrupted';
+  }
+  return row.applied && row.feedback === null && row.vetoable ? 'auto-allowed' : null;
+}
+
+/** The chips a label kind offers. */
+export function choicesFor(kind: LabelKind): readonly LabelChoice[] {
+  return kind === 'auto-allowed' ? ['unsafe'] : LABEL_CHOICES;
+}
+
+/** True once the label window has passed (the client hides chips; the daemon rejects taps). */
+export function labelExpired(answeredAt: number, now: number): boolean {
+  return now - answeredAt > LABEL_WINDOW_MS;
+}
+
+/** Best-effort chips for the client to render now; the daemon decides on a tap. */
+export function labelChoices(row: DecisionRow, now: number): readonly LabelChoice[] {
+  const kind = rowLabelKind(row);
+  if (kind === null || row.label !== null || row.answeredAt === null) {
+    return [];
+  }
+  return labelExpired(row.answeredAt, now) ? [] : choicesFor(kind);
+}
+
+/** The outcome a label reports to the gateway; null reports nothing. */
+export function labelOutcome(label: LabelChoice): string | null {
+  return label === 'unsafe' ? 'unsafe' : null;
+}
+
+const MARKED_UNSAFE =
+  '✗ Marked unsafe · past allows no longer lower the threshold; high-confidence rules may still allow it';
+
+function declineNote(row: DecisionRow, feedback: 'decline' | 'interrupted'): string {
+  const base = feedback === 'decline' ? '✗ You declined' : '■ You stopped the agent';
+  if (row.label === 'safe') {
+    return `${base} · not a safety issue`;
+  }
+  return row.label === 'unsafe' ? `${base} · marked unsafe` : base;
+}
+
+/** The permission row's answer line, or null while unanswered. */
+export function permissionNote(row: DecisionRow): string | null {
+  const { feedback } = row;
+  if (row.applied && row.label === 'unsafe') {
+    return MARKED_UNSAFE;
+  }
+  if (feedback === null) {
+    return null;
+  }
+  if (feedback === 'allow') {
+    return '✓ You allowed';
+  }
+  if (feedback === 'decline' || feedback === 'interrupted') {
+    return declineNote(row, feedback);
+  }
+  return feedback === 'deny' ? '✗ You denied' : `You answered: ${feedback}`;
 }

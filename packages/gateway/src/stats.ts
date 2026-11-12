@@ -11,6 +11,12 @@ import type {
 
 import { classifierAgreement, type ClassifierAgreement } from './classifier-agreement.ts';
 import { percentile, sortedLatencies, wilsonUpper } from './numbers.ts';
+import {
+  comparableOutcome,
+  correctedOutcome,
+  isVerifiedOutcome,
+  outcomeClass,
+} from './outcome-labels.ts';
 import type { LoadedPolicy } from './policies.ts';
 import {
   computePromptTime,
@@ -39,7 +45,7 @@ export interface PolicyStats {
   readonly actions: Readonly<Record<string, number>>;
   readonly latencyP50Ms?: number;
   readonly latencyP95Ms?: number;
-  /** Decisions with a reported outcome. */
+  /** Decisions with a reported outcome (`decline` and `interrupted` don't label the model's answer). */
   readonly labelled: number;
   /** Share of labelled decisions whose predicted answer matched the outcome. */
   readonly agreement?: number;
@@ -60,6 +66,7 @@ export interface CalibrationHint {
   readonly rule: string;
   readonly threshold?: number;
   readonly n: number;
+  /** Deny or unsafe. */
   readonly denies: number;
 }
 
@@ -112,6 +119,8 @@ function countActions(decisions: readonly ShadowRecord[]): Record<string, number
 
 interface Joined {
   readonly outcomes: ReadonlyMap<string, OutcomeRecord>;
+  /** The effective verified outcome per decision (first wins; neutral may become a veto). */
+  readonly verified: ReadonlyMap<string, string>;
   /** The latest outcome per decision that the auto-mode classifier reported. */
   readonly classifier: ReadonlyMap<string, OutcomeRecord>;
   readonly scope: Scope;
@@ -154,13 +163,13 @@ function eligibleAllowRules(policy: Policy): PolicyRule[] {
 function samplesForRule(
   rule: PolicyRule,
   decisions: readonly ShadowRecord[],
-  outcomes: ReadonlyMap<string, OutcomeRecord>,
+  verified: ReadonlyMap<string, string>,
 ): ThresholdSample[] {
   const samples: ThresholdSample[] = [];
   for (const decision of decisions) {
-    const record = outcomes.get(decision.decisionId);
-    const outcome = record?.verified === true ? record.outcome : undefined;
-    if (decision.action !== 'ask' || (outcome !== 'allow' && outcome !== 'deny')) {
+    const outcome = verified.get(decision.decisionId);
+    const cls = outcome === undefined ? 'other' : outcomeClass(outcome);
+    if (decision.action !== 'ask' || (cls !== 'allow' && cls !== 'veto')) {
       continue;
     }
     const probability = decision.answers[rule.when.question]?.probabilities[rule.when.answer];
@@ -170,7 +179,7 @@ function samplesForRule(
       probability >= 0 &&
       probability <= 1
     ) {
-      samples.push({ probability, denied: outcome === 'deny' });
+      samples.push({ probability, denied: cls === 'veto' });
     }
   }
   return samples.toSorted((a, b) => a.probability - b.probability);
@@ -204,13 +213,13 @@ function suggestedThreshold(
 function calibrationHints(
   policy: Policy | undefined,
   decisions: readonly ShadowRecord[],
-  outcomes: ReadonlyMap<string, OutcomeRecord>,
+  verified: ReadonlyMap<string, string>,
 ): CalibrationHint[] {
   if (policy === undefined) {
     return [];
   }
   return eligibleAllowRules(policy).map((rule) => {
-    const samples = samplesForRule(rule, decisions, outcomes);
+    const samples = samplesForRule(rule, decisions, verified);
     const suggestion = suggestedThreshold(samples);
     const denies = samples.filter((sample) => sample.denied).length;
     return {
@@ -222,23 +231,31 @@ function calibrationHints(
   });
 }
 
+function labelledDecisions(
+  decisions: readonly ShadowRecord[],
+  outcomes: ReadonlyMap<string, OutcomeRecord>,
+): Labelled[] {
+  const labelled: Labelled[] = [];
+  for (const d of decisions) {
+    const record = outcomes.get(d.decisionId);
+    const value = record === undefined ? undefined : comparableOutcome(record.outcome);
+    const answer = value === undefined ? undefined : labelledAnswer(d, value);
+    if (value !== undefined && answer !== undefined) {
+      labelled.push({ answer, outcome: value });
+    }
+  }
+  return labelled;
+}
+
 function policyStats(
   policy: string,
   policyDefinition: Policy | undefined,
   decisions: readonly ShadowRecord[],
   joined: Joined,
 ): PolicyStats {
-  const { outcomes } = joined;
-  const hints = calibrationHints(policyDefinition, decisions, outcomes);
+  const hints = calibrationHints(policyDefinition, decisions, joined.verified);
   const latencies = sortedLatencies(decisions);
-  const labelled: Labelled[] = [];
-  for (const d of decisions) {
-    const outcome = outcomes.get(d.decisionId);
-    const answer = outcome === undefined ? undefined : labelledAnswer(d, outcome.outcome);
-    if (outcome !== undefined && answer !== undefined) {
-      labelled.push({ answer, outcome: outcome.outcome });
-    }
-  }
+  const labelled = labelledDecisions(decisions, joined.outcomes);
   const p50 = percentile(latencies, 50);
   const p95 = percentile(latencies, 95);
   return {
@@ -269,26 +286,41 @@ export interface StatsOptions {
 
 const DEFAULT_SCOPE: Scope = 'claude-auto';
 
-/**
- * Agreement, calibration and savings per policy from shadow-log records. The latest outcome
- * wins; `pricing` (optional) adds dollar estimates to token savings.
- */
-export function computeStats(
-  records: readonly LogRecord[],
-  pricing: Pricing = {},
-  policies?: ReadonlyMap<string, LoadedPolicy>,
-  options: StatsOptions = {},
-): PolicyStats[] {
+function noteOutcomeRecord(
+  record: OutcomeRecord,
+  outcomes: Map<string, OutcomeRecord>,
+  classifier: Map<string, OutcomeRecord>,
+  verified: Map<string, string>,
+): void {
+  outcomes.set(record.decisionId, record);
+  if (record.source === 'classifier') {
+    classifier.set(record.decisionId, record);
+  }
+  if (isVerifiedOutcome(record)) {
+    const next = correctedOutcome(verified.get(record.decisionId), record.outcome);
+    if (next !== undefined) {
+      verified.set(record.decisionId, next);
+    }
+  }
+}
+
+interface JoinedRecords {
+  readonly outcomes: Map<string, OutcomeRecord>;
+  readonly classifier: Map<string, OutcomeRecord>;
+  readonly verified: Map<string, string>;
+  readonly usage: UsageRecord[];
+  readonly byPolicy: Map<string, ShadowRecord[]>;
+}
+
+function joinRecords(records: readonly LogRecord[], options: StatsOptions): JoinedRecords {
   const outcomes = new Map<string, OutcomeRecord>();
   const classifier = new Map<string, OutcomeRecord>();
+  const verified = new Map<string, string>();
   const usage: UsageRecord[] = [];
   const byPolicy = new Map<string, ShadowRecord[]>();
   for (const record of records) {
     if (record.kind === 'outcome') {
-      outcomes.set(record.decisionId, record);
-      if (record.source === 'classifier') {
-        classifier.set(record.decisionId, record);
-      }
+      noteOutcomeRecord(record, outcomes, classifier, verified);
     } else if (record.kind === 'usage') {
       usage.push(record);
     } else if (options.scope === undefined || record.scope === options.scope) {
@@ -297,11 +329,27 @@ export function computeStats(
       byPolicy.set(record.policy, list);
     }
   }
+  return { outcomes, classifier, verified, usage, byPolicy };
+}
+
+/**
+ * Agreement, calibration and savings per policy from shadow-log records. The latest outcome
+ * wins for agreement (`unsafe` compares as `deny`); calibration uses the effective verified
+ * outcome. `pricing` (optional) adds dollar estimates to token savings.
+ */
+export function computeStats(
+  records: readonly LogRecord[],
+  pricing: Pricing = {},
+  policies?: ReadonlyMap<string, LoadedPolicy>,
+  options: StatsOptions = {},
+): PolicyStats[] {
+  const { outcomes, classifier, verified, usage, byPolicy } = joinRecords(records, options);
   return [...byPolicy.entries()]
     .toSorted(([a], [b]) => a.localeCompare(b))
     .map(([policy, decisions]) =>
       policyStats(policy, policies?.get(policy)?.policy, decisions, {
         outcomes,
+        verified,
         classifier,
         scope: options.scope ?? DEFAULT_SCOPE,
         usage: groupUsage(usage),

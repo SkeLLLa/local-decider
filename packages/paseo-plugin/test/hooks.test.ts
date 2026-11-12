@@ -9,6 +9,7 @@ import { describe, it } from 'node:test';
 
 import { Background } from '../server/background.ts';
 import type { HookDeps } from '../server/deps.ts';
+import { LabelRegistry } from '../server/labels.ts';
 import { mcpServerConfig } from '../server/mcp.ts';
 import { createOpenHandler, hostEnv } from '../server/open.ts';
 import { allowResponse, createPermissionHandlers } from '../server/permission.ts';
@@ -168,6 +169,20 @@ describe('agent.permission.before', () => {
     };
   };
 
+  const labelled = (
+    d: HookDeps,
+    labels: LabelRegistry,
+  ): ReturnType<typeof createPermissionHandlers> & { request: (paseo: Paseo) => Promise<void> } => {
+    const handlers = createPermissionHandlers(d, bg, { labels, now: () => 1_000 });
+    return {
+      ...handlers,
+      request: async (paseo: Paseo) => {
+        await handlers.before({ agent, request: toolRequest }, ctx(paseo));
+        await bg.idle();
+      },
+    };
+  };
+
   it('auto-allows only an enforced allow with the plugin in act', async () => {
     const gw = fakeGateway(() =>
       response({ policy: 'permission', action: 'allow', mode: 'act', enforced: true }),
@@ -246,7 +261,7 @@ describe('agent.permission.before', () => {
     assert.equal(gw.calls.length, 0);
     await handlers.request(paseo);
     await handlers.after({ agent, requestId: 'r1', resolution: { behavior: 'deny' } });
-    assert.deepEqual(gw.outcomes, [{ decisionId: 'd-1', outcome: 'deny', source: 'user' }]);
+    assert.deepEqual(gw.outcomes, [{ decisionId: 'd-1', outcome: 'decline', source: 'user' }]);
   });
 
   it('reports one user outcome and redraws the row with it', async () => {
@@ -272,7 +287,9 @@ describe('agent.permission.before', () => {
     await bg.idle();
     await handlers.after({ agent: child, requestId: 'r1', resolution: { behavior: 'deny' } });
 
-    assert.deepEqual(gw.outcomes, [{ decisionId: 'd-1', outcome: 'deny', source: 'supervised' }]);
+    assert.deepEqual(gw.outcomes, [
+      { decisionId: 'd-1', outcome: 'decline', source: 'supervised' },
+    ]);
   });
 
   it('keeps a user answer that arrives before the decision lands', async () => {
@@ -290,9 +307,9 @@ describe('agent.permission.before', () => {
     gate.resolve();
     await bg.idle();
     assert.deepEqual(paseo.agent.responses, [], 'no allow after the user answered');
-    assert.deepEqual(gw.outcomes, [{ decisionId: 'd-1', outcome: 'deny', source: 'user' }]);
+    assert.deepEqual(gw.outcomes, [{ decisionId: 'd-1', outcome: 'decline', source: 'user' }]);
     assert.equal(paseo.agent.appended.length, 1);
-    assert.equal(flag(paseo.agent.appended[0], 'feedback'), 'deny');
+    assert.equal(flag(paseo.agent.appended[0], 'feedback'), 'decline');
     assert.equal(flag(paseo.agent.appended[0], 'applied'), false);
   });
 
@@ -325,9 +342,88 @@ describe('agent.permission.before', () => {
     handlers = createPermissionHandlers(deps(actMode, gw), bg);
     await handlers.before({ agent, request: toolRequest }, ctx(paseo));
     await bg.idle();
-    assert.deepEqual(gw.outcomes, [{ decisionId: 'd-1', outcome: 'deny', source: 'user' }]);
+    assert.deepEqual(gw.outcomes, [{ decisionId: 'd-1', outcome: 'decline', source: 'user' }]);
     assert.equal(flag(paseo.agent.appended[0], 'applied'), false);
-    assert.equal(flag(paseo.agent.appended[0], 'feedback'), 'deny');
+    assert.equal(flag(paseo.agent.appended[0], 'feedback'), 'decline');
+  });
+
+  describe('outcome labels', () => {
+    const rowId = 'local-decider-permission-r1';
+
+    it('maps an interrupting deny to interrupted and a plain deny to decline', async () => {
+      const gw = fakeGateway(() => response({ policy: 'permission', action: 'ask' }));
+      const paseo = fakePaseo(turn);
+      const handlers = labelled(deps(settings(), gw), new LabelRegistry());
+      await handlers.request(paseo);
+      await handlers.after({
+        agent,
+        requestId: 'r1',
+        resolution: { behavior: 'deny', interrupt: true },
+      });
+      assert.equal(gw.outcomes[0]?.outcome, 'interrupted');
+      assert.equal(flag(paseo.agent.appended[1], 'feedback'), 'interrupted');
+      await handlers.request(paseo);
+      await handlers.after({ agent, requestId: 'r1', resolution: { behavior: 'deny' } });
+      assert.equal(gw.outcomes[1]?.outcome, 'decline');
+    });
+
+    it('stamps answeredAt and registers a declined row', async () => {
+      const gw = fakeGateway(() => response({ policy: 'permission', action: 'ask' }));
+      const paseo = fakePaseo(turn);
+      const labels = new LabelRegistry();
+      const handlers = labelled(deps(settings(), gw), labels);
+      await handlers.request(paseo);
+      assert.equal(labels.get(agent.id, rowId), undefined, 'unanswered rows are not labelable');
+      await handlers.after({ agent, requestId: 'r1', resolution: { behavior: 'deny' } });
+      assert.equal(flag(paseo.agent.appended[1], 'answeredAt'), 1_000);
+      const entry = labels.get(agent.id, rowId);
+      assert.equal(entry?.kind, 'declined');
+      assert.equal(entry?.decisionId, 'd-1');
+      assert.equal(entry?.answeredAt, 1_000);
+    });
+
+    it('registers a keyed auto-allow and not an unkeyed one', async () => {
+      const keyed = fakeGateway(() =>
+        response({
+          policy: 'permission',
+          action: 'allow',
+          mode: 'act',
+          enforced: true,
+          precedentKey: 'k',
+        }),
+      );
+      const labels = new LabelRegistry();
+      const paseo = fakePaseo(turn);
+      await labelled(deps(actMode, keyed), labels).request(paseo);
+      assert.equal(flag(paseo.agent.appended[0], 'answeredAt'), 1_000);
+      assert.equal(flag(paseo.agent.appended[0], 'vetoable'), true);
+      assert.equal(labels.get(agent.id, rowId)?.kind, 'auto-allowed');
+
+      const unkeyed = fakeGateway(() =>
+        response({ policy: 'permission', action: 'allow', mode: 'act', enforced: true }),
+      );
+      const other = new LabelRegistry();
+      await labelled(deps(actMode, unkeyed), other).request(fakePaseo(turn));
+      assert.equal(other.get(agent.id, rowId), undefined);
+    });
+
+    it('does not register hidden rows or the user allow', async () => {
+      const gw = fakeGateway(() => response({ policy: 'permission', action: 'ask' }));
+      const hidden = new LabelRegistry();
+      const hiddenHandlers = labelled(
+        deps(settings({ rows: { show: 'off', details: true, feedback: true } }), gw),
+        hidden,
+      );
+      await hiddenHandlers.request(fakePaseo(turn));
+      await hiddenHandlers.after({ agent, requestId: 'r1', resolution: { behavior: 'deny' } });
+      assert.equal(hidden.get(agent.id, rowId), undefined);
+
+      const allowed = new LabelRegistry();
+      const handlers = labelled(deps(settings(), gw), allowed);
+      await handlers.request(fakePaseo(turn));
+      await handlers.after({ agent, requestId: 'r1', resolution: { behavior: 'allow' } });
+      assert.equal(allowed.get(agent.id, rowId), undefined);
+    });
   });
 
   it('selects the primary allow action when the request offers actions', () => {
@@ -561,19 +657,19 @@ const open = (purpose: 'interactive' | 'history'): { request: PluginSessionOpenR
 describe('agent.open.before', () => {
   it('injects the gateway MCP server only when enabled', async () => {
     const gw = fakeGateway(() => null);
-    const on = createOpenHandler(deps(settings({ injectMcp: true }), gw), () => undefined);
+    const on = createOpenHandler(deps(settings({ injectMcp: true }), gw));
     const out = await on(open('interactive'));
     assert.deepEqual(out?.mcpServers, {
       'local-decider': { type: 'http', url: 'http://127.0.0.1:8765/mcp' },
     });
     assert.equal(await on(open('history')), undefined);
-    const off = await createOpenHandler(deps(settings(), gw), () => undefined)(open('interactive'));
+    const off = await createOpenHandler(deps(settings(), gw))(open('interactive'));
     assert.deepEqual(off?.mcpServers, {});
   });
 
   it('tells the harness hooks which policies Paseo runs', async () => {
     const gw = fakeGateway(() => null);
-    const out = await createOpenHandler(deps(settings(), gw), () => undefined)(open('interactive'));
+    const out = await createOpenHandler(deps(settings(), gw))(open('interactive'));
     assert.equal(out?.env['LOCAL_DECIDER_HOST_POLICIES'], 'turn-outcome,permission,routing');
   });
 
@@ -586,22 +682,30 @@ describe('agent.open.before', () => {
     );
   });
 
-  it('adds a bearer header only when a token is set and the URL is https or loopback', () => {
-    assert.deepEqual(mcpServerConfig('https://h', 't'), {
-      type: 'http',
-      url: 'https://h/mcp',
-      headers: { authorization: 'Bearer t' },
-    });
-    assert.deepEqual(mcpServerConfig('http://127.0.0.1:8765', 't'), {
+  it('never puts tokens in an agent MCP config', () => {
+    assert.deepEqual(mcpServerConfig('http://127.0.0.1:8765'), {
       type: 'http',
       url: 'http://127.0.0.1:8765/mcp',
-      headers: { authorization: 'Bearer t' },
     });
-    assert.equal(
-      'headers' in mcpServerConfig('http://h', 't'),
-      false,
-      'never in clear text to another host',
-    );
+    assert.equal('headers' in mcpServerConfig('https://h'), false);
+  });
+
+  it('skips MCP injection when it is remote or needs a bearer token', async () => {
+    const local = fakeGateway(() => null);
+    const localDeps = deps(settings({ injectMcp: true }), local);
+    assert.deepEqual((await createOpenHandler(localDeps)(open('interactive')))?.mcpServers, {
+      'local-decider': { type: 'http', url: 'http://127.0.0.1:8765/mcp' },
+    });
+
+    const remote = { ...local, baseUrl: 'https://gw.example:8443' };
+    const remoteDeps = deps(settings({ injectMcp: true }), remote);
+    assert.deepEqual((await createOpenHandler(remoteDeps)(open('interactive')))?.mcpServers, {});
+    assert.match(remoteDeps.logs[0] ?? '', /https:\/\/gw\.example:8443 is not loopback/);
+
+    const bearerGateway = { ...local, bearer: true };
+    const bearerDeps = deps(settings({ injectMcp: true }), bearerGateway);
+    assert.deepEqual((await createOpenHandler(bearerDeps)(open('interactive')))?.mcpServers, {});
+    assert.match(bearerDeps.logs[0] ?? '', /needs a bearer token/);
   });
 });
 

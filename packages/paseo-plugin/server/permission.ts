@@ -1,8 +1,9 @@
 /**
  * `agent.permission.before` → `permission`. Auto-allows only when the gateway enforced an `allow`
  * AND the plugin's permission mode is `act`. Never denies: everything else stays pending for the
- * user (ADR-0005). `agent.permission.after` reports the user's Accept/Deny as the one ground-truth
- * outcome and redraws the row with it. Paseo does not await `before`, so the user can answer
+ * user (ADR-0005). `agent.permission.after` reports the user's answer (`allow`, or a neutral
+ * `decline` / `interrupted`) as the ground-truth outcome, redraws the row with it, and registers
+ * the row for label chips, which can later report `unsafe` (`labels.ts`). Paseo does not await `before`, so the user can answer
  * before, while or after the decision lands; `settleUser` handles each order exactly once.
  */
 import type { PluginHookAgent } from '@getpaseo/plugin/server';
@@ -12,7 +13,7 @@ import type {
   AgentTimelineItem,
 } from '@getpaseo/protocol/agent-types';
 
-import { ROW_KIND, ROW_VERSION } from '../shared/constants.ts';
+import type { DecideResponse } from '../shared/decision.ts';
 import type { Gateway } from '../shared/gateway.ts';
 import { rowVisible, toRowData, type DecisionRow } from '../shared/row.ts';
 import { Background, detach } from './background.ts';
@@ -25,7 +26,9 @@ import {
   transcript,
   type RecentContext,
 } from './history.ts';
+import { LabelRegistry } from './labels.ts';
 import { BoundedMap } from './limits.ts';
+import { appendRow } from './timeline.ts';
 import { pluginEnforces, type HookCtx } from './turn.ts';
 
 const PERMISSION_POLICY = 'permission';
@@ -50,12 +53,15 @@ type AgentRef = ReturnType<HookCtx['paseo']['agents']['ref']>;
 /** Per-request state, from the moment the decision starts until the request is resolved. */
 interface Pending {
   readonly agent: AgentRef;
+  readonly agentId: string;
   readonly supervised: boolean;
   decisionId: string | null;
   /** True from the moment our allow is sent: its own `after` is not a user outcome. */
   autoAllowed: boolean;
-  /** The user's Accept/Deny once `agent.permission.after` reported it. */
+  /** The user's answer as an outcome (`allow|decline|interrupted`), once reported. */
   resolution: string | null;
+  /** Epoch ms (daemon clock) of the user's answer or our auto-allow; null until then. */
+  answeredAt: number | null;
   reported: boolean;
   /** The row as last appended; null until appended, or when hidden. */
   row: DecisionRow | null;
@@ -70,15 +76,40 @@ export function allowResponse(request: AgentPermissionRequest): AgentPermissionR
     : { behavior: 'allow', selectedActionId: action.id };
 }
 
+/** The user's answer as an outcome: a decline is neutral until labelled (ADR-0006 addendum). */
+function userOutcome(resolution: AgentPermissionResponse): 'allow' | 'decline' | 'interrupted' {
+  if (resolution.behavior === 'allow') {
+    return 'allow';
+  }
+  return resolution.interrupt === true ? 'interrupted' : 'decline';
+}
+
+export interface PermissionOptions {
+  readonly labels?: LabelRegistry;
+  readonly now?: () => number;
+}
+
+interface PermissionState {
+  readonly pending: BoundedMap<Pending>;
+  readonly firstRequests: BoundedMap<string>;
+  readonly labels: LabelRegistry;
+  readonly now: () => number;
+}
+
 export function createPermissionHandlers(
   deps: HookDeps,
   background: Background = new Background(),
+  options: PermissionOptions = {},
 ): {
   before: (event: PermissionEvent, ctx: HookCtx) => Promise<void>;
   after: (event: PermissionResolvedEvent) => Promise<void>;
 } {
-  const pending = new BoundedMap<Pending>(500);
-  const firstRequests = new BoundedMap<string>(500);
+  const state: PermissionState = {
+    pending: new BoundedMap<Pending>(500),
+    firstRequests: new BoundedMap<string>(500),
+    labels: options.labels ?? new LabelRegistry(),
+    now: options.now ?? Date.now,
+  };
 
   // Returns at once: the request stays pending for the user while the decision runs detached.
   const before = async (event: PermissionEvent, ctx: HookCtx): Promise<void> => {
@@ -86,18 +117,18 @@ export function createPermissionHandlers(
       background,
       (m) => deps.log(m),
       `permission for ${event.agent.id}`,
-      async (signal) =>
-        handleRequest(deps, pending, firstRequests, event, { paseo: ctx.paseo, signal }),
+      async (signal) => handleRequest(deps, state, event, { paseo: ctx.paseo, signal }),
     );
   };
 
   const after = async (event: PermissionResolvedEvent): Promise<void> => {
-    const entry = pending.take(`${event.agent.id}:${event.requestId}`);
+    const entry = state.pending.take(`${event.agent.id}:${event.requestId}`);
     if (entry === undefined) {
       return;
     }
-    entry.resolution = event.resolution.behavior;
-    await settleUser(deps, entry);
+    entry.resolution = userOutcome(event.resolution);
+    entry.answeredAt = state.now();
+    await settleUser(deps, state, entry);
   };
 
   return { before, after };
@@ -105,8 +136,7 @@ export function createPermissionHandlers(
 
 async function handleRequest(
   deps: HookDeps,
-  pending: BoundedMap<Pending>,
-  firstRequests: BoundedMap<string>,
+  state: PermissionState,
   event: PermissionEvent,
   ctx: HookCtx,
 ): Promise<void> {
@@ -124,15 +154,22 @@ async function handleRequest(
   // Tracked before deciding, so a user answer that arrives first is not lost.
   const entry: Pending = {
     agent,
+    agentId: event.agent.id,
     supervised: event.agent.parentAgentId !== null,
     decisionId: null,
     autoAllowed: false,
     resolution: null,
+    answeredAt: null,
     reported: false,
     row: null,
   };
-  pending.set(`${event.agent.id}:${event.request.id}`, entry);
-  const context = await recentContext(agent, event.agent.id, firstRequests, event.agent.title);
+  state.pending.set(`${event.agent.id}:${event.request.id}`, entry);
+  const context = await recentContext(
+    agent,
+    event.agent.id,
+    state.firstRequests,
+    event.agent.title,
+  );
   const res = await decidePermission(gateway, event, context, ctx.signal);
   if (res === null) {
     return;
@@ -143,8 +180,24 @@ async function handleRequest(
     // Set before awaiting: `after` for our own allow can fire while the response is in flight.
     entry.autoAllowed = true;
     entry.autoAllowed = await tryAllow(agent, event.request);
+    if (entry.autoAllowed) {
+      entry.answeredAt = state.now();
+    }
   }
-  const data: DecisionRow = {
+  const data = permissionRow(res, event, entry, enforced);
+  if (rowVisible(data, settings.rows.show)) {
+    await drawRow(state, entry, data);
+  }
+  await settleUser(deps, state, entry);
+}
+
+function permissionRow(
+  res: DecideResponse,
+  event: PermissionEvent,
+  entry: Pending,
+  enforced: boolean,
+): DecisionRow {
+  return {
     ...toRowData(res, {
       source: 'permission',
       key: event.request.id,
@@ -153,19 +206,22 @@ async function handleRequest(
       note: `${event.request.name}${entry.autoAllowed ? ' auto-allowed' : ''}`,
     }),
     feedback: entry.autoAllowed ? null : entry.resolution,
+    answeredAt: entry.autoAllowed || entry.resolution !== null ? entry.answeredAt : null,
   };
-  if (rowVisible(data, settings.rows.show)) {
-    await appendRow(agent, data);
-    entry.row = data;
-  }
-  await settleUser(deps, entry);
+}
+
+/** Draw through one place, so the label registry always matches the drawn row. */
+async function drawRow(state: PermissionState, entry: Pending, row: DecisionRow): Promise<void> {
+  await appendRow(entry.agent, row);
+  entry.row = row;
+  state.labels.note(entry.agentId, row);
 }
 
 /**
  * Once both the decision and the user's answer are known: report the answer as the `user`
  * outcome and redraw the row with it. Idempotent; a no-op for our own auto-allow.
  */
-async function settleUser(deps: HookDeps, entry: Pending): Promise<void> {
+async function settleUser(deps: HookDeps, state: PermissionState, entry: Pending): Promise<void> {
   const resolution = entry.resolution;
   if (resolution === null || entry.autoAllowed || entry.decisionId === null) {
     return;
@@ -176,9 +232,8 @@ async function settleUser(deps: HookDeps, entry: Pending): Promise<void> {
   }
   const row = entry.row;
   if (row !== null && row.feedback === null) {
-    entry.row = { ...row, feedback: resolution };
     try {
-      await appendRow(entry.agent, entry.row);
+      await drawRow(state, entry, { ...row, feedback: resolution, answeredAt: entry.answeredAt });
     } catch (error) {
       deps.log(`permission row not updated: ${errorText(error)}`);
     }
@@ -197,16 +252,6 @@ async function reportUser(
   } catch (error) {
     deps.log(`permission outcome not reported: ${errorText(error)}`);
   }
-}
-
-async function appendRow(agent: AgentRef, data: DecisionRow): Promise<void> {
-  await agent.timeline.append({
-    type: 'plugin',
-    id: data.rowId,
-    kind: ROW_KIND,
-    version: ROW_VERSION,
-    data: { ...data },
-  });
 }
 
 async function recentContext(

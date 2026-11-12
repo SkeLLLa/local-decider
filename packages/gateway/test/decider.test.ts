@@ -2,10 +2,12 @@ import { parsePolicy, type LogRecord, type Mode } from '@ziptie-soft/local-decid
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { describe, it } from 'node:test';
+import { describe, it, mock } from 'node:test';
 import { setTimeout as sleep } from 'node:timers/promises';
 
 import { Decider, QUEUE_MAX, renderValue, UnknownPolicyError } from '../src/decider.ts';
+import { ManagedEngine } from '../src/engines/lazy.ts';
+import type { Engine } from '../src/engines/types.ts';
 import type { LogStore } from '../src/log-store.ts';
 import { defaultPolicyDir, type LoadedPolicy } from '../src/policies.ts';
 import { FakeEngine, tempLog } from './helpers.ts';
@@ -35,6 +37,10 @@ function setup(
     decisionTimeoutMs: 2000,
   });
   return { decider, engine, log };
+}
+
+function deciderOn(mode: Mode, engine: Engine): Decider {
+  return new Decider({ engine, policies: policies(mode), log: tempLog(), decisionTimeoutMs: 2000 });
 }
 
 const INPUT = {
@@ -402,19 +408,195 @@ describe('Decider under load', () => {
       await sleep(30);
       return inner(r, s);
     };
-    const { decider } = setup('shadow', engine);
+    const { decider } = setup('act', engine);
     const all = await Promise.all(
       Array.from({ length: QUEUE_MAX + 2 }, (_, i) =>
-        decider.decide(
-          'permission',
-          { harness: 'cli', input: { ...INPUT, tool: String(i) } },
-          signal(),
-        ),
+        decider.decide('permission', toolReq(i), signal()),
       ),
     );
     assert.equal(all.filter((r) => r.error === 'engine queue full').length, 2);
   });
+
+  it('caps shadow decisions at the queue size', async () => {
+    const g = Promise.withResolvers<void>();
+    const engine = gated(g.promise);
+    const { decider, log } = setup('shadow', engine);
+    const pending = Array.from({ length: QUEUE_MAX + 2 }, (_, i) =>
+      decider.decide('permission', toolReq(i), signal()),
+    );
+    g.resolve();
+    const all = await Promise.all(pending);
+    assert.equal(all.filter((r) => r.error === 'engine queue full').length, 2);
+    assert.equal(log.read().length, QUEUE_MAX + 2);
+  });
+
+  it('a high decision evicts the oldest waiting low one instead of being refused', async () => {
+    const g = Promise.withResolvers<void>();
+    const engine = gated(g.promise);
+    const source = join(defaultPolicyDir(), 'permission.yaml');
+    const base = parsePolicy(readFileSync(source, 'utf8'));
+    const permission = { ...base, cache: { ttlSeconds: 0 } };
+    const background = { ...permission, id: 'background', priority: 'low' as const };
+    const loaded = new Map<string, LoadedPolicy>([
+      ['permission', { policy: permission, mode: 'act', source }],
+      ['background', { policy: background, mode: 'act', source }],
+    ]);
+    const decider = new Decider({
+      engine,
+      policies: loaded,
+      log: tempLog(),
+      decisionTimeoutMs: 2000,
+    });
+    const lows = Array.from({ length: QUEUE_MAX }, (_, i) =>
+      decider.decide('background', toolReq(i), signal()),
+    );
+    const highs = Array.from({ length: 2 }, (_, i) =>
+      decider.decide('permission', toolReq(100 + i), signal()),
+    );
+    g.resolve();
+    const all = await Promise.all([...lows, ...highs]);
+    const refused = all.flatMap((r, i) => (r.error === undefined ? [] : [i]));
+    assert.deepEqual(refused, [1, 2]);
+    assert.equal(all[1]?.error, 'engine queue full');
+    assert.equal(engine.requests.length, QUEUE_MAX);
+  });
+
+  it('drops a dead act waiter so it holds no queue depth', async () => {
+    const g = Promise.withResolvers<void>();
+    const engine = gated(g.promise);
+    const { decider } = setup('act', engine);
+    const a = decider.decide('permission', toolReq(0), signal());
+    const controller = new AbortController();
+    const b = decider.decide('permission', toolReq(1), controller.signal);
+    assert.equal(decider.queueDepth, 2);
+    controller.abort();
+    assert.equal(decider.queueDepth, 1);
+    const res = await b;
+    assert.equal(res.error, 'decision timed out');
+    assert.equal(res.enforced, false);
+    g.resolve();
+    await a;
+    assert.equal(engine.requests.length, 1);
+  });
+
+  it('frees the engine after the deadline when it ignores abort', async () => {
+    const warn = mock.method(console, 'error', () => undefined);
+    try {
+      const engine = new FakeEngine({ allow: 1 });
+      const inner = engine.respond;
+      let calls = 0;
+      engine.respond = (r, s) => {
+        calls += 1;
+        return calls === 1 ? new Promise(() => undefined) : inner(r, s);
+      };
+      const log = tempLog();
+      const decider = new Decider({
+        engine,
+        policies: policies('act'),
+        log,
+        decisionTimeoutMs: 200,
+        queueGraceMs: 20,
+      });
+      const first = await decider.decide('permission', req, signal());
+      assert.equal(first.error, 'decision timed out');
+      const second = await decider.decide('permission', toolReq(1), signal());
+      assert.equal(second.error, undefined);
+      assert.equal(warn.mock.callCount(), 1);
+      const message = String(warn.mock.calls[0]?.arguments[0]);
+      assert.match(message, /past its deadline/);
+      assert.ok(!message.includes('list files'));
+    } finally {
+      warn.mock.restore();
+    }
+  });
+
+  it('waits for a cold managed engine outside the queue and loads it once', async () => {
+    const g = Promise.withResolvers<void>();
+    const { managed, inner, starts } = coldEngine(g.promise);
+    const decider = deciderOn('act', managed);
+    const all = [0, 1, 2].map((i) => decider.decide('permission', toolReq(i), signal()));
+    await sleep(10);
+    assert.equal(decider.queueDepth, 3);
+    assert.equal(starts(), 1);
+    g.resolve();
+    const done = await Promise.all(all);
+    assert.ok(done.every((r) => r.error === undefined));
+    assert.equal(starts(), 1);
+    assert.equal(inner.maxInFlight, 1);
+    assert.equal(inner.requests.length, 3);
+    assert.equal(decider.queueDepth, 0);
+    await managed.stop();
+  });
+
+  it('bounds decisions waiting for a cold engine', async () => {
+    const g = Promise.withResolvers<void>();
+    const cold = coldEngine(g.promise);
+    const decider = deciderOn('shadow', cold.managed);
+    const pending = Array.from({ length: QUEUE_MAX + 2 }, (_, i) =>
+      decider.decide('permission', toolReq(i), signal()),
+    );
+    await sleep(10);
+    assert.equal(decider.queueDepth, QUEUE_MAX);
+    g.resolve();
+    const all = await Promise.all(pending);
+    assert.equal(all.filter((r) => r.error === 'engine queue full').length, 2);
+    assert.equal(all.filter((r) => r.error === undefined).length, QUEUE_MAX);
+    await cold.managed.stop();
+
+    const load = Promise.withResolvers<void>();
+    const jobs = Promise.withResolvers<void>();
+    const hot = coldEngine(load.promise);
+    const inner = hot.inner.respond;
+    hot.inner.respond = async (r, s) => {
+      await jobs.promise;
+      return inner(r, s);
+    };
+    const act = deciderOn('act', hot.managed);
+    const highs = Array.from({ length: QUEUE_MAX + 1 }, (_, i) =>
+      act.decide('permission', toolReq(i), signal()),
+    );
+    await sleep(10);
+    assert.equal(act.queueDepth, QUEUE_MAX + 1);
+    load.resolve();
+    await sleep(150);
+    jobs.resolve();
+    const results = await Promise.all(highs);
+    assert.equal(results.filter((r) => r.error === 'engine queue full').length, 1);
+    await hot.managed.stop();
+  });
 });
+
+function toolReq(i: number): typeof req {
+  return { harness: 'cli', input: { ...INPUT, tool: String(i) } };
+}
+
+function gated(gate: Promise<void>): FakeEngine {
+  const engine = new FakeEngine({ allow: 1 });
+  const inner = engine.respond;
+  engine.respond = async (r, s) => {
+    await gate;
+    return inner(r, s);
+  };
+  return engine;
+}
+
+function coldEngine(gate: Promise<void>): {
+  readonly managed: ManagedEngine;
+  readonly inner: FakeEngine;
+  readonly starts: () => number;
+} {
+  const inner = new FakeEngine({ allow: 1 });
+  inner.state = 'stopped';
+  let count = 0;
+  inner.start = async () => {
+    count += 1;
+    inner.state = 'starting';
+    await gate;
+    inner.state = 'ready';
+  };
+  const managed = new ManagedEngine(inner, { lifecycle: 'lazy', idleUnloadMinutes: 15 });
+  return { managed, inner, starts: () => count };
+}
 
 const REPO_POLICIES = join(import.meta.dirname, '..', '..', '..', 'policies');
 

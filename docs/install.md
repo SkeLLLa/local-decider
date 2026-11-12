@@ -223,9 +223,9 @@ In Paseo, a decision row appears in the chat after each agent turn. If nothing h
 
 1. **Shadow.** Leave every policy in `shadow` and work normally. Every decision is logged with
    what it *would* have done.
-2. **Label.** In Paseo, answer permission prompts as usual and use the "Right answer?" buttons
-   on turn rows. Those are the ground truth for stats. (The Claude Code and Codex hooks cannot
-   report outcomes.)
+2. **Label.** In Paseo, answer permission prompts as usual (after you decline, tell the row
+   whether it was a safety issue) and use the "Right answer?" buttons on turn rows. Those are
+   the ground truth for stats. (The Claude Code and Codex hooks cannot report outcomes.)
 3. **Read stats.** `local-decider stats`, or the statistics screen in Paseo. Look at accuracy in
    the high-confidence buckets, the calibration hints, and the would-allow prompt time.
 4. **Act.** When the high-confidence buckets are accurate, switch one policy:
@@ -300,5 +300,27 @@ files; JSONL is only an export format. `logs import` is no longer available.
 Secrets never go in `config.yaml`. To bind a non-loopback address, put
 `LOCAL_DECIDER_TOKEN=...` (at least 16 characters) in `~/.config/local-decider/env` with mode
 0600; the systemd unit reads it if present. Clients read `LOCAL_DECIDER_TOKEN` and
-`LOCAL_DECIDER_URL` from their environment and send the token only over https or to a loopback
-address. Read [security.md](security.md) first.
+`LOCAL_DECIDER_URL` from their environment. The Paseo daemon sends the bearer only to loopback or
+to the pinned HTTPS origin. Set `LOCAL_DECIDER_TOKEN_ORIGIN` in the daemon's environment to the
+gateway origin, with the same scheme, host and port as its URL. In fish, for a gateway at
+`https://gw.example:8443`:
+
+```fish
+set -gx LOCAL_DECIDER_TOKEN_ORIGIN https://gw.example:8443
+```
+
+MCP injection is skipped for remote and token-mode gateways, because agent processes must not
+receive a bearer token. Read [security.md](security.md) first.
+
+The gateway creates `control-token` beside `config.yaml` on first start. If startup reports that
+the file is not a valid local-decider token, remove it and restart the gateway:
+
+```fish
+rm ~/.config/local-decider/control-token
+```
+
+If startup reports that the token file is accessible to other users, set its mode to 0600:
+
+```fish
+chmod 600 ~/.config/local-decider/control-token
+```

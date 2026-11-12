@@ -86,8 +86,9 @@ See [docs/architecture.md](docs/architecture.md) for the full pipeline.
   configured retention period (30 days by default). Switch a policy to `act` when the numbers
   look right.
 - **Learns from your answers (Paseo).** Exact-match precedent: after three allows of the same
-  request in the same project, and no deny, a lower threshold (p ≥ 0.6) applies. Any deny vetoes
-  it.
+  request in the same project, and no unsafe label, a lower threshold (p ≥ 0.6) applies. A
+  decline is neutral unless you mark it unsafe; "Mark unsafe" on an auto-allowed row stops your
+  past allows from lowering its threshold.
 - **Supervised subagents in Paseo.** An orchestrator agent can answer its child's escalated
   permission request, and that answer counts as precedent. Paseo notifies the orchestrator
   before the decider has answered, so the orchestrator should wait and answer only what is still
@@ -253,6 +254,7 @@ pricing:                        # example values; a bare id also matches `claude
 
 Secrets never go in this file. A non-loopback gateway needs `LOCAL_DECIDER_TOKEN` in the
 environment (see [docs/install.md](docs/install.md#remote-gateway)).
+Loopback control routes also require the gateway's private `control-token` file.
 
 In Paseo, a policy changes behaviour only when both the gateway's mode and the plugin's setting
 for that policy are `act`. See [packages/paseo-plugin/OVERVIEW.md](packages/paseo-plugin/OVERVIEW.md)

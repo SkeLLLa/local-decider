@@ -158,41 +158,7 @@ export const policySchema = z
       .strictObject({ ttlSeconds: z.number().int().min(0).max(86_400).default(0) })
       .default({ ttlSeconds: 0 }),
   })
-  .superRefine((policy, ctx) => {
-    if (policy.variantOf === policy.id) {
-      ctx.addIssue({
-        code: 'custom',
-        path: ['variantOf'],
-        message: 'a policy cannot be its own variant',
-      });
-    }
-    for (const [i, rule] of policy.rules.entries()) {
-      if (rule.when.precedent !== undefined && policy.precedent === undefined) {
-        ctx.addIssue({
-          code: 'custom',
-          path: ['rules', i, 'when', 'precedent'],
-          message: 'precedent rules require policy.precedent',
-        });
-      }
-      const question = policy.questions[rule.when.question];
-      if (question === undefined) {
-        ctx.addIssue({
-          code: 'custom',
-          path: ['rules', i, 'when', 'question'],
-          message: `unknown question "${rule.when.question}"`,
-        });
-        continue;
-      }
-      const answers = answerSpace(question);
-      if (!answers.includes(rule.when.answer)) {
-        ctx.addIssue({
-          code: 'custom',
-          path: ['rules', i, 'when', 'answer'],
-          message: `"${rule.when.answer}" is not one of ${answers.join(', ')}`,
-        });
-      }
-    }
-  });
+  .superRefine(validatePolicy);
 
 export type Policy = z.infer<typeof policySchema>;
 export type PolicyRule = Policy['rules'][number];
@@ -205,6 +171,94 @@ function answerSpace(question: z.infer<typeof questionSchema>): string[] {
     return Object.keys(question.criteria);
   }
   return question.criteria;
+}
+
+function validatePolicy(policy: PolicyShape, ctx: z.RefinementCtx): void {
+  if (policy.variantOf === policy.id) {
+    ctx.addIssue({
+      code: 'custom',
+      path: ['variantOf'],
+      message: 'a policy cannot be its own variant',
+    });
+  }
+  if (policy.default === 'allow') {
+    ctx.addIssue({
+      code: 'custom',
+      path: ['default'],
+      message: 'policy default cannot be allow; use a thresholded allow rule',
+    });
+  }
+  validateRules(policy, ctx);
+}
+
+type PolicyShape = z.infer<typeof policySchema>;
+
+function validateRules(policy: PolicyShape, ctx: z.RefinementCtx): void {
+  for (const [i, rule] of policy.rules.entries()) {
+    validateRule(policy, rule, i, ctx);
+  }
+}
+
+function validateRule(
+  policy: PolicyShape,
+  rule: PolicyRule,
+  index: number,
+  ctx: z.RefinementCtx,
+): void {
+  validateRuleAction(policy, rule, index, ctx);
+  const question = policy.questions[rule.when.question];
+  if (question === undefined) {
+    ctx.addIssue({
+      code: 'custom',
+      path: ['rules', index, 'when', 'question'],
+      message: `unknown question "${rule.when.question}"`,
+    });
+    return;
+  }
+  const answers = answerSpace(question);
+  if (!answers.includes(rule.when.answer)) {
+    ctx.addIssue({
+      code: 'custom',
+      path: ['rules', index, 'when', 'answer'],
+      message: `"${rule.when.answer}" is not one of ${answers.join(', ')}`,
+    });
+  }
+}
+
+function validateRuleAction(
+  policy: PolicyShape,
+  rule: PolicyRule,
+  index: number,
+  ctx: z.RefinementCtx,
+): void {
+  if (rule.when.precedent !== undefined && policy.precedent === undefined) {
+    ctx.addIssue({
+      code: 'custom',
+      path: ['rules', index, 'when', 'precedent'],
+      message: 'precedent rules require policy.precedent',
+    });
+  }
+  if (rule.when.precedent !== undefined && !['allow', 'ask'].includes(rule.action)) {
+    ctx.addIssue({
+      code: 'custom',
+      path: ['rules', index, 'action'],
+      message: 'precedent rules may only use allow or ask actions',
+    });
+  }
+  const thresholds = [rule.when.minConfidence, rule.when.minProbability].filter(
+    (value): value is number => value !== undefined,
+  );
+  if (
+    rule.action === 'allow' &&
+    rule.when.precedent === undefined &&
+    !thresholds.some((value) => value >= ALLOW_THRESHOLD_FLOOR)
+  ) {
+    ctx.addIssue({
+      code: 'custom',
+      path: ['rules', index, 'when'],
+      message: `allow rules need minConfidence or minProbability at least ${ALLOW_THRESHOLD_FLOOR}`,
+    });
+  }
 }
 
 export class PolicyError extends Error {
@@ -298,7 +352,7 @@ export function policyRoutes(policy: Policy): string[] {
  * Lowest threshold an override may give an `allow` rule: below it the model would auto-allow
  * answers it leans against. The gateway refuses lower values and clamps config.yaml ones.
  */
-export const ALLOW_THRESHOLD_FLOOR = 0.5;
+export const ALLOW_THRESHOLD_FLOOR = 0.8;
 
 /** Which bound a rule's threshold is: config.yaml overrides replace it in place. */
 type ThresholdKind = 'minProbability' | 'minConfidence';

@@ -91,6 +91,35 @@ describe('parsePolicy', () => {
     );
     assert.throws(() => parsePolicy(score), PolicyError);
   });
+
+  it('requires a high threshold for allow rules and forbids allow defaults', () => {
+    const bare = MINIMAL.replace('answer: a, minConfidence: 0.9', 'answer: a');
+    assert.throws(
+      () => parsePolicy(bare),
+      /allow rules need minConfidence or minProbability at least 0.8/,
+    );
+    const low = MINIMAL.replace('minConfidence: 0.9', 'minProbability: 0.7');
+    assert.throws(() => parsePolicy(low), /at least 0.8/);
+    assert.doesNotThrow(() =>
+      parsePolicy(MINIMAL.replace('minConfidence: 0.9', 'minProbability: 0.8')),
+    );
+    assert.throws(
+      () => parsePolicy(MINIMAL.replace('default: ask', 'default: allow')),
+      /default cannot be allow/,
+    );
+  });
+
+  it('allows lower precedent thresholds only on allow or ask rules', () => {
+    const precedent = MINIMAL.replace(
+      'description: demo',
+      'description: demo\nprecedent: { from: subject }',
+    ).replace('answer: a, minConfidence: 0.9', 'answer: a, minProbability: 0.6, precedent: allow');
+    assert.doesNotThrow(() => parsePolicy(precedent));
+    assert.throws(
+      () => parsePolicy(precedent.replace('action: allow', 'action: deny')),
+      /precedent rules may only use allow or ask/,
+    );
+  });
 });
 
 describe('variants and routes', () => {
@@ -189,7 +218,7 @@ describe('thresholds', () => {
         kind: 'minConfidence',
         default: 0.9,
         value: 0.9,
-        floor: 0.5,
+        floor: 0.8,
       },
       {
         key: 'pick.b',
@@ -206,7 +235,7 @@ describe('thresholds', () => {
 
   it('replaces the bound the rule has, minConfidence when it has none', () => {
     const tuned = withThresholds(policy, { 'pick.a': 0.5, 'pick.b': 0.9, 'nope.x': 1 });
-    assert.deepEqual(tuned.rules[0]?.when, { question: 'pick', answer: 'a', minConfidence: 0.5 });
+    assert.deepEqual(tuned.rules[0]?.when, { question: 'pick', answer: 'a', minConfidence: 0.8 });
     assert.deepEqual(tuned.rules[1]?.when, { question: 'pick', answer: 'b', minProbability: 0.9 });
     assert.equal(policy.rules[0]?.when.minConfidence, 0.9, 'the loaded policy is untouched');
     assert.equal(withThresholds(policy, {}), policy);

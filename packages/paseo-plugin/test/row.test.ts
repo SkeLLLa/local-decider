@@ -14,12 +14,18 @@ import {
   statusSummary,
 } from '../shared/poll.ts';
 import {
+  choicesFor,
   decisionRowSchema,
+  LABEL_WINDOW_MS,
+  labelChoices,
+  permissionNote,
   rowDetail,
+  rowLabelKind,
   rowId,
   rowSummary,
   rowVisible,
   toRowData,
+  type DecisionRow,
 } from '../shared/row.ts';
 import { response } from './fakes.ts';
 
@@ -241,5 +247,88 @@ describe('/decide arguments', () => {
     assert.deepEqual(manualInput('routing', 'x'), { prompt: 'x' });
     assert.deepEqual(manualInput('command-risk', 'rm -rf /'), { command: 'rm -rf /' });
     assert.deepEqual(manualInput('custom', 'x'), { text: 'x' });
+  });
+});
+
+describe('permission labels', () => {
+  const base = toRowData(permission(0.8, 'ask', 'shadow'), {
+    source: 'permission',
+    key: 'r1',
+    enforced: false,
+  });
+  const row = (over: Partial<DecisionRow>): DecisionRow => ({ ...base, ...over });
+  const declined = row({ feedback: 'decline', answeredAt: 1_000 });
+
+  it('starts without label state and takes vetoable from the precedent key', () => {
+    assert.equal(base.answeredAt, null);
+    assert.equal(base.label, null);
+    assert.equal(base.vetoable, false);
+    const keyed = toRowData(response({ precedentKey: 'k' }), {
+      source: 'permission',
+      key: 'r1',
+      enforced: false,
+    });
+    assert.equal(keyed.vetoable, true);
+  });
+
+  it('parses a row without the new fields using defaults', () => {
+    const { answeredAt, vetoable, label, ...old } = base;
+    assert.equal(answeredAt, null);
+    assert.equal(vetoable, false);
+    assert.equal(label, null);
+    const parsed = decisionRowSchema.parse(old);
+    assert.deepEqual([parsed.answeredAt, parsed.vetoable, parsed.label], [null, false, null]);
+  });
+
+  it('classifies which rows can be labelled', () => {
+    assert.equal(rowLabelKind(declined), 'declined');
+    assert.equal(rowLabelKind(row({ feedback: 'interrupted', answeredAt: 1 })), 'interrupted');
+    const auto = row({ applied: true, vetoable: true, answeredAt: 1 });
+    assert.equal(rowLabelKind(auto), 'auto-allowed');
+    assert.equal(rowLabelKind({ ...auto, vetoable: false }), null);
+    assert.equal(rowLabelKind({ ...declined, answeredAt: null }), null);
+    assert.equal(rowLabelKind({ ...declined, source: 'turn' }), null);
+    assert.equal(rowLabelKind(row({ feedback: 'deny', answeredAt: 1 })), null);
+    assert.equal(rowLabelKind(row({ feedback: 'allow', answeredAt: 1 })), null);
+  });
+
+  it('offers one chip on auto-allows and three after a decline', () => {
+    assert.deepEqual(choicesFor('auto-allowed'), ['unsafe']);
+    assert.deepEqual(choicesFor('declined'), ['safe', 'unsafe', 'skip']);
+    assert.deepEqual(choicesFor('interrupted'), ['safe', 'unsafe', 'skip']);
+  });
+
+  it('hides chips after the window, once labelled, but not for a future time', () => {
+    assert.equal(labelChoices(declined, 1_000 + LABEL_WINDOW_MS).length, 3);
+    assert.deepEqual(labelChoices(declined, 1_000 + LABEL_WINDOW_MS + 1), []);
+    assert.deepEqual(labelChoices({ ...declined, label: 'skip' }, 2_000), []);
+    assert.equal(labelChoices({ ...declined, answeredAt: 9_000 }, 2_000).length, 3);
+  });
+
+  it('words the answer line', () => {
+    assert.equal(permissionNote(base), null);
+    assert.equal(permissionNote(row({ feedback: 'allow' })), '✓ You allowed');
+    assert.equal(permissionNote(declined), '✗ You declined');
+    assert.equal(
+      permissionNote({ ...declined, label: 'safe' }),
+      '✗ You declined · not a safety issue',
+    );
+    assert.equal(
+      permissionNote({ ...declined, label: 'unsafe' }),
+      '✗ You declined · marked unsafe',
+    );
+    assert.equal(permissionNote({ ...declined, label: 'skip' }), '✗ You declined');
+    const stopped = row({ feedback: 'interrupted' });
+    assert.equal(permissionNote(stopped), '■ You stopped the agent');
+    assert.equal(
+      permissionNote({ ...stopped, label: 'safe' }),
+      '■ You stopped the agent · not a safety issue',
+    );
+    assert.equal(permissionNote(row({ feedback: 'deny' })), '✗ You denied');
+    assert.equal(permissionNote(row({ feedback: 'maybe' })), 'You answered: maybe');
+    assert.equal(
+      permissionNote(row({ applied: true, label: 'unsafe' })),
+      '✗ Marked unsafe · past allows no longer lower the threshold; high-confidence rules may still allow it',
+    );
   });
 });

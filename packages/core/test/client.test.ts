@@ -3,7 +3,7 @@ import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { after, before, describe, it } from 'node:test';
 
-import { GatewayClient, trimTrailingSlashes } from '../src/index.ts';
+import { GatewayClient, loopbackUrl, trimTrailingSlashes } from '../src/index.ts';
 
 describe('trimTrailingSlashes', () => {
   it('drops every trailing slash and nothing else', () => {
@@ -21,12 +21,30 @@ describe('trimTrailingSlashes', () => {
 
 describe('GatewayClient', () => {
   let server: Server;
+  let redirectServer: Server;
   let url = '';
+  let redirectUrl = '';
   let lastAuth: string | undefined;
+  let lastControl: string | string[] | undefined;
+  let redirectMode = false;
+  let redirected = 0;
 
   before(async () => {
+    redirectServer = createServer((_req, res) => {
+      redirected += 1;
+      res.end('{}');
+    });
+    await new Promise<void>((resolve) => redirectServer.listen(0, '127.0.0.1', resolve));
+    redirectUrl = `http://127.0.0.1:${String((redirectServer.address() as AddressInfo).port)}`;
     server = createServer((req, res) => {
       lastAuth = req.headers.authorization;
+      lastControl = req.headers['x-local-decider-control'];
+      if (redirectMode && (req.url === '/health' || req.url?.startsWith('/v1/decide/'))) {
+        res.statusCode = 302;
+        res.setHeader('location', `${redirectUrl}/hit`);
+        res.end();
+        return;
+      }
       if (req.url === '/slow') {
         return;
       }
@@ -60,12 +78,15 @@ describe('GatewayClient', () => {
   after(() => {
     server.closeAllConnections();
     server.close();
+    redirectServer.closeAllConnections();
+    redirectServer.close();
   });
 
   it('returns parsed JSON and sends the bearer token', async () => {
-    const client = new GatewayClient({ baseUrl: `${url}/`, token: 't0k' });
+    const client = new GatewayClient({ baseUrl: `${url}/`, token: 't0k', controlToken: 'control' });
     assert.deepEqual(await client.health(), { status: 'ok' });
     assert.equal(lastAuth, 'Bearer t0k');
+    assert.equal(lastControl, 'control');
     assert.equal(await client.reportOutcome('d1', 'allow'), true);
   });
 
@@ -90,6 +111,33 @@ describe('GatewayClient', () => {
     const down = new GatewayClient({ baseUrl: 'http://127.0.0.1:1', timeoutMs: 500 });
     assert.equal(await down.health(), null);
   });
+
+  it('sends the control token only to loopback', async () => {
+    let headers = new Headers();
+    const client = new GatewayClient({
+      baseUrl: 'https://example.test',
+      controlToken: 'control',
+      fetch: async (_input, init) => {
+        headers = new Headers(init?.headers);
+        return Response.json({ status: 'ok' });
+      },
+    });
+    assert.deepEqual(await client.health(), { status: 'ok' });
+    assert.equal(headers.get('x-local-decider-control'), null);
+  });
+
+  it('refuses redirects without contacting a second loopback server', async () => {
+    const client = new GatewayClient({ baseUrl: url });
+    redirected = 0;
+    redirectMode = true;
+    try {
+      assert.equal(await client.health(), null);
+      assert.equal(await client.decide('permission', { harness: 'cli', input: {} }), null);
+      assert.equal(redirected, 0);
+    } finally {
+      redirectMode = false;
+    }
+  });
 });
 
 describe('tokenAllowed', () => {
@@ -103,5 +151,26 @@ describe('tokenAllowed', () => {
     assert.equal(tokenAllowed('http://127.evil.example:8765'), false);
     assert.equal(tokenAllowed('http://192.168.1.10:8765'), false);
     assert.equal(tokenAllowed('not a url'), false);
+  });
+});
+
+describe('loopbackUrl', () => {
+  it('accepts loopback hosts but rejects lookalike names and invalid URLs', () => {
+    for (const url of [
+      'http://127.0.0.1:1',
+      'http://127.9.9.9',
+      'http://localhost',
+      'http://[::1]:8765',
+    ]) {
+      assert.equal(loopbackUrl(url), true, url);
+    }
+    for (const url of [
+      'http://127.0.0.1.evil.test',
+      'http://localhost.evil.test',
+      'https://example.com',
+      'not a url',
+    ]) {
+      assert.equal(loopbackUrl(url), false, url);
+    }
   });
 });

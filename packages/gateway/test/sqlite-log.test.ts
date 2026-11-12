@@ -1,4 +1,4 @@
-import type { LogRecord, Policy } from '@ziptie-soft/local-decider-core';
+import type { LogRecord, Policy, ShadowRecord } from '@ziptie-soft/local-decider-core';
 import assert from 'node:assert/strict';
 import {
   mkdirSync,
@@ -44,6 +44,14 @@ function pragma(file: string, name: string): number {
   } finally {
     database.close();
   }
+}
+
+function ids(records: LogRecord[]): string[] {
+  return records.map((r) =>
+    r.kind === 'decision'
+      ? r.decisionId
+      : `${r.decisionId}:${r.kind === 'outcome' ? r.outcome : ''}`,
+  );
 }
 
 describe('SqliteLog', () => {
@@ -168,6 +176,111 @@ describe('SqliteLog', () => {
     } finally {
       log.close();
     }
+  });
+
+  describe('readVerifiedPrecedent with typed labels', () => {
+    const now = Date.parse('2026-11-10T12:00:00.000Z');
+    const hour = 3_600_000;
+    const at = (agoMs: number): string => new Date(now - agoMs).toISOString();
+    const keyed = (
+      id: string,
+      action: string,
+      agoMs: number,
+      key: string | null = id,
+    ): ShadowRecord =>
+      makeShadowRecord(id, {
+        action,
+        ts: at(agoMs),
+        ...(key === null ? {} : { precedentKey: key }),
+      });
+    it('returns every verified outcome of an ask in seq order', () => {
+      const log = tempLog();
+      try {
+        log.append(keyed('a', 'ask', 2 * hour));
+        log.append(outcome('a', { outcome: 'decline', ts: at(hour) }));
+        log.append(outcome('a', { outcome: 'unsafe', ts: at(0) }));
+        assert.deepEqual(ids(log.readVerifiedPrecedent(14, now)), ['a', 'a:decline', 'a:unsafe']);
+      } finally {
+        log.close();
+      }
+    });
+
+    it('orders outcomes by seq even when ts disagrees', () => {
+      const log = tempLog();
+      try {
+        log.append(keyed('a', 'ask', 2 * hour, 'K'));
+        log.append(outcome('a', { outcome: 'decline', ts: at(hour) }));
+        log.append(outcome('a', { outcome: 'unsafe', ts: at(hour + 60_000) }));
+        const records = log.readVerifiedPrecedent(14, now);
+        assert.deepEqual(ids(records), ['a', 'a:decline', 'a:unsafe']);
+        const store = new PrecedentStore(
+          () => ({ from: 'subject', minAllows: 3, maxAgeDays: 14, sources: ['user'] }),
+          () => now,
+        );
+        store.rebuild(records);
+        assert.deepEqual(store.tally('K'), { allows: 0, denies: 1 });
+      } finally {
+        log.close();
+      }
+    });
+
+    it('returns a recent keyed allow with or without outcomes', () => {
+      const log = tempLog();
+      try {
+        log.append(keyed('bare', 'allow', hour));
+        log.append(keyed('labelled', 'allow', hour));
+        log.append(outcome('labelled', { outcome: 'allow' }));
+        log.append(outcome('labelled', { outcome: 'unsafe' }));
+        assert.deepEqual(ids(log.readVerifiedPrecedent(14, now)), [
+          'bare',
+          'labelled',
+          'labelled:allow',
+          'labelled:unsafe',
+        ]);
+      } finally {
+        log.close();
+      }
+    });
+
+    it('returns an old keyed allow only with a verified veto', () => {
+      const log = tempLog();
+      try {
+        log.append(keyed('plain', 'allow', 72 * hour));
+        log.append(outcome('plain', { outcome: 'allow', ts: at(71 * hour) }));
+        log.append(keyed('vetoed', 'allow', 72 * hour));
+        log.append(outcome('vetoed', { outcome: 'deny', ts: at(71 * hour) }));
+        assert.deepEqual(ids(log.readVerifiedPrecedent(14, now)), ['vetoed', 'vetoed:deny']);
+      } finally {
+        log.close();
+      }
+    });
+
+    it('excludes unkeyed allows and unverified outcomes', () => {
+      const log = tempLog();
+      try {
+        log.append(keyed('unkeyed', 'allow', hour, null));
+        log.append(keyed('a', 'ask', hour));
+        log.append(outcome('a', { outcome: 'unsafe', verified: false }));
+        log.append(outcome('a', { outcome: 'unsafe', source: 'unverified' }));
+        assert.deepEqual(ids(log.readVerifiedPrecedent(14, now)), ['a']);
+      } finally {
+        log.close();
+      }
+    });
+
+    it('never returns a decision twice around the replay window', () => {
+      const log = tempLog();
+      try {
+        log.append(keyed('inside', 'allow', 25 * hour - 60_000));
+        log.append(outcome('inside', { outcome: 'unsafe', ts: at(0) }));
+        log.append(keyed('outside', 'allow', 25 * hour + 60_000));
+        log.append(outcome('outside', { outcome: 'unsafe', ts: at(0) }));
+        const out = ids(log.readVerifiedPrecedent(14, now));
+        assert.deepEqual(out.toSorted(), ['inside', 'inside:unsafe', 'outside', 'outside:unsafe']);
+      } finally {
+        log.close();
+      }
+    });
   });
 
   it('retention removes old orphan outcomes and usage records', () => {

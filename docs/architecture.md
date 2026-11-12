@@ -89,11 +89,16 @@ Step by step:
    are rendered in policy order, objects as key-sorted JSON, and trimmed to `state.maxTokens`
    (`core/truncate.ts`).
 3. **Engine.** Answers are cached by input hash for the policy's `cache.ttlSeconds`. Otherwise the
-   request joins the engine queue: one request at a time, `high` priority policies first, at most
-   8 waiting. A full queue, an engine error or the deadline (`decisionTimeoutMs`, 30 s) returns an
-   `error` with the policy default and `enforced: false`.
+   request joins the engine queue: one request at a time, `high` priority policies first; shadow
+   decisions run at `low`. At most 8 decisions wait or run; `normal` ones are refused from 6, and a
+   `high` one arriving at 8 evicts the oldest waiting `low` one. While a managed engine loads,
+   `normal` and `low` decisions are refused once 6/8 are waiting (counting the load); `high` ones
+   are not. A caller that gives up leaves the queue at once; a managed engine loads before its
+   request takes the queue; a job that ignores its deadline loses the engine 1 s later. A full
+   queue, an engine error or the deadline (`decisionTimeoutMs`, 30 s) returns an `error` with the
+   policy default and `enforced: false`.
 4. **Rules.** The first matching rule wins. A precedent rule also needs enough recent allows of
-   the exact subject and no deny ([policies.md](policies.md#precedent)).
+   the exact subject and no veto ([policies.md](policies.md#precedent)).
 5. **Log and answer.** `enforced = mode is act and no error`. A shadow decision keeps running
    after the caller gives up, so it is still logged.
 
@@ -148,8 +153,9 @@ skip those and run only the guard and `command-risk`.
 ```mermaid
 flowchart LR
   D["Decision record"] --> LOG[("Decision log")]
-  U["Your Accept or Deny on a Paseo prompt"] -->|"POST /v1/outcomes, source user"| LOG
+  U["Your Accept or Decline on a Paseo prompt (decline is neutral)"] -->|"POST /v1/outcomes, source user"| LOG
   P["Parent agent's answer to a child"] -->|"source supervised"| LOG
+  L["Label chips on Paseo permission rows"] -->|"unsafe, source user"| LOG
   F["Right answer? buttons on Paseo rows"] -->|"source user"| LOG
   T["Token usage of agents a Paseo routing decision created"] -->|"POST /v1/usage"| LOG
   LOG --> S["local-decider stats"]
@@ -163,7 +169,9 @@ flowchart LR
 - **Records.** `decision` records hold the input hash, a precedent key (a hash of policy,
   project and redacted subject), answers, action, model and latency. `outcome` and `usage`
   records join them by `decisionId`. Only token-verified outcomes update precedent and
-  calibration hints; every outcome remains in agreement and reliability stats. No state text is
+  calibration hints; every outcome remains in agreement and reliability stats, except that
+  `decline` and `interrupted` are not labels of the model's answer. Corrections (a neutral
+  outcome upgraded to `unsafe`) are appended outcome rows. No state text is
   logged. They live in a SQLite database at `~/.local/share/local-decider/decider.db`, pruned
   after `logs.retainDays` (default 365; range 90–3650 days). It is hash-only, uses WAL for
   concurrent reads, stores hashes and structured decision metadata rather than state text, and
@@ -214,17 +222,19 @@ how to add an engine or a model, and the macOS notes
 
 ## HTTP routes
 
-| Route | Purpose |
-|---|---|
-| `POST /v1/decide/:policy` | Run a policy on harness input |
-| `POST /v1/systemone`, `POST /invocations` | Pass-through to the active engine (keys sorted, secrets redacted) |
-| `POST /v1/outcomes`, `POST /v1/usage` | Report what happened, and token usage, for a decision |
-| `GET /v1/calls/:id` | What each policy decided for a harness tool call (`call.id` of a decide request), its permission mode and the effective mode per scope; kept in memory for 10 minutes, 404 when unknown |
-| `GET /health`, `GET /ping`, `GET /v1/stats?days=N` | Engine state and latency; stats as JSON (30-day default, bounded by retention) |
-| `GET /models`, `GET /v1/engines`, `POST /v1/engine`, `/v1/engine/load`, `/unload`, `/lifecycle` | Model catalogue, engine status, switching and lifecycle |
-| `POST /v1/models/download`, `/v1/engines/validate`, `/v1/paths` | Downloads, `flm validate`, tool paths (loopback gateway only) |
-| `GET /v1/policies`, `POST /v1/policies/:id/mode`, `/variant`, `/thresholds`, `/v1/policies/reload` | Policy settings, written to `config.yaml` |
-| `GET /v1/policies/:id/prompt`, `GET /v1/config`, `POST /v1/config/reload`, `POST /v1/routing/presets` | Authoring prompt, config view and reload, preset mapping |
-| `POST /mcp` | MCP over streamable HTTP with `decide` and `policies` tools; `local-decider mcp` is the stdio form |
+| Route | Auth | Purpose |
+|---|---|---|
+| `POST /v1/decide/:policy` | Open | Run a policy on harness input |
+| `POST /v1/systemone`, `POST /invocations` | Open | Pass-through to the active engine (keys sorted, secrets redacted) |
+| `POST /v1/outcomes`, `POST /v1/usage` | Report / open | Report what happened, and token usage, for a decision |
+| `GET /v1/calls/:id` | Open | What each policy decided for a harness tool call (`call.id` of a decide request), its permission mode and the effective mode per scope; kept in memory for 10 minutes, 404 when unknown |
+| `GET /health`, `GET /ping`, `GET /v1/stats?days=N` | Open | Engine state and latency; stats as JSON (30-day default, bounded by retention) |
+| `GET /models` | Open | Model catalogue |
+| `GET /v1/engines`, `POST /v1/engine`, `/v1/engine/mode`, `/v1/engine/load`, `/v1/engine/unload`, `/v1/engine/lifecycle` | Control | Engine status, switching and lifecycle |
+| `POST /v1/models/download`, `/v1/engines/validate`, `/v1/engines/discover`, `/v1/paths` | Control | Downloads, `flm validate`, discovery and tool paths |
+| `GET /v1/policies` | Open | Policy list and variants |
+| `POST /v1/policies/:id/mode`, `/variant`, `/thresholds`, `/v1/policies/reload` | Control | Policy settings, written to `config.yaml` |
+| `GET /v1/policies/:id/prompt`, `GET /v1/config`, `POST /v1/config/reload`, `/v1/config/engine`, `/v1/routing/presets` | Control | Authoring prompt, config view and reload, engine connection and preset mapping |
+| `POST /mcp` | Open | MCP over streamable HTTP with `decide` and `policies` tools; `local-decider mcp` is the stdio form |
 
 Security controls on these routes are in [security.md](security.md).

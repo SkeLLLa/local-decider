@@ -6,7 +6,7 @@ import {
 import { z } from 'zod';
 
 import { defineEngine } from './descriptor.ts';
-import { getHealth, postSystemOne } from './http.ts';
+import { displayUrl, getHealth, postSystemOne } from './http.ts';
 import type { Engine, EngineHealth, EngineState } from './types.ts';
 
 const remoteSchema = z.strictObject({
@@ -58,7 +58,7 @@ export class SystemOneRemoteEngine implements Engine {
     this.#state = 'starting';
     const health = await getHealth(this.#url, 5000);
     this.#state = health === null ? 'failed' : 'ready';
-    this.#detail = health === null ? `no /health at ${this.#url}` : undefined;
+    this.#detail = health === null ? `no /health at ${displayUrl(this.#url)}` : undefined;
   }
 
   health(): EngineHealth {

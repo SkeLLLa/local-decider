@@ -1,3 +1,10 @@
+/**
+ * Fail-open client of the local-decider gateway, with the same semantics as core's
+ * `GatewayClient`: every call has a hard timeout and resolves to `null` on any failure (gateway
+ * down, slow, non-2xx, bad JSON, aborted), so hooks fall back to Paseo's default behaviour.
+ * Uses only the global `fetch` and `AbortSignal`, so it has no runtime dependencies.
+ */
+import { CONTROL_HEADER, REPORT_HEADER } from './constants.ts';
 import type {
   DecideRequest,
   DecideResponse,
@@ -5,13 +12,7 @@ import type {
   OutcomeSource,
   UsageReport,
 } from './decision.ts';
-/**
- * Fail-open client of the local-decider gateway, with the same semantics as core's
- * `GatewayClient`: every call has a hard timeout and resolves to `null` on any failure (gateway
- * down, slow, non-2xx, bad JSON, aborted), so hooks fall back to Paseo's default behaviour.
- * Uses only the global `fetch` and `AbortSignal`, so it has no runtime dependencies.
- */
-import { normaliseBaseUrl, tokenAllowed } from './url.ts';
+import { bearerAllowed, loopbackUrl, normaliseBaseUrl } from './url.ts';
 
 export interface GatewayOptions {
   readonly baseUrl?: string;
@@ -19,8 +20,12 @@ export interface GatewayOptions {
   readonly timeoutMs?: number;
   /** Bearer token for a remote gateway; read from the daemon environment, never logged. */
   readonly token?: string | undefined;
+  readonly tokenOrigin?: string | undefined;
   /** Server-only token for authenticating outcome reports to a local gateway. */
   readonly reportToken?: string | undefined;
+  readonly controlToken?: string | undefined;
+  /** Called after any 401; never receives a token. */
+  readonly onUnauthorised?: (() => void) | undefined;
   readonly fetch?: typeof fetch;
 }
 
@@ -32,6 +37,7 @@ export interface CallOptions {
 
 export interface Gateway {
   readonly baseUrl: string;
+  readonly bearer: boolean;
   decide(
     policy: string,
     request: DecideRequest,
@@ -130,6 +136,20 @@ export type PostResult = { ok: true; body: unknown } | { ok: false; error: strin
 
 const DEFAULT_TIMEOUT_MS = 2000;
 
+function credentials(
+  baseUrl: string,
+  options: GatewayOptions,
+): { token?: string; reportToken?: string; controlToken?: string } {
+  const local = loopbackUrl(baseUrl);
+  return {
+    ...(options.token && bearerAllowed(baseUrl, options.tokenOrigin)
+      ? { token: options.token }
+      : {}),
+    ...(local && options.reportToken ? { reportToken: options.reportToken } : {}),
+    ...(local && options.controlToken ? { controlToken: options.controlToken } : {}),
+  };
+}
+
 function isDecideResponse(value: unknown): value is DecideResponse {
   if (typeof value !== 'object' || value === null) {
     return false;
@@ -179,6 +199,10 @@ function signalFor(defaultMs: number, options: CallOptions | undefined): AbortSi
   return options?.signal === undefined ? timeout : AbortSignal.any([timeout, options.signal]);
 }
 
+function notifyUnauthorised(res: Response, callback: (() => void) | undefined): void {
+  if (res.status === 401) callback?.();
+}
+
 export function createGateway(options: GatewayOptions = {}): Gateway | null {
   const baseUrl = normaliseBaseUrl(options.baseUrl);
   if (baseUrl === null) {
@@ -186,9 +210,7 @@ export function createGateway(options: GatewayOptions = {}): Gateway | null {
   }
   const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   const doFetch = options.fetch ?? globalThis.fetch;
-  // Never send the token in clear text to another machine.
-  const token = tokenAllowed(baseUrl) ? options.token : undefined;
-  const reportToken = tokenAllowed(baseUrl) ? options.reportToken : undefined;
+  const { token, reportToken, controlToken } = credentials(baseUrl, options);
 
   function headersFor(body: unknown, path: string): Record<string, string> {
     const headers: Record<string, string> = { accept: 'application/json' };
@@ -199,7 +221,10 @@ export function createGateway(options: GatewayOptions = {}): Gateway | null {
       headers['authorization'] = `Bearer ${token}`;
     }
     if (path === '/v1/outcomes' && reportToken !== undefined && reportToken !== '') {
-      headers['x-local-decider-report'] = reportToken;
+      headers[REPORT_HEADER] = reportToken;
+    }
+    if (controlToken !== undefined && controlToken !== '') {
+      headers[CONTROL_HEADER] = controlToken;
     }
     return headers;
   }
@@ -210,12 +235,15 @@ export function createGateway(options: GatewayOptions = {}): Gateway | null {
     body: unknown,
     call: CallOptions | undefined,
   ): Promise<Response> {
-    return doFetch(`${baseUrl}${path}`, {
+    const res = await doFetch(`${baseUrl}${path}`, {
       method,
       headers: headersFor(body, path),
+      redirect: 'error',
       signal: signalFor(timeoutMs, call),
       ...(body === undefined ? {} : { body: JSON.stringify(body) }),
     });
+    notifyUnauthorised(res, options.onUnauthorised);
+    return res;
   }
 
   async function request(
@@ -253,6 +281,7 @@ export function createGateway(options: GatewayOptions = {}): Gateway | null {
 
   return {
     baseUrl,
+    bearer: token !== undefined,
     async decide(policy, req, call) {
       const res = await request('POST', `/v1/decide/${encodeURIComponent(policy)}`, req, call);
       return isDecideResponse(res) ? res : null;

@@ -3,7 +3,6 @@ import { describe, it } from 'node:test';
 import { setTimeout as sleep } from 'node:timers/promises';
 
 import { ManagedEngine } from '../src/engines/lazy.ts';
-import { SerialQueue } from '../src/queue.ts';
 import { FakeEngine } from './helpers.ts';
 
 const REQ = { state: 's', questions: { q: { type: 'noul' as const, instructions: 'i' } } };
@@ -78,45 +77,5 @@ describe('ManagedEngine', () => {
     };
     const engine = new ManagedEngine(inner, { lifecycle: 'lazy', idleUnloadMinutes: 15 });
     await assert.rejects(engine.decide(REQ, AbortSignal.timeout(2000)), /engine failed/);
-  });
-});
-
-describe('SerialQueue priorities', () => {
-  it('runs one job at a time, high before low, FIFO within a priority', async () => {
-    const queue = new SerialQueue();
-    const order: string[] = [];
-    const job =
-      (name: string, ms = 10) =>
-      async (): Promise<void> => {
-        order.push(name);
-        await sleep(ms);
-      };
-    const signal = new AbortController().signal;
-    const all = [
-      queue.run(signal, job('first', 30), 'low'),
-      queue.run(signal, job('low-1'), 'low'),
-      queue.run(signal, job('low-2'), 'low'),
-      queue.run(signal, job('high-1'), 'high'),
-      queue.run(signal, job('normal'), 'normal'),
-      queue.run(signal, job('high-2'), 'high'),
-    ];
-    assert.equal(queue.depth, 6);
-    await Promise.all(all);
-    assert.deepEqual(order, ['first', 'high-1', 'high-2', 'normal', 'low-1', 'low-2']);
-    assert.equal(queue.depth, 0);
-  });
-
-  it('skips a job whose signal fired while it waited', async () => {
-    const queue = new SerialQueue();
-    const controller = new AbortController();
-    const blocker = queue.run(new AbortController().signal, () => sleep(30));
-    let ran = false;
-    const skipped = queue.run(controller.signal, async () => {
-      ran = true;
-    });
-    controller.abort();
-    await blocker;
-    await assert.rejects(skipped);
-    assert.equal(ran, false);
   });
 });

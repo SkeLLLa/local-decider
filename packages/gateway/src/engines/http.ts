@@ -5,6 +5,16 @@ import { EngineError } from './types.ts';
 
 const MAX_RESPONSE_BYTES = 1024 * 1024;
 
+/** `scheme://host[:port][/path]` for messages: never userinfo, query or fragment. */
+export function displayUrl(url: string): string {
+  try {
+    const u = new URL(url);
+    return `${u.protocol}//${u.host}${u.pathname === '/' ? '' : u.pathname}`;
+  } catch {
+    return 'an invalid URL';
+  }
+}
+
 export interface HttpEngineOptions {
   readonly baseUrl: string;
   readonly token?: string | undefined;

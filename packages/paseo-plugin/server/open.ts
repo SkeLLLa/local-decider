@@ -21,11 +21,10 @@ export function hostEnv(env: Readonly<Record<string, string>>): Record<string, s
 
 async function mcpServers(
   deps: HookDeps,
-  token: () => string | undefined,
   request: PluginSessionOpenRequest,
 ): Promise<PluginSessionOpenRequest['mcpServers']> {
   try {
-    const server = await gatewayMcpServer(deps, token);
+    const server = await gatewayMcpServer(deps);
     return server === null
       ? request.mcpServers
       : { ...request.mcpServers, [MCP_SERVER_NAME]: server };
@@ -37,7 +36,6 @@ async function mcpServers(
 
 export function createOpenHandler(
   deps: HookDeps,
-  token: () => string | undefined,
 ): (payload: {
   request: PluginSessionOpenRequest;
 }) => Promise<PluginSessionOpenRequest | undefined> {
@@ -48,7 +46,7 @@ export function createOpenHandler(
     return {
       ...request,
       env: hostEnv(request.env),
-      mcpServers: await mcpServers(deps, token, request),
+      mcpServers: await mcpServers(deps, request),
     };
   };
 }

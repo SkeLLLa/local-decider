@@ -124,7 +124,7 @@ export function thresholdText(t: ThresholdSetting): string {
 /** Slider and input resolution: hundredths. */
 export const THRESHOLD_STEP = 0.01;
 
-/** Lowest value the rule accepts: the gateway's floor, and never below 0.5 for an auto-allow. */
+/** Lowest value the rule accepts: the gateway's floor, and never below 0.8 for an auto-allow. */
 export function thresholdFloor(t: ThresholdSetting): number {
   return t.action === 'allow' ? Math.max(t.floor, ALLOW_THRESHOLD.floor) : t.floor;
 }

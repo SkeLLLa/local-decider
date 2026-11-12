@@ -3,11 +3,15 @@ import {
   GatewayClient,
   parsePolicy,
   SCOPES,
+  CONTROL_HEADER,
+  loopbackUrl,
+  tokenAllowed,
   type DecideRequest,
   type Scope,
 } from '@ziptie-soft/local-decider-core';
 import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { parseArgs } from 'node:util';
 
 import { authoringPrompt } from './authoring.ts';
@@ -42,6 +46,7 @@ import { parseEvalCases, runPolicyEval } from './eval.ts';
 import { serveMcpStdio, type McpBackend } from './mcp.ts';
 import { resolvePaths, type Paths } from './paths.ts';
 import { loadPolicies, policyDirs } from './policies.ts';
+import { readControlToken } from './report-token.ts';
 import { startGateway } from './runtime.ts';
 import {
   detectManager,
@@ -84,7 +89,9 @@ to policy files as they happen.
   local-decider mcp                                 MCP over stdio (proxies to the gateway)
 
 Environment: LOCAL_DECIDER_URL (default http://127.0.0.1:${String(DEFAULT_PORT)}), LOCAL_DECIDER_TOKEN
-(bearer for a non-loopback gateway; never logged), LOCAL_DECIDER_HOME, LOCAL_DECIDER_CONFIG_DIR.`;
+(bearer for a remote gateway, sent only over https or to loopback; never logged),
+LOCAL_DECIDER_HOME, LOCAL_DECIDER_CONFIG_DIR. Control commands read the control-token file next
+to config.yaml.`;
 
 interface Context {
   readonly paths: Paths;
@@ -97,13 +104,54 @@ function gatewayUrl(config: GatewayConfig): string {
   return process.env['LOCAL_DECIDER_URL'] ?? `http://${host}:${String(config.port)}`;
 }
 
-function client(config: GatewayConfig, timeoutMs: number): GatewayClient {
+function client(ctx: Context, timeoutMs: number): GatewayClient {
   const token = process.env['LOCAL_DECIDER_TOKEN'];
+  const controlToken = readControlToken(ctx.paths);
   return new GatewayClient({
-    baseUrl: gatewayUrl(config),
+    baseUrl: gatewayUrl(ctx.config),
     timeoutMs,
     ...(token === undefined ? {} : { token }),
+    ...(controlToken === undefined ? {} : { controlToken }),
   });
+}
+
+/** Bearer when the URL may carry it; the control token only to a loopback gateway. */
+function gatewayHeaders(ctx: Context, url: string): Record<string, string> {
+  const token = process.env['LOCAL_DECIDER_TOKEN'];
+  const control = loopbackUrl(url) ? readControlToken(ctx.paths) : undefined;
+  return {
+    ...(token === undefined || token === '' || !tokenAllowed(url)
+      ? {}
+      : { authorization: `Bearer ${token}` }),
+    ...(control === undefined ? {} : { [CONTROL_HEADER]: control }),
+  };
+}
+
+/** fetch to the gateway with credentials, no redirects and a timeout. */
+function gatewayFetch(
+  ctx: Context,
+  path: string,
+  init: { method?: string; body?: string; timeoutMs: number },
+): Promise<Response> {
+  const url = `${gatewayUrl(ctx.config)}${path}`;
+  return fetch(url, {
+    method: init.method ?? 'GET',
+    headers: {
+      ...(init.body === undefined ? {} : { 'content-type': 'application/json' }),
+      ...gatewayHeaders(ctx, url),
+    },
+    ...(init.body === undefined ? {} : { body: init.body }),
+    redirect: 'error',
+    signal: AbortSignal.timeout(init.timeoutMs),
+  });
+}
+
+function refusedMessage(ctx: Context): string {
+  return `gateway refused: control token missing or wrong (${join(ctx.paths.config, 'control-token')}); a remote gateway needs LOCAL_DECIDER_TOKEN`;
+}
+
+async function fetchPolicies(ctx: Context): Promise<unknown> {
+  return (await gatewayFetch(ctx, '/v1/policies', { timeoutMs: 3000 })).json();
 }
 
 async function gatewayRun(ctx: Context): Promise<void> {
@@ -145,7 +193,7 @@ async function gatewayService(ctx: Context, action: string): Promise<void> {
   } else if (action === 'uninstall') {
     console.log(uninstallService(manager, ctx.paths));
   } else {
-    const health = await client(ctx.config, 2000).health();
+    const health = await client(ctx, 2000).health();
     console.log(`service (${manager}): ${serviceState(manager, ctx.paths)}`);
     console.log(
       `gateway ${gatewayUrl(ctx.config)}: ${health === null ? 'unreachable' : JSON.stringify(health)}`,
@@ -178,9 +226,21 @@ function installFastFlowLM(ctx: Context, model: string | undefined, noDownload: 
 }
 
 async function listEngines(ctx: Context): Promise<void> {
-  const payload = await client(ctx.config, 5000).engines();
+  const url = gatewayUrl(ctx.config);
+  const response = await gatewayFetch(ctx, '/v1/engines', { timeoutMs: 5000 }).catch(() => null);
+  if (response?.status === 401) {
+    console.error(refusedMessage(ctx));
+    process.exitCode = 1;
+    return;
+  }
+  if (response === null || !response.ok) {
+    console.error(`gateway unreachable at ${url}`);
+    process.exitCode = 1;
+    return;
+  }
+  const payload: unknown = await response.json().catch(() => null);
   if (payload === null) {
-    console.error(`gateway unreachable at ${gatewayUrl(ctx.config)}`);
+    console.error(`gateway unreachable at ${url}`);
     process.exitCode = 1;
     return;
   }
@@ -247,7 +307,7 @@ function printGatewayError(value: unknown): void {
 
 async function useEngine(ctx: Context, args: readonly string[]): Promise<void> {
   const selection = parseUseSelection(args);
-  const result = await client(ctx.config, 30_000).selectEngine(selection);
+  const result = await client(ctx, 30_000).selectEngine(selection);
   if (result === null) {
     console.error(`gateway unreachable at ${gatewayUrl(ctx.config)}`);
     process.exitCode = 1;
@@ -328,7 +388,7 @@ async function decide(ctx: Context): Promise<void> {
   if (policy === undefined) {
     throw new UsageError();
   }
-  const result = await client(ctx.config, ctx.config.decisionTimeoutMs).decide(policy, {
+  const result = await client(ctx, ctx.config.decisionTimeoutMs).decide(policy, {
     harness: 'cli',
     input: parseInput(rest),
   });
@@ -371,16 +431,12 @@ function checkPolicy(file: string): void {
 
 /** POST a control route and print the answer; a gateway error becomes the exit message. */
 async function gatewayPost(ctx: Context, path: string, body: unknown): Promise<void> {
-  const token = process.env['LOCAL_DECIDER_TOKEN'];
-  const res = await fetch(`${gatewayUrl(ctx.config)}${path}`, {
+  const res = await gatewayFetch(ctx, path, {
     method: 'POST',
-    headers: {
-      'content-type': 'application/json',
-      ...(token === undefined ? {} : { authorization: `Bearer ${token}` }),
-    },
     body: JSON.stringify(body),
-    signal: AbortSignal.timeout(10_000),
+    timeoutMs: 10_000,
   });
+  if (res.status === 401) throw new Error(refusedMessage(ctx));
   const answer: unknown = await res.json().catch(() => null);
   if (!res.ok) {
     const message = (answer as { error?: unknown } | null)?.error;
@@ -411,7 +467,7 @@ async function evalPolicy(
 ): Promise<void> {
   const path = requiredPolicyArg(file);
   const cases = parseEvalCases(readFileSync(path, 'utf8'), path);
-  const gw = client(ctx.config, ctx.config.decisionTimeoutMs);
+  const gw = client(ctx, ctx.config.decisionTimeoutMs);
   await runPolicyEval(requiredPolicyArg(policy), cases, (id, request) => gw.decide(id, request));
 }
 
@@ -421,10 +477,7 @@ async function promptPolicy(ctx: Context, policy: string | undefined): Promise<v
 }
 
 async function listPolicies(ctx: Context): Promise<void> {
-  const res = await fetch(`${gatewayUrl(ctx.config)}/v1/policies`, {
-    signal: AbortSignal.timeout(3000),
-  });
-  console.log(JSON.stringify(await res.json(), null, 2));
+  console.log(JSON.stringify(await fetchPolicies(ctx), null, 2));
 }
 
 const POLICY_SUBCOMMANDS: Readonly<Record<string, PolicySubcommand>> = {
@@ -475,7 +528,7 @@ async function benchCmd(ctx: Context): Promise<void> {
 }
 
 async function mcp(ctx: Context): Promise<void> {
-  const gw = client(ctx.config, ctx.config.decisionTimeoutMs);
+  const gw = client(ctx, ctx.config.decisionTimeoutMs);
   const backend: McpBackend = {
     async decide(policy, request) {
       const result = await gw.decide(policy, request);
@@ -485,10 +538,7 @@ async function mcp(ctx: Context): Promise<void> {
       return result;
     },
     async listPolicies() {
-      const res = await fetch(`${gatewayUrl(ctx.config)}/v1/policies`, {
-        signal: AbortSignal.timeout(3000),
-      });
-      return res.json();
+      return fetchPolicies(ctx);
     },
   };
   await serveMcpStdio(backend);

@@ -10,7 +10,7 @@ import { describe, it } from 'node:test';
 
 import type { ClassifierAgreement } from '../src/classifier-agreement.ts';
 import type { LoadedPolicy } from '../src/policies.ts';
-import { computeStats, formatStats, type PolicyStats } from '../src/stats.ts';
+import { computeStats, formatStats, type CalibrationHint, type PolicyStats } from '../src/stats.ts';
 
 function decision(
   id: string,
@@ -332,5 +332,86 @@ describe('classifier agreement', () => {
     assert.match(text, /classifier agreement \(claude-auto\): 9 decisions, 6 compared/);
     assert.match(text, /allow precision 75\.0%, Wilson 95% lower/);
     assert.match(text, /disagreements \(decider allow, classifier deny\): d1/);
+  });
+});
+
+function labelled(...values: string[]): LogRecord[] {
+  const records: LogRecord[] = [
+    decision('x', 'allow', 0.9, {
+      action: 'ask',
+      answers: {
+        verdict: {
+          type: 'choice',
+          answer: 'allow',
+          probabilities: { allow: 0.9, deny: 0.1 },
+          confidence: 0.8,
+        },
+      },
+    }),
+  ];
+  for (const value of values) {
+    records.push({
+      kind: 'outcome',
+      ts: '2026-11-10T00:00:01.000Z',
+      decisionId: 'x',
+      outcome: value,
+      source: 'user',
+      verified: true,
+    });
+  }
+  return records;
+}
+
+describe('typed outcome labels', () => {
+  const permissionPolicy = parsePolicy(
+    readFileSync(new URL('../../../policies/permission.yaml', import.meta.url), 'utf8'),
+  );
+  const policies = new Map<string, LoadedPolicy>([
+    ['permission', { policy: permissionPolicy, mode: 'act', source: 'permission.yaml' }],
+  ]);
+  const hints = (...values: string[]): readonly CalibrationHint[] | undefined =>
+    computeStats(labelled(...values), {}, policies)[0]?.calibrationHints;
+
+  it('compares unsafe as deny in agreement', () => {
+    const [s] = computeStats(labelled('unsafe'));
+    assert.equal(s?.labelled, 1);
+    assert.equal(s?.agreement, 0);
+  });
+
+  it('does not count decline or interrupted as labels', () => {
+    assert.equal(computeStats(labelled('decline'))[0]?.labelled, 0);
+    assert.equal(computeStats(labelled('interrupted'))[0]?.labelled, 0);
+  });
+
+  it('compares a decline followed by unsafe as deny', () => {
+    const [s] = computeStats(labelled('decline', 'unsafe'));
+    assert.equal(s?.labelled, 1);
+    assert.equal(s?.agreement, 0);
+  });
+
+  it('gives no calibration sample for a decline', () => {
+    assert.deepEqual(hints('decline'), [{ rule: 'verdict.allow', n: 0, denies: 0 }]);
+  });
+
+  it('gives a denied sample for a decline then unsafe', () => {
+    assert.deepEqual(hints('decline', 'unsafe'), [{ rule: 'verdict.allow', n: 1, denies: 1 }]);
+  });
+
+  it('keeps a verified allow sample after a later unverified report', () => {
+    const records = labelled('allow');
+    records.push({
+      kind: 'outcome',
+      ts: 't',
+      decisionId: 'x',
+      outcome: 'deny',
+      source: 'user',
+      verified: false,
+    });
+    const [s] = computeStats(records, {}, policies);
+    assert.deepEqual(s?.calibrationHints, [{ rule: 'verdict.allow', n: 1, denies: 0 }]);
+  });
+
+  it('keeps the first verified allow sample when a deny follows', () => {
+    assert.deepEqual(hints('allow', 'deny'), [{ rule: 'verdict.allow', n: 1, denies: 0 }]);
   });
 });

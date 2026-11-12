@@ -369,6 +369,18 @@ describe('OpenAI-compatible engine', () => {
     );
   });
 
+  it('hides URL credentials and query values from the no-server detail', async () => {
+    const secretUrl = 'https://user:SECRETPW@127.0.0.1:1/v1?key=SECRETQ';
+    const engine = new OpenAICompatibleEngine(config(secretUrl), {}, async () => {
+      throw new TypeError('fetch failed');
+    });
+    await engine.start();
+    const detail = engine.health().detail ?? '';
+    assert.match(detail, /https:\/\/127\.0\.0\.1:1\/v1/);
+    assert.equal(detail.includes('SECRETPW'), false);
+    assert.equal(detail.includes('SECRETQ'), false);
+  });
+
   it('honours an aborted decision signal', async () => {
     let postCount = 0;
     let receivedResolve: (() => void) | undefined;

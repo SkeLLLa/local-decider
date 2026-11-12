@@ -11,7 +11,7 @@ import {
 import { z } from 'zod';
 
 import { defineEngine } from '../descriptor.ts';
-import { postJson, type JsonRequestOptions } from '../http.ts';
+import { displayUrl, postJson, type JsonRequestOptions } from '../http.ts';
 import { EngineError, type Engine, type EngineHealth, type EngineState } from '../types.ts';
 import {
   optionMasses,
@@ -223,7 +223,7 @@ export class OpenAICompatibleEngine implements Engine {
       const message = this.#errorMessage(error);
       this.#state = 'failed';
       this.#detail = message.startsWith('engine unreachable:')
-        ? `no server at ${this.#url}; ${START_HINT}`
+        ? `no server at ${displayUrl(this.#url)}; ${START_HINT}`
         : message;
     }
   }

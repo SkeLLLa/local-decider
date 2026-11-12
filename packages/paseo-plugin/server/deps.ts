@@ -57,17 +57,31 @@ export interface HookDeps {
   gatewayKnownDown?(): boolean;
 }
 
-/** Read the server-only outcome token using the gateway's config directory precedence. */
-export function readReportToken(env: NodeJS.ProcessEnv = process.env): string | undefined {
+/** Read a local token using the gateway's config directory precedence. */
+export function readLocalToken(
+  name: 'report-token' | 'control-token',
+  env: NodeJS.ProcessEnv = process.env,
+): string | undefined {
   const config =
     env['LOCAL_DECIDER_CONFIG_DIR'] ??
     join(env['XDG_CONFIG_HOME'] ?? join(homedir(), '.config'), 'local-decider');
   try {
-    const token = readFileSync(join(config, 'report-token'), 'utf8').trim();
-    return token === '' ? undefined : token;
+    const token = readFileSync(join(config, name), 'utf8').trim();
+    // Same format as the gateway's `isLocalToken`.
+    return /^[A-Za-z0-9_-]{43}$/.test(token) ? token : undefined;
   } catch {
     return undefined;
   }
+}
+
+/** Read the server-only outcome token. */
+export function readReportToken(env: NodeJS.ProcessEnv = process.env): string | undefined {
+  return readLocalToken('report-token', env);
+}
+
+/** Read the server-only control token. */
+export function readControlToken(env: NodeJS.ProcessEnv = process.env): string | undefined {
+  return readLocalToken('control-token', env);
 }
 
 export function errorText(error: unknown): string {

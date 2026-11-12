@@ -33,7 +33,7 @@ function GatewaySection({ values, save }: SectionProps): ReactNode {
       <SettingsCard>
         <SettingsInput
           label="Gateway URL"
-          hint="Reached from the daemon. Default http://127.0.0.1:8765. A remote gateway's token comes only from LOCAL_DECIDER_TOKEN in the daemon's environment."
+          hint="Reached from the daemon. Default http://127.0.0.1:8765. A remote gateway needs https, LOCAL_DECIDER_TOKEN and LOCAL_DECIDER_TOKEN_ORIGIN in the daemon's environment."
           initialValue={values.gatewayUrl}
           placeholder="http://127.0.0.1:8765"
           onChangeText={setDraft}
@@ -51,7 +51,7 @@ function GatewaySection({ values, save }: SectionProps): ReactNode {
         />
         <SettingsSwitch
           label="Add the decide MCP tool to agents"
-          hint="Injects <gateway>/mcp into every agent session. Providers without MCP support then fail to open; leave off unless you need it."
+          hint="Injects <gateway>/mcp into every agent session. Providers without MCP support then fail to open; leave off unless you need it. Loopback gateways without a bearer token only."
           value={values.injectMcp}
           onValueChange={(injectMcp: boolean) => save({ ...values, injectMcp })}
         />

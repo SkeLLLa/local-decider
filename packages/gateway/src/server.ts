@@ -47,6 +47,8 @@ export interface ServerOptions {
   readonly token?: string | undefined;
   /** Private token for authenticating outcome reports from Paseo. */
   readonly reportToken?: string | undefined;
+  /** Required as `x-local-decider-control` on control routes unless `token` is set (S4). */
+  readonly controlToken?: string | undefined;
   /** Runtime model switching; absent in tests that inject an engine. */
   readonly engineControl?: EngineControl | undefined;
   /** Optional price table: stats then add dollar estimates to token savings. */
@@ -265,6 +267,28 @@ function authorised(req: IncomingMessage, token: string | undefined): boolean {
   return actual.length === expected.length && timingSafeEqual(actual, expected);
 }
 
+const CONTROL_HEADER = 'x-local-decider-control';
+
+/** Constant-time string equality; different lengths are unequal. */
+function safeEqual(actual: string, expected: string): boolean {
+  const a = Buffer.from(actual);
+  const b = Buffer.from(expected);
+  return a.length === b.length && timingSafeEqual(a, b);
+}
+
+/**
+ * Control routes need the control token on loopback. With LOCAL_DECIDER_TOKEN set, `authorised`
+ * has already checked the bearer, which is enough. Empty or missing values never match.
+ */
+function controlAllowed(req: IncomingMessage, options: ServerOptions): boolean {
+  if (options.token !== undefined) return true;
+  const expected = options.controlToken ?? '';
+  const header = req.headers[CONTROL_HEADER];
+  return (
+    expected !== '' && typeof header === 'string' && header !== '' && safeEqual(header, expected)
+  );
+}
+
 const LOOPBACK_HOSTS = new Set(['127.0.0.1', 'localhost', '[::1]', '::1']);
 
 function hostname(value: string): string {
@@ -429,7 +453,14 @@ function controlRoute(key: string, path: string): Handler | undefined {
   if (handler === undefined) {
     return undefined;
   }
-  return async (req, res, { decider, engineControl }) => {
+  return async (req, res, options) => {
+    if (!controlAllowed(req, options)) {
+      throw new HttpError(
+        401,
+        'control token required (x-local-decider-control, from the control-token file next to config.yaml)',
+      );
+    }
+    const { decider, engineControl } = options;
     if (engineControl === undefined) {
       throw new EngineSwitchError(409, 'this engine cannot switch models at runtime');
     }

@@ -296,6 +296,7 @@ function startupKey(config: GatewayConfig): string {
  */
 export class EngineControl {
   readonly switchable: boolean;
+  /** False in remote mode (LOCAL_DECIDER_TOKEN set): paths, engine connections, discovery and routing presets stay frozen, so a bearer cannot make the host run binaries or reach new URLs. Loopback writes are guarded by the control token (server.ts). */
   readonly pathsEditable: boolean;
   readonly #store: ConfigStore;
   readonly #paths: Paths;
