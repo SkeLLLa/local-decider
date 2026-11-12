@@ -91,9 +91,14 @@ class ModelEngine implements Engine {
     }
     return { state: this.#failing?.ready === true ? 'ready' : 'starting', model: this.model };
   }
-  async decide(): Promise<SystemOneResponse> {
+  async decide(_request?: unknown, signal?: AbortSignal): Promise<SystemOneResponse> {
     if (this.#failing?.answers === true) {
-      await this.#failing.gate;
+      const gate = this.#failing.gate;
+      await new Promise<void>((resolve, reject) => {
+        signal?.addEventListener('abort', () => reject(new Error('aborted')), { once: true });
+        if (gate === undefined) resolve();
+        else void gate.then(resolve);
+      });
       return {
         answers: { outcome: { type: 'choice', choice: 'done' } },
         usage: { input_tokens: 5 },
@@ -1013,6 +1018,148 @@ describe('EngineControl benchmark job', () => {
     assert.deepEqual(control.current(), prior);
     assert.equal(stringify(control.settings), configBefore);
     assert.equal(await isHeld(decider), false);
+  });
+});
+
+async function untilMeasuring(control: EngineControl): Promise<void> {
+  for (let i = 0; i < 100; i += 1) {
+    if ((await control.benchmark.view()).phase === 'measuring') return;
+    await settleEventLoop();
+  }
+  assert.fail('the job never reached measuring');
+}
+
+describe('benchmark routes', () => {
+  const CAPABILITIES: HostCapabilities = {
+    ...NO_CAPABILITIES,
+    npu: { status: 'available', evidence: 'accel0: route test' },
+    vulkan: { status: 'available', evidence: 'Vulkan0: route test' },
+  };
+  const START = { scope: 'installed', sizes: [256], runs: 1 };
+
+  async function served(): Promise<{
+    gw: Awaited<ReturnType<typeof startGateway>>;
+    control: EngineControl;
+    gate: ReturnType<typeof deferred<void>>;
+    get: (path: string, headers?: boolean) => Promise<Response>;
+    post: (path: string, body?: unknown, headers?: boolean) => Promise<Response>;
+  }> {
+    const gate = deferred<void>();
+    const { control, paths } = setup({
+      host: LINUX_HOST,
+      capabilities: () => Promise.resolve(CAPABILITIES),
+      llamaServer: true,
+      failing: { on: false, ready: true, answers: true, gate: gate.promise },
+      downloaded: (id) => id === 'd3:lite' || id === 'd3-lite-q8_0',
+    });
+    const gw = await startGateway({ config: testConfig(), paths, engineControl: control, env: {} });
+    const auth = (on: boolean): Record<string, string> => (on ? controlHeaders(paths) : {});
+    return {
+      gw,
+      control,
+      gate,
+      get: (path, headers = true) => fetch(`${gw.url}${path}`, { headers: auth(headers) }),
+      post: (path, body = {}, headers = true) =>
+        fetch(`${gw.url}${path}`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json', ...auth(headers) },
+          body: JSON.stringify(body),
+        }),
+    };
+  }
+
+  it('needs the control token on all three routes', async () => {
+    const { gw, get, post } = await served();
+    try {
+      assert.equal((await get('/v1/benchmark', false)).status, 401);
+      assert.equal((await post('/v1/benchmark', START, false)).status, 401);
+      assert.equal((await post('/v1/benchmark/cancel', {}, false)).status, 401);
+    } finally {
+      await gw.close();
+    }
+  });
+
+  it('rejects a bad body with 400 and cancels nothing when idle', async () => {
+    const { gw, get, post } = await served();
+    try {
+      const bad = await post('/v1/benchmark', { scope: 'everything' });
+      assert.equal(bad.status, 400);
+      assert.match(((await bad.json()) as { error: string }).error, /scope must be/);
+      assert.equal((await post('/v1/benchmark', { runs: 0 })).status, 400);
+      const none = await post('/v1/benchmark/cancel');
+      assert.equal(none.status, 409);
+      assert.deepEqual(await none.json(), { error: 'no benchmark is running' });
+      const idle = (await (await get('/v1/benchmark')).json()) as {
+        state: string;
+        preview: { total: number };
+      };
+      assert.equal(idle.state, 'idle');
+      assert.equal(idle.preview.total, 2);
+      const health = (await (await get('/health', false)).json()) as { benchmark: unknown };
+      assert.equal(health.benchmark, null);
+    } finally {
+      await gw.close();
+    }
+  });
+
+  it('starts a job, refuses a second, reports progress and cancels it', async () => {
+    const { gw, control, gate, get, post } = await served();
+    try {
+      const started = await post('/v1/benchmark', START);
+      assert.equal(started.status, 202);
+      const view = (await started.json()) as { state: string; id: string; total: number };
+      assert.equal(view.state, 'running');
+      assert.equal(view.id, 'bench-1');
+      assert.equal(view.total, 2);
+
+      const second = await post('/v1/benchmark', START);
+      assert.equal(second.status, 409);
+      assert.match(
+        ((await second.json()) as { error: string }).error,
+        /already running \(bench-1\)/,
+      );
+
+      await untilMeasuring(control);
+      const running = (await (await get('/v1/benchmark')).json()) as {
+        state: string;
+        phase: string;
+      };
+      assert.equal(running.state, 'running');
+      assert.equal(running.phase, 'measuring');
+      const health = (await (await get('/health', false)).json()) as { benchmark: unknown };
+      assert.deepEqual(health.benchmark, { completed: 0, total: 2 });
+
+      const cancelled = await post('/v1/benchmark/cancel');
+      assert.equal(cancelled.status, 202);
+      assert.equal(((await cancelled.json()) as { state: string }).state, 'cancelling');
+      await control.benchmark.settled();
+      const ended = (await (await get('/v1/benchmark')).json()) as {
+        state: string;
+        cancelReason: string;
+        restoredOk: boolean;
+      };
+      assert.equal(ended.state, 'cancelled');
+      assert.equal(ended.cancelReason, 'user');
+      assert.equal(ended.restoredOk, true);
+    } finally {
+      gate.resolve();
+      await gw.close();
+    }
+  });
+
+  it('cancels a running job when the gateway shuts down, without restoring', async () => {
+    const { gw, control, gate } = await served();
+    try {
+      assert.equal((await control.benchmark.start(parseBenchmarkRequest(START))).state, 'running');
+      await untilMeasuring(control);
+    } finally {
+      await gw.close();
+      gate.resolve();
+    }
+    const view = await control.benchmark.view();
+    assert.equal(view.state, 'cancelled');
+    assert.equal(view.cancelReason, 'shutdown');
+    assert.equal(view.restoredOk, null);
   });
 });
 
