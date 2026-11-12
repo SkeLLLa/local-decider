@@ -1108,7 +1108,14 @@ describe('control routes', () => {
   });
 
   it('serve engines status, switching, lifecycle and policy modes', async () => {
-    const { control, paths } = setup();
+    const npuCapabilities: HostCapabilities = {
+      ...NO_CAPABILITIES,
+      npu: { status: 'available', evidence: 'accel0: amdxdna' },
+    };
+    const { control, paths } = setup({
+      host: LINUX_HOST,
+      capabilities: () => Promise.resolve(npuCapabilities),
+    });
     const gw = await startGateway({ config: testConfig(), paths, engineControl: control, env: {} });
     const post = (path: string, body: unknown): Promise<Response> =>
       fetch(`${gw.url}${path}`, {
@@ -1125,6 +1132,28 @@ describe('control routes', () => {
         (await post('/v1/engine', { engine: 'fastflowlm', model: 'd3:nano' })).status,
         200,
       );
+      const automatic = await post('/v1/engine/mode', {
+        mode: 'auto',
+        family: 'vllm-sr/d3-mini',
+      });
+      assert.equal(automatic.status, 200);
+      assert.deepEqual(await automatic.json(), { mode: 'auto' });
+      const manualFamily = await post('/v1/engine/mode', {
+        mode: 'manual',
+        family: 'vllm-sr/d3-mini',
+      });
+      assert.equal(manualFamily.status, 400);
+      assert.deepEqual(await manualFamily.json(), {
+        error: 'family applies to automatic mode only',
+      });
+      const unknownFamily = await post('/v1/engine/mode', {
+        mode: 'auto',
+        family: 'unknown-family',
+      });
+      assert.equal(unknownFamily.status, 400);
+      assert.deepEqual(await unknownFamily.json(), {
+        error: 'unknown model family "unknown-family"',
+      });
       assert.equal(
         (await post('/v1/engine/lifecycle', { lifecycle: 'lazy', idleUnloadMinutes: 5 })).status,
         200,
