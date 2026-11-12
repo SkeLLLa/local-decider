@@ -5,6 +5,12 @@ import { redactDeep, redactSecrets } from '../src/index.ts';
 
 const KIB = 1024;
 
+// Budgets catch quadratic blowups, which cost seconds, not small constant factors. Shared CI
+// runners (with coverage on) are 2-4x slower than a dev machine, so give them headroom.
+const SLACK = process.env['CI'] ? 4 : 1;
+const fitsBudget = (budgetMs: number, runs: number, fn: () => void): boolean =>
+  bestOf(runs, fn) <= budgetMs * SLACK;
+
 function bestOf(runs: number, fn: () => void): number {
   for (let i = 0; i < 3; i++) fn();
   let best = Infinity;
@@ -32,7 +38,7 @@ const repeatTo = (unit: string, size: number): string =>
 describe('redaction performance', () => {
   it('handles 64 KiB of realistic input quickly', () => {
     const text = repeatTo(`${BLOCK}\n`, 64 * KIB);
-    assert.ok(bestOf(5, () => redactSecrets(text)) <= 50);
+    assert.ok(fitsBudget(50, 5, () => redactSecrets(text)));
   });
 
   const SIZE = 256 * KIB;
@@ -65,7 +71,7 @@ describe('redaction performance', () => {
   for (const [name, unit] of adversarial) {
     it(`stays linear on ${name}`, () => {
       const text = repeatTo(unit, SIZE);
-      assert.ok(bestOf(3, () => redactSecrets(text)) <= 250);
+      assert.ok(fitsBudget(250, 3, () => redactSecrets(text)));
     });
   }
 
@@ -86,7 +92,7 @@ describe('redaction performance', () => {
   for (const [name, make] of deep) {
     it(`walks ${name} quickly`, () => {
       const value = make();
-      assert.ok(bestOf(3, () => redactDeep(value)) <= 100);
+      assert.ok(fitsBudget(100, 3, () => redactDeep(value)));
     });
   }
 });
