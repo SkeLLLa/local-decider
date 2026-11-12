@@ -77,6 +77,87 @@ never switches the running engine.
   restart. A missing engine shows an **Install guide** link in settings. Tool paths and model
   directories can be set under `tools:` and `dirs:` in `config.yaml` or in the settings page.
 
+### Engine prerequisites with mise
+
+Each engine needs one tool that local-decider does not download for you. The recommended way to
+get it is [mise](https://mise.jdx.dev): `mise use -g` installs the tool for your user, puts it on
+`PATH` through mise's shims, and records it in `~/.config/mise/config.toml`, so upgrading is
+a one-line edit. System pieces that mise cannot provide (kernel drivers, GPU drivers) come from
+your distribution. Every command below is fish-compatible.
+
+The gateway's systemd user unit inherits the PATH of your systemd user session. If that PATH does
+not include `~/.local/share/mise/shims`, point the gateway at the shim in `config.yaml`; the
+shim path stays the same across upgrades:
+
+```yaml
+tools:
+  uv: /home/you/.local/share/mise/shims/uv
+  flm: /home/you/.local/share/mise/shims/flm
+  llamaServer: /home/you/.local/share/mise/shims/llama-server
+```
+
+#### strands-decider (CPU, NVIDIA CUDA, Apple Silicon)
+
+The only prerequisite is `uv`. `engine install` builds the Python environment itself.
+
+```sh
+mise use -g uv
+local-decider engine install                  # CPU on Linux, MLX on Apple Silicon
+local-decider engine install --flavor cuda    # NVIDIA GPU (needs the NVIDIA driver)
+```
+
+#### FastFlowLM (AMD Ryzen AI NPU, Linux)
+
+From your distribution you need Linux 6.14 or newer with the in-tree `amdxdna` driver, and NPU
+firmware from `linux-firmware`. FastFlowLM's portable Linux build ships its own XRT runtime, so
+mise can install it straight from the GitHub release:
+
+```sh
+mise use -g 'github:FastFlowLM/FastFlowLM[asset_pattern=fastflowlm_*_linux.tar.gz]@1.0.12'
+flm validate          # checks the NPU device, firmware, amdxdna version and memlock limit
+local-decider engine install --engine fastflowlm --model d3:mini
+```
+
+`flm validate` must report the NPU and an `infinity` (or large) memlock limit. Distribution
+packages also work, for example the `.deb` files on the FastFlowLM release page or the
+`alessandrolattao/fastflowlm` Copr on Fedora.
+
+#### llama.cpp Vulkan (Linux GPU)
+
+From your distribution you need a hardware Vulkan driver and `vulkaninfo`:
+
+```sh
+sudo dnf install mesa-vulkan-drivers vulkan-loader vulkan-tools        # Fedora
+sudo apt install mesa-vulkan-drivers libvulkan1 vulkan-tools           # Debian, Ubuntu
+```
+
+llama.cpp publishes its binaries on per-build `bNNNNN` tags, which GitHub marks as prereleases.
+The stable `vX.Y.Z` release carries only a `nightly-tag.txt` that names its build, so pin that
+build rather than `latest`:
+
+```sh
+set tag (curl -fsSL https://github.com/ggml-org/llama.cpp/releases/latest/download/nightly-tag.txt)
+mise use -g "github:ggml-org/llama.cpp[asset_pattern=llama-*-bin-ubuntu-vulkan-x64.tar.gz]@$tag"
+llama-server --version        # needs build 11572 or newer
+llama-server --list-devices   # should list a Vulkan0 device that is not llvmpipe
+local-decider engine install --engine llama-vulkan
+```
+
+The `asset_pattern` selects the Vulkan archive. Without it, mise may pick the CPU or CUDA build.
+
+#### openai-compatible and lmstudio
+
+These engines use a server you run yourself. Ollama and llama-server install with mise (set
+`$tag` as in the Vulkan section):
+
+```sh
+mise use -g ollama                # then: ollama serve
+mise use -g "github:ggml-org/llama.cpp[asset_pattern=llama-*-bin-ubuntu-vulkan-x64.tar.gz]@$tag"
+```
+
+LM Studio is not packaged for mise; install it from [lmstudio.ai](https://lmstudio.ai) and use
+its `lms` CLI. Then follow [OpenAI-compatible servers](#openai-compatible-servers).
+
 ### Linux GPU (Vulkan)
 
 Install llama.cpp with Vulkan support yourself, using an official Linux x86_64 release archive or
