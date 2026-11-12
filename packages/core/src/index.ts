@@ -1,7 +1,9 @@
 export { canonicalJson, sortKeysDeep } from './canonical.ts';
 export {
   DEFAULT_GATEWAY_URL,
+  CONTROL_HEADER,
   GatewayClient,
+  loopbackUrl,
   tokenAllowed,
   trimTrailingSlashes,
   type ClientOptions,
