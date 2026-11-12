@@ -1,6 +1,9 @@
 # fallow: dead code, duplication and complexity (`mise run lint:fallow`).
 # See https://fallow.tools/docs/
 
+# The stats worker is loaded by file URL (worker_threads), which static analysis cannot follow.
+entry = ["packages/gateway/src/stats-worker.ts"]
+
 # local-decider-auto-mode.mjs is generated from packages/hooks/src/mod; tests/ runs under
 # `claude plugin test` (mise run test:mod), which supplies the `claude-code/testing` module.
 ignorePatterns = [

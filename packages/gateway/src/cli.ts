@@ -51,7 +51,8 @@ import {
   uninstallService,
 } from './service.ts';
 import { openLogStore } from './sqlite-log.ts';
-import { computeStats, formatStats } from './stats.ts';
+import { parseDays, runStats } from './stats-job.ts';
+import { formatStats } from './stats.ts';
 import { toolchain } from './toolchain.ts';
 
 const USAGE = `local-decider — local decision models for coding-agent harnesses
@@ -65,7 +66,7 @@ Usage:
   local-decider engine configure <openai-compatible|lmstudio> --url URL --model ID [--token-env NAME]
   local-decider engine use <engine> <model> [--device D]  select an engine and model
   local-decider decide <policy> [--input JSON] [key=value ...]
-  local-decider stats [--json] [--scope claude-auto]  agreement and calibration from the shadow log
+  local-decider stats [--json] [--days N] [--scope claude-auto]  agreement and calibration from the shadow log
   local-decider logs backup <file> | export [--since YYYY-MM-DD] <dir>
   local-decider policies [check <file>]             list policies, or validate a policy file
   local-decider policies eval <policy> <file>       report decisions on JSONL fixtures
@@ -343,19 +344,23 @@ async function decide(ctx: Context): Promise<void> {
 async function stats(ctx: Context): Promise<void> {
   const { values } = parseArgs({
     args: [...ctx.args],
-    options: { json: { type: 'boolean' }, scope: { type: 'string' } },
+    options: { json: { type: 'boolean' }, scope: { type: 'string' }, days: { type: 'string' } },
   });
   if (values.scope !== undefined && !(SCOPES as readonly string[]).includes(values.scope)) {
     throw new SettingsUsageError(`scope must be one of ${SCOPES.join(', ')}`);
   }
+  const window = parseDays(values.days, ctx.config.logs.retainDays);
+  if ('error' in window) {
+    throw new SettingsUsageError(window.error);
+  }
   const log = openLogStore(ctx.paths, { readOnly: true });
   try {
-    const result = computeStats(
-      log.read(),
-      ctx.config.pricing,
-      loadPolicies(ctx.config, policyDirs(ctx.config, ctx.paths)),
-      values.scope === undefined ? {} : { scope: values.scope as Scope },
-    );
+    const result = runStats(log, {
+      days: window.days,
+      scope: values.scope as Scope | undefined,
+      pricing: ctx.config.pricing,
+      policies: loadPolicies(ctx.config, policyDirs(ctx.config, ctx.paths)),
+    });
     console.log(values.json === true ? JSON.stringify(result, null, 2) : formatStats(result));
   } finally {
     log.close();

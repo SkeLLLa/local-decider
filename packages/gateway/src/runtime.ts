@@ -14,6 +14,7 @@ import { ensureReportToken } from './report-token.ts';
 import { writeSchemas } from './schemas.ts';
 import { createGatewayServer, type ServerOptions } from './server.ts';
 import { openLogStore } from './sqlite-log.ts';
+import { StatsService } from './stats-service.ts';
 
 export interface Gateway {
   readonly server: Server;
@@ -38,6 +39,14 @@ export interface StartOptions {
   readonly policies?: ReadonlyMap<string, LoadedPolicy>;
   /** Injected storage; otherwise SQLite under the data directory. */
   readonly logStore?: LogStore;
+}
+
+/** Stats run in a worker when the log is the SQLite file; an injected store computes in-process. */
+function statsService(options: StartOptions, log: LogStore): StatsService {
+  return new StatsService({
+    log,
+    paths: options.logStore === undefined ? options.paths : undefined,
+  });
 }
 
 /** A managed engine starts through EngineControl, which in auto mode lets the first reconcile pick it. */
@@ -87,6 +96,7 @@ export async function startGateway(options: StartOptions): Promise<Gateway> {
     reportToken,
     engineControl,
     pricing: config.pricing,
+    stats: statsService(options, log),
     settings: () => engineControl?.settings ?? store.current,
   });
   startEngine(engine, engineControl);
