@@ -447,6 +447,8 @@ export interface BenchmarkLease {
   abort(reason: string): void;
   /** Set by the host when a user selection or a config change preempts the job. */
   readonly preempted: 'superseded' | 'config-changed' | null;
+  /** Resolves once `endBenchmark` has run for this lease. */
+  readonly done: Promise<void>;
   /** What the end of the job puts back. */
   readonly snapshot: {
     readonly mode: 'auto' | 'manual';
