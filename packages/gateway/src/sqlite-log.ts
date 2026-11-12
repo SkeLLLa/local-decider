@@ -357,6 +357,18 @@ function configureDatabase(database: Database): void {
   database.exec('PRAGMA synchronous=NORMAL');
   database.exec('PRAGMA busy_timeout=2000');
   migrate(database);
+  ensureIncrementalVacuum(database);
+}
+
+/**
+ * `auto_vacuum` only applies to a database created after it was set. A file that already had
+ * tables (created elsewhere, or before the pragma) is rebuilt once so pruning can reclaim pages.
+ */
+function ensureIncrementalVacuum(database: Database): void {
+  const mode = Number(database.prepare('PRAGMA auto_vacuum').get()?.['auto_vacuum'] ?? 0);
+  if (mode !== 2) {
+    database.exec('VACUUM');
+  }
 }
 
 /** Apply pending steps from `PRAGMA user_version`; each step and its version bump is atomic. */

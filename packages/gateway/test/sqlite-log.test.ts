@@ -281,6 +281,16 @@ describe('SqliteLog', () => {
     }
   });
 
+  it('turns on incremental auto-vacuum for a file that already had tables', () => {
+    const file = join(tempDir(), 'decider.db');
+    const database = new (sqlite().DatabaseSync)(file, { allowExtension: false });
+    database.exec('CREATE TABLE stray(x INTEGER)');
+    database.close();
+    assert.equal(pragma(file, 'auto_vacuum'), 0);
+    SqliteLog.open(file).close();
+    assert.equal(pragma(file, 'auto_vacuum'), 2);
+  });
+
   it('refuses a database from a newer schema', () => {
     const file = join(tempDir(), 'decider.db');
     const database = new (sqlite().DatabaseSync)(file, { allowExtension: false });
