@@ -2,12 +2,17 @@ import type { SystemOneRequest } from '@ziptie-soft/local-decider-core';
 import assert from 'node:assert/strict';
 import {
   chmodSync,
+  closeSync,
+  fstatSync,
+  ftruncateSync,
+  futimesSync,
   mkdirSync,
+  openSync,
   statSync,
   symlinkSync,
   truncateSync,
-  utimesSync,
   writeFileSync,
+  writeSync,
 } from 'node:fs';
 import { createServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
@@ -141,10 +146,16 @@ describe('llama Vulkan descriptor', () => {
     writeRecord(path, pin.sha256, ['']);
     assert.equal(recordMatches(path, pin.sha256), true);
     assert.equal((await llamaModelsPresent(selectedModel, ctx)).get('d3-lite-q8_0'), true);
-    const oldTime = statSync(path).mtimeMs;
-    writeFileSync(path, 'x');
-    truncateSync(path, pin.bytes);
-    utimesSync(path, new Date(), new Date(oldTime - 10_000));
+    // One descriptor for read-modify-write, so the stat and the rewrite see the same file.
+    const fd = openSync(path, 'r+');
+    try {
+      const oldTime = fstatSync(fd).mtimeMs;
+      writeSync(fd, 'x', 0);
+      ftruncateSync(fd, pin.bytes);
+      futimesSync(fd, new Date(), new Date(oldTime - 10_000));
+    } finally {
+      closeSync(fd);
+    }
     assert.equal(recordMatches(path, pin.sha256), false);
     assert.equal(statSync(path).size, pin.bytes);
     assert.ok(recordPath(path).endsWith('.verified.json'));
