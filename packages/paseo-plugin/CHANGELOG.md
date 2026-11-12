@@ -1,5 +1,20 @@
 # Changelog
 
+## [1.1.0](https://github.com/ziptie-soft/local-decider/compare/paseo-plugin-v1.0.3...paseo-plugin-v1.1.0) (2026-11-12)
+
+
+### Features
+
+* prioritize system installed engines ([#13](https://github.com/ziptie-soft/local-decider/issues/13)) ([2e707a6](https://github.com/ziptie-soft/local-decider/commit/2e707a6906c9f3d29054a80a65f1ff73ecb4074a))
+* sqlite store ([#15](https://github.com/ziptie-soft/local-decider/issues/15)) ([fd1499e](https://github.com/ziptie-soft/local-decider/commit/fd1499e700e6f0bc807a3838c9fd2d599f349e5c))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @ziptie-soft/local-decider-core bumped to 1.1.0
+
 ## [1.0.3](https://github.com/ziptie-soft/local-decider/compare/paseo-plugin-v1.0.2...paseo-plugin-v1.0.3) (2026-11-11)
 
 
