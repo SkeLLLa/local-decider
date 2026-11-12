@@ -1,4 +1,8 @@
-import type { SystemOneRequest, SystemOneResponse } from '@ziptie-soft/local-decider-core';
+import type {
+  LogRecord,
+  SystemOneRequest,
+  SystemOneResponse,
+} from '@ziptie-soft/local-decider-core';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -7,6 +11,7 @@ import { parseConfig, type GatewayConfig } from '../src/config.ts';
 import type { HostCapabilities } from '../src/engines/host-capabilities.ts';
 import type { Engine, EngineHealth, EngineState } from '../src/engines/types.ts';
 import type { Paths } from '../src/paths.ts';
+import { openLogStore, SqliteLog } from '../src/sqlite-log.ts';
 
 export function tempPaths(): Paths {
   const data = mkdtempSync(join(tmpdir(), 'ld-test-'));
@@ -91,3 +96,18 @@ export const NO_CAPABILITIES: HostCapabilities = {
 };
 
 export const stubCapabilities = (): Promise<HostCapabilities> => Promise.resolve(NO_CAPABILITIES);
+
+/** A writable SQLite store on a fresh temp-dir file. */
+export function tempLog(): SqliteLog {
+  return SqliteLog.open(join(mkdtempSync(join(tmpdir(), 'ld-log-test-')), 'decider.db'));
+}
+
+/** Every record, read through a short-lived read-only handle (a gateway may hold the writer). */
+export function readLog(paths: Paths): LogRecord[] {
+  const log = openLogStore(paths, { readOnly: true });
+  try {
+    return log.read();
+  } finally {
+    log.close();
+  }
+}

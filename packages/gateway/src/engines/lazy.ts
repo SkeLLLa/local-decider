@@ -46,7 +46,6 @@ export class ManagedEngine implements Engine {
     return this.#lastUsed === undefined ? null : new Date(this.#lastUsed).toISOString();
   }
 
-  // fallow-ignore-next-line unused-class-member -- EngineControl.setLifecycle calls it
   setLifecycle(options: LifecycleOptions): void {
     this.#options = options;
     this.#arm();

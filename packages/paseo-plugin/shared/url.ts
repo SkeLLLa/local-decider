@@ -1,3 +1,6 @@
+// fallow-ignore-file code-duplication
+// `trimTrailingSlashes` mirrors `@ziptie-soft/local-decider-core` (client.ts) on purpose: this file
+// is also bundled into the app, which may not import the workspace package (see decision.ts).
 import { DEFAULT_GATEWAY_URL } from './constants.ts';
 
 // No `URL` here: React Native's URL implements almost none of its getters.

@@ -4,9 +4,9 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, it } from 'node:test';
 
+import type { Paths } from '../src/paths.ts';
 import { startGateway, type Gateway } from '../src/runtime.ts';
-import { ShadowLog } from '../src/shadow.ts';
-import { FakeEngine, tempPaths, testConfig } from './helpers.ts';
+import { FakeEngine, readLog, tempPaths, testConfig } from './helpers.ts';
 
 type Body = Record<string, unknown>;
 
@@ -26,8 +26,8 @@ async function post(
 
 const input = { project: '/project', subject: 'Bash: npm test', request: 'npm test' };
 
-function decisions(logs: string): ShadowRecord[] {
-  return new ShadowLog(logs).read().filter((r): r is ShadowRecord => r.kind === 'decision');
+function decisions(paths: Paths): ShadowRecord[] {
+  return readLog(paths).filter((r): r is ShadowRecord => r.kind === 'decision');
 }
 
 describe('decide call and scope fields', () => {
@@ -46,7 +46,7 @@ describe('decide call and scope fields', () => {
         scope: 'claude-auto',
         call: { id: 'toolu_01-A_b', permissionMode: 'auto', agent: true },
       });
-      const [record] = decisions(paths.logs);
+      const [record] = decisions(paths);
       assert.equal(record?.scope, 'claude-auto');
       assert.equal(record?.callId, 'toolu_01-A_b');
       assert.equal(record?.permissionMode, 'auto');
@@ -78,7 +78,7 @@ describe('decide call and scope fields', () => {
         call: { id: 'toolu_2', permissionMode: 'root' },
       });
       assert.equal(badMode['action'], 'allow');
-      const [first, second] = decisions(paths.logs);
+      const [first, second] = decisions(paths);
       assert.equal(first?.callId, undefined);
       assert.equal(first?.scope, undefined);
       assert.equal(second?.callId, 'toolu_2');
@@ -103,7 +103,7 @@ describe('decide call and scope fields', () => {
         { decisionId: 'd1', outcome: 'allow', source: 'classifier' },
         { 'x-local-decider-report': readFileSync(join(paths.config, 'report-token'), 'utf8') },
       );
-      const outcome = new ShadowLog(paths.logs).read().find((r) => r.kind === 'outcome');
+      const outcome = readLog(paths).find((r) => r.kind === 'outcome');
       assert.equal(outcome?.kind === 'outcome' ? outcome.source : '', 'classifier');
       assert.equal(outcome?.kind === 'outcome' ? outcome.verified : false, true);
     } finally {
@@ -129,7 +129,7 @@ async function run(
       input,
       ...(scope === undefined ? {} : { scope }),
     });
-    return { response, record: decisions(paths.logs)[0] };
+    return { response, record: decisions(paths)[0] };
   } finally {
     await gw.close();
   }

@@ -50,9 +50,8 @@ import {
   stopService,
   uninstallService,
 } from './service.ts';
-import type { LogStore } from './shadow.ts';
-import { openLogStore } from './sqlite-log.ts';
-import { computeStats, formatStats } from './stats.ts';
+import { parseDays, runStatsFromFile } from './stats-job.ts';
+import { formatStats } from './stats.ts';
 import { toolchain } from './toolchain.ts';
 
 const USAGE = `local-decider — local decision models for coding-agent harnesses
@@ -66,8 +65,8 @@ Usage:
   local-decider engine configure <openai-compatible|lmstudio> --url URL --model ID [--token-env NAME]
   local-decider engine use <engine> <model> [--device D]  select an engine and model
   local-decider decide <policy> [--input JSON] [key=value ...]
-  local-decider stats [--json] [--scope claude-auto]  agreement and calibration from the shadow log
-  local-decider logs backup <file> | export [--since YYYY-MM-DD] <dir> | import <dir>
+  local-decider stats [--json] [--days N] [--scope claude-auto]  agreement and calibration from the shadow log
+  local-decider logs backup <file> | export [--since YYYY-MM-DD] <dir>
   local-decider policies [check <file>]             list policies, or validate a policy file
   local-decider policies eval <policy> <file>       report decisions on JSONL fixtures
   local-decider policies use <policy> <variant>     answer <policy> with one of its variants
@@ -344,31 +343,22 @@ async function decide(ctx: Context): Promise<void> {
 async function stats(ctx: Context): Promise<void> {
   const { values } = parseArgs({
     args: [...ctx.args],
-    options: { json: { type: 'boolean' }, scope: { type: 'string' } },
+    options: { json: { type: 'boolean' }, scope: { type: 'string' }, days: { type: 'string' } },
   });
   if (values.scope !== undefined && !(SCOPES as readonly string[]).includes(values.scope)) {
     throw new SettingsUsageError(`scope must be one of ${SCOPES.join(', ')}`);
   }
-  const log = await openLogStore(ctx.paths, ctx.config.logs.store, {
-    readOnly: true,
-    autoImport: false,
-  });
-  try {
-    const result = computeStats(
-      log.read(),
-      ctx.config.pricing,
-      loadPolicies(ctx.config, policyDirs(ctx.config, ctx.paths)),
-      values.scope === undefined ? {} : { scope: values.scope as Scope },
-    );
-    console.log(values.json === true ? JSON.stringify(result, null, 2) : formatStats(result));
-  } finally {
-    closeLogStore(log);
+  const window = parseDays(values.days, ctx.config.logs.retainDays);
+  if ('error' in window) {
+    throw new SettingsUsageError(window.error);
   }
-}
-
-function closeLogStore(log: LogStore): void {
-  const closable = log as LogStore & { close?: () => void };
-  closable.close?.();
+  const result = runStatsFromFile(ctx.paths, {
+    days: window.days,
+    scope: values.scope as Scope | undefined,
+    pricing: ctx.config.pricing,
+    policies: loadPolicies(ctx.config, policyDirs(ctx.config, ctx.paths)),
+  });
+  console.log(values.json === true ? JSON.stringify(result, null, 2) : formatStats(result));
 }
 
 function checkPolicy(file: string): void {
@@ -527,7 +517,7 @@ async function dispatch(command: string, ctx: Context): Promise<void> {
     engine,
     decide,
     stats,
-    logs: (c) => logsCommand(c.paths, c.config, c.args),
+    logs: async (c) => logsCommand(c.paths, c.args),
     policies,
     bench: benchCmd,
     mcp,

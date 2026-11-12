@@ -7,13 +7,14 @@ import { isLoopback, type GatewayConfig } from './config.ts';
 import { Decider } from './decider.ts';
 import { EngineControl } from './engine-control.ts';
 import type { Engine } from './engines/types.ts';
+import type { LogStore } from './log-store.ts';
 import type { Paths } from './paths.ts';
 import { loadPolicies, policyDirs, type LoadedPolicy } from './policies.ts';
 import { ensureReportToken } from './report-token.ts';
 import { writeSchemas } from './schemas.ts';
 import { createGatewayServer, type ServerOptions } from './server.ts';
-import type { LogStore } from './shadow.ts';
 import { openLogStore } from './sqlite-log.ts';
+import { StatsService } from './stats-service.ts';
 
 export interface Gateway {
   readonly server: Server;
@@ -36,8 +37,16 @@ export interface StartOptions {
   /** Injected in tests: a prepared engine control (with fakes). */
   readonly engineControl?: EngineControl;
   readonly policies?: ReadonlyMap<string, LoadedPolicy>;
-  /** Injected storage; otherwise selected from `config.logs.store`. */
+  /** Injected storage; otherwise SQLite under the data directory. */
   readonly logStore?: LogStore;
+}
+
+/** Stats run in a worker when the log is the SQLite file; an injected store computes in-process. */
+function statsService(options: StartOptions, log: LogStore): StatsService {
+  return new StatsService({
+    log,
+    paths: options.logStore === undefined ? options.paths : undefined,
+  });
 }
 
 /** A managed engine starts through EngineControl, which in auto mode lets the first reconcile pick it. */
@@ -70,7 +79,7 @@ export async function startGateway(options: StartOptions): Promise<Gateway> {
   const engine = options.engine ?? (engineControl as EngineControl).engine;
   const reportToken = ensureReportToken(paths);
   const policies = options.policies ?? loadPolicies(config, policyDirs(config, paths));
-  const log = options.logStore ?? (await openLogStore(paths, config.logs.store));
+  const log = options.logStore ?? openLogStore(paths);
   pruneLogs(log, config.logs.retainDays, report);
   const decider = new Decider({
     engine,
@@ -80,13 +89,16 @@ export async function startGateway(options: StartOptions): Promise<Gateway> {
   });
   decider.rebuildPrecedent();
   engineControl?.bind(decider);
+  const stats = statsService(options, log);
   const server = await listenGatewayServer(log, config.host, config.port, {
+    report,
     decider,
     log,
     token: hasToken ? token : undefined,
     reportToken,
     engineControl,
     pricing: config.pricing,
+    stats,
     settings: () => engineControl?.settings ?? store.current,
   });
   startEngine(engine, engineControl);
@@ -106,6 +118,7 @@ export async function startGateway(options: StartOptions): Promise<Gateway> {
       stopPruning();
       await engineControl?.idle();
       await decider.engine.stop();
+      stats.close();
       closeLogStore(log);
       server.closeAllConnections();
       await new Promise<void>((resolve) => server.close(() => resolve()));
@@ -135,9 +148,7 @@ function scheduleLogPruning(
 }
 
 function closeLogStore(log: LogStore): void {
-  if ('close' in log && typeof log.close === 'function') {
-    log.close();
-  }
+  log.close();
 }
 
 async function listenGatewayServer(

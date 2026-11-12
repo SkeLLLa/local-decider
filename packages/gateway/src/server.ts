@@ -29,13 +29,14 @@ import {
   type EngineControl,
 } from './engine-control.ts';
 import { allModels } from './engines/registry.ts';
+import type { LogStore } from './log-store.ts';
 import { handleMcpHttp } from './mcp.ts';
 import { modelFits } from './models.ts';
 import { withConfiguredRoutes, withRoute } from './routing.ts';
 import type { Pricing } from './savings.ts';
 import { settingsHandler } from './settings-routes.ts';
-import type { LogStore } from './shadow.ts';
-import { computeStats } from './stats.ts';
+import { parseDays } from './stats-job.ts';
+import { StatsFailedError, StatsService, StatsTimeoutError } from './stats-service.ts';
 
 const MAX_BODY_BYTES = 256 * 1024;
 
@@ -52,6 +53,10 @@ export interface ServerOptions {
   readonly pricing?: Pricing | undefined;
   /** Live settings (config.yaml as last loaded): routing presets and pricing. */
   readonly settings?: (() => GatewayConfig) | undefined;
+  /** Windowed stats off the event loop; default: computed in-process from `log`. */
+  readonly stats?: StatsService | undefined;
+  /** Diagnostics sink for internal failures that the client only sees generically. */
+  readonly report?: ((line: string) => void) | undefined;
 }
 
 class HttpError extends Error {
@@ -439,19 +444,25 @@ const CALL_POLICY = 'permission';
 
 const decideRoute = /^\/v1\/decide\/([a-z][a-z0-9_-]{0,63})$/;
 
-/** `GET /v1/stats[?scope=claude-auto]`. */
-const statsHandler: Handler = async (req, res, { decider, log, pricing, settings }) => {
-  const scope = parseScope(new URL(req.url ?? '/', 'http://localhost').searchParams.get('scope'));
-  send(
-    res,
-    200,
-    computeStats(
-      log.read(),
-      settings?.().pricing ?? pricing,
-      decider.policies,
-      scope === undefined ? {} : { scope },
-    ),
-  );
+/** Retention bound for `days` when no live settings are wired (the config default). */
+const DEFAULT_RETAIN_DAYS = 365;
+
+/** `GET /v1/stats[?days=30][&scope=claude-auto]`. */
+const statsHandler: Handler = async (req, res, options) => {
+  const { decider, log, pricing, settings } = options;
+  const params = new URL(req.url ?? '/', 'http://localhost').searchParams;
+  const window = parseDays(params.get('days'), settings?.().logs.retainDays ?? DEFAULT_RETAIN_DAYS);
+  if ('error' in window) {
+    throw new HttpError(400, window.error);
+  }
+  const service = options.stats ?? new StatsService({ log });
+  const result = await service.compute({
+    days: window.days,
+    scope: parseScope(params.get('scope')),
+    pricing: settings?.().pricing ?? pricing,
+    policies: decider.policies,
+  });
+  send(res, 200, result);
 };
 
 /** `GET /v1/calls/:id`: the decisions recorded for a call and the scope modes in effect. */
@@ -584,7 +595,7 @@ function validReportToken(req: IncomingMessage, token: string | undefined): bool
   );
 }
 
-function sendError(res: ServerResponse, error: unknown): void {
+function sendError(res: ServerResponse, error: unknown, report?: (line: string) => void): void {
   if (res.headersSent) {
     res.destroy();
     return;
@@ -597,6 +608,13 @@ function sendError(res: ServerResponse, error: unknown): void {
     send(res, error.status, { error: error.message });
   } else if (error instanceof UnknownPolicyError) {
     send(res, 404, { error: error.message });
+  } else if (error instanceof StatsTimeoutError) {
+    send(res, 503, { error: error.message });
+  } else if (error instanceof StatsFailedError) {
+    if (error.detail !== undefined) {
+      report?.(`stats failed: ${error.detail}`);
+    }
+    send(res, 500, { error: error.message });
   } else {
     send(res, 502, { error: error instanceof Error ? error.message : 'engine error' });
   }
@@ -632,6 +650,6 @@ export function createGatewayServer(options: ServerOptions): Server {
       send(res, 404, { error: 'not found' });
       return;
     }
-    handler(req, res, options).catch((error: unknown) => sendError(res, error));
+    handler(req, res, options).catch((error: unknown) => sendError(res, error, options.report));
   });
 }

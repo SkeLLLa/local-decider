@@ -151,7 +151,7 @@ request before. ADR: [0006](adr/0006-outcome-precedent.md).
   and the current model still selects `allow` at the rule's threshold (0.6 in `permission`).
   Any deny vetoes it. Precedent never bypasses the model.
 - It is exact-match and per project: it does not generalise to similar commands.
-- The gateway rebuilds it from the last 90 days of JSONL logs at start and on policy reload, and
+- The gateway rebuilds it from the last 90 days of the decision log at start and on policy reload, and
   keeps at most 10,000 keys in memory.
 - Only the Paseo plugin reports outcomes today. See
   [supervised-subagents.md](supervised-subagents.md) for parent answers as `supervised` outcomes.
