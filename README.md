@@ -105,7 +105,7 @@ Read [docs/security.md](docs/security.md) before you turn on `act`.
   FastFlowLM `d3:mini` downloads about 3.4 GB and needs about 9 GB of RAM.
 - **Every decision costs latency.** On CPU the 2B model takes 1.2–2.5 s for a short decision.
   The hooks give up after 1.5 s, so on CPU the decider suits shadow logging, turn outcomes and
-  routing hints, not a per-tool-call guard. An NPU engine is 7–11× faster (see
+  routing hints, not a per-tool-call guard. d3-lite on an NPU or GPU is 10–17× faster (see
   [Results](#results)).
 - **Prompts are untrusted input.** The model reads text an attacker may control. It cannot run
   anything, but it can be steered toward a label. That is why auto-allow needs p ≥ 0.95,
@@ -153,7 +153,8 @@ pick it in Paseo's settings:
 local-decider engine install --engine fastflowlm --model d3:mini   # uses your flm: validate, pull
 ```
 
-On Linux x86_64 with a hardware Vulkan GPU, install llama.cpp with its Vulkan backend yourself,
+On Linux x86_64 with a hardware Vulkan GPU, install llama.cpp with its Vulkan backend yourself
+(with mise, see [Engine prerequisites with mise](docs/install.md#engine-prerequisites-with-mise)),
 then run `local-decider engine install --engine llama-vulkan --model d3-mini-q4_k_m`. The gateway
 downloads only the pinned GGUF; set `tools.llamaServer` or `engines.llama-vulkan.binary` if the
 server is not found on `PATH`.
@@ -328,18 +329,25 @@ See [install and try it](docs/install.md#log-storage-and-portability) and
 
 ## Results
 
-Measured on one machine (AMD Ryzen AI 9 365, 61 GB RAM, 2026-11-10). Your numbers will differ.
+Measured on one machine (AMD Ryzen AI 9 365 with a Radeon 880M iGPU and an XDNA2 NPU, 61 GB
+RAM, 2026-11-10 and 2026-11-12). Your numbers will differ: run `local-decider bench` on yours.
 Details and methods: [docs/benchmarks.md](docs/benchmarks.md) and [docs/demos.md](docs/demos.md).
 
 Latency of one 4-option question, measured at the client (p50):
 
-| State tokens (target) | Strands 2B, CPU | FastFlowLM d3:lite, NPU | FastFlowLM d3:nano, NPU |
-|---:|---:|---:|---:|
-| 256 | 2,426 ms | 228 ms | 325 ms |
-| 1,024 | 5,468 ms | 532 ms | 764 ms |
-| 2,048 | 11,127 ms | 929 ms | 1,351 ms |
-| 3,800 | 19,310 ms | 1,646 ms | 2,367 ms |
+| State tokens (target) | Strands 2B, CPU | Strands 2B, ROCm GPU | d3:lite, NPU | d3-lite Q8_0, Vulkan GPU | d3:mini, NPU | d3-mini Q4_K_M, Vulkan GPU |
+|---:|---:|---:|---:|---:|---:|---:|
+| 256 | 2,426 ms | 596 ms | 208–232 ms | 141–184 ms | 721 ms | 817 ms |
+| 1,024 | 5,468 ms | 1,419 ms | 482–555 ms | 394–529 ms | 1,687 ms | 2,307 ms |
+| 2,048 | 11,127 ms | 2,658 ms | 934 ms | 977 ms | 3,038 ms | 4,316 ms |
+| 3,800 | 19,310 ms | 4,915 ms | 1,509–1,693 ms | 1,550–1,991 ms | 5,322 ms | 8,717 ms |
 
+- **No backend is fastest for every model.** On this machine the Vulkan GPU is 15–35% faster for
+  d3-lite on short states, the two are level from about 2k tokens, and the NPU is faster for
+  d3-mini at every size. GPU latency is noisier, because the integrated GPU is shared with the
+  desktop.
+- Strands 2B on a ROCm GPU is about 4× faster than on the CPU; the engine has no ROCm install
+  flavour yet.
 - Through the gateway, a short decision took 250 ms on `d3:nano` and about 600 ms on `d3:mini`.
   `d3:mini` answered all six integration cases correctly with p ≥ 0.91 and is the recommended
   FastFlowLM model.
