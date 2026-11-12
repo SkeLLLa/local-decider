@@ -7,7 +7,9 @@ import { SettingsCard, SettingsRow } from '@getpaseo/plugin/client/ui';
 import { useState, type ReactNode } from 'react';
 import { Text, View } from 'react-native';
 
+import type { Download } from '../shared/engines.ts';
 import type { EngineCatalog } from '../shared/engines.ts';
+import { fallbackLine, namesOf, runningView } from '../shared/recommendation.ts';
 import {
   recommendedCard,
   runtimeName,
@@ -22,7 +24,7 @@ import {
 } from '../shared/rpc.ts';
 import { outcomeOf, useAction, type Outcome } from './hooks.ts';
 import { InstallSteps } from './install.tsx';
-import { Badge, Button, InlineMessage, type Theme, type Tone } from './ui.tsx';
+import { Badge, Button, InlineMessage, Progress, type Theme, type Tone, Value } from './ui.tsx';
 
 type Runner = ReturnType<typeof useAction>;
 
@@ -45,6 +47,72 @@ function familyText(card: Card, catalog: EngineCatalog): string {
 function targetWord(catalog: EngineCatalog, a: CardAction): string {
   const t = a.target;
   return t === null ? 'this runtime' : runtimeName(catalog, { ...t, backend: null });
+}
+
+/** `d3 lite on NPU · 4-bit Q4_K_M`, else `FastFlowLM · d3:lite` when the model is unknown. */
+function runningName(catalog: EngineCatalog): string | null {
+  const a = catalog.active;
+  if (a?.engine == null) {
+    return null;
+  }
+  const model = catalog.models.find((m) => m.engine === a.engine && m.id === a.model);
+  const engine = catalog.engines.find((e) => e.id === a.engine)?.label ?? a.engine;
+  if (model?.family == null) {
+    return a.model === null ? engine : `${engine} · ${a.model}`;
+  }
+  const where = runtimeName(catalog, {
+    engine: a.engine,
+    device: a.resolvedDevice ?? a.device,
+    backend: a.backend,
+  });
+  const format = model.format === null ? '' : ` · ${model.format.label}`;
+  return `${model.family.label} on ${where}${format}`;
+}
+
+/** What is running now, with its state, and a note while a backup engine stands in. */
+function RunningNow({ theme, catalog }: { theme: Theme; catalog: EngineCatalog }): ReactNode {
+  const name = runningName(catalog);
+  const names = namesOf(catalog);
+  const state = runningView(catalog.active, names)?.state ?? null;
+  const fallback = fallbackLine(catalog.active, names);
+  if (name === null) {
+    return null;
+  }
+  return (
+    <>
+      <SettingsRow label="Running now" hint={fallback ?? ''}>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flexShrink: 1 }}>
+          <Value theme={theme}>{name}</Value>
+          {fallback === null ? null : <Badge theme={theme} tone="warning" text="Backup" />}
+          {state === null ? null : <Badge theme={theme} tone={state.tone} text={state.text} />}
+        </View>
+      </SettingsRow>
+    </>
+  );
+}
+
+/** The running download of the model the card would use next, if any. */
+function targetDownload(card: Card, catalog: EngineCatalog): Download | null {
+  const t = card.primary.kind === 'download' ? card.primary.target : null;
+  const best = catalog.recommendation?.machine?.best ?? null;
+  const engine = t?.engine ?? best?.engine;
+  const model = t?.model ?? best?.model;
+  return (
+    catalog.downloads.find(
+      (d) => d.state === 'running' && d.engine === engine && d.model === model,
+    ) ?? null
+  );
+}
+
+function DownloadProgress({ theme, download }: { theme: Theme; download: Download }): ReactNode {
+  const pct =
+    download.progress === null ? 'Downloading…' : `${String(Math.round(download.progress * 100))}%`;
+  return (
+    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+      <Progress theme={theme} value={download.progress} />
+      <Text style={{ color: theme.colors.foregroundMuted, fontSize: 13 }}>{pct}</Text>
+    </View>
+  );
 }
 
 function useCardActions(
@@ -255,6 +323,60 @@ function Result({
   );
 }
 
+/** An older gateway: no recommendation to claim, but the running line stays. */
+function LegacyCard({
+  theme,
+  catalog,
+  card,
+}: {
+  theme: Theme;
+  catalog: EngineCatalog;
+  card: Card;
+}): ReactNode {
+  return (
+    <SettingsCard>
+      <SettingsRow label="Engine and model">
+        {card.mode === null ? null : <Badge theme={theme} text={card.mode} />}
+      </SettingsRow>
+      <RunningNow theme={theme} catalog={catalog} />
+    </SettingsCard>
+  );
+}
+
+function Summary({
+  theme,
+  card,
+  catalog,
+  busy,
+  onGo,
+  onPress,
+}: {
+  theme: Theme;
+  card: Card;
+  catalog: EngineCatalog;
+  busy: boolean;
+  onGo: (() => void) | undefined;
+  onPress: (a: CardAction) => void;
+}): ReactNode {
+  const download = targetDownload(card, catalog);
+  return (
+    <View style={{ gap: 6, paddingHorizontal: 16, paddingVertical: 8 }}>
+      <Lines theme={theme} card={card} />
+      <Overlay theme={theme} card={card} onGo={onGo} />
+      <Text style={{ color: theme.colors.foreground, fontSize: 13, lineHeight: 18 }}>
+        {card.status}
+      </Text>
+      {card.fasterFamilyText === null ? null : (
+        <Text style={{ color: theme.colors.foregroundMuted, fontSize: 13 }}>
+          {card.fasterFamilyText}
+        </Text>
+      )}
+      {download === null ? null : <DownloadProgress theme={theme} download={download} />}
+      <Buttons theme={theme} card={card} busy={busy} onPress={onPress} />
+    </View>
+  );
+}
+
 export function RecommendedCard({
   theme,
   catalog,
@@ -266,7 +388,9 @@ export function RecommendedCard({
   const actions = useCardActions(card, catalog, runner, onOpenAdvanced);
   const machine = catalog.recommendation?.machine ?? null;
   if (machine === null && card.kind !== 'unsupported' && card.kind !== 'uncalibrated') {
-    return null;
+    return catalog.active?.engine == null ? null : (
+      <LegacyCard theme={theme} catalog={catalog} card={card} />
+    );
   }
   const busy = runner.busy !== null;
   const installTarget = card.primary.kind === 'install' ? card.primary.target : null;
@@ -275,19 +399,15 @@ export function RecommendedCard({
       <SettingsRow label="Recommended for this machine">
         {card.mode === null ? null : <Badge theme={theme} text={card.mode} />}
       </SettingsRow>
-      <View style={{ gap: 6, paddingHorizontal: 16, paddingVertical: 8 }}>
-        <Lines theme={theme} card={card} />
-        <Overlay theme={theme} card={card} onGo={onGoToBenchmark} />
-        <Text style={{ color: theme.colors.foreground, fontSize: 13, lineHeight: 18 }}>
-          {card.status}
-        </Text>
-        {card.fasterFamilyText === null ? null : (
-          <Text style={{ color: theme.colors.foregroundMuted, fontSize: 13 }}>
-            {card.fasterFamilyText}
-          </Text>
-        )}
-        <Buttons theme={theme} card={card} busy={busy} onPress={actions.perform} />
-      </View>
+      <Summary
+        theme={theme}
+        card={card}
+        catalog={catalog}
+        busy={busy}
+        onGo={onGoToBenchmark}
+        onPress={actions.perform}
+      />
+      <RunningNow theme={theme} catalog={catalog} />
       {actions.steps && installTarget !== null ? (
         <InstallSteps
           theme={theme}
