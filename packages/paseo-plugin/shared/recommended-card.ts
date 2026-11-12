@@ -118,18 +118,23 @@ const RUNTIME_WORDS: Record<string, string> = {
   CPU: 'CPU',
 };
 
-interface Where {
+export interface Where {
   readonly engine: string;
   readonly device: string | null;
   readonly backend: string | null;
 }
 
-function runtimeWord(c: Ctx, w: Where): string {
+/** `NPU`, `GPU (Vulkan)`, … for where a model runs; the engine's label when unknown. */
+export function runtimeName(catalog: EngineCatalog, w: Where): string {
   const backend = w.backend ?? backendOf(w.engine, w.device);
   if (backend !== null) {
     return RUNTIME_WORDS[backend] ?? backend;
   }
-  return c.catalog.engines.find((e) => e.id === w.engine)?.label ?? w.engine;
+  return catalog.engines.find((e) => e.id === w.engine)?.label ?? w.engine;
+}
+
+function runtimeWord(c: Ctx, w: Where): string {
+  return runtimeName(c.catalog, w);
 }
 
 function engineLabel(c: Ctx, id: string): string {
@@ -165,7 +170,7 @@ function headlineOf(c: Ctx): string {
 
 // ── numbers and dates ────────────────────────────────────────────────────────────────────────
 
-function ms(value: number): string {
+export function ms(value: number): string {
   const rounded = Math.round(value / 10) * 10;
   return rounded < 1000 ? `${String(rounded)} ms` : `${(rounded / 1000).toFixed(1)} s`;
 }
