@@ -9,6 +9,7 @@ import { totalmem } from 'node:os';
 import { join } from 'node:path';
 
 import { authoringPrompt } from './authoring.ts';
+import type { BenchEngine, BenchSelection, BenchmarkLease } from './benchmark-job.ts';
 import {
   JsonBenchmarkStore,
   measurementDetailsFor,
@@ -62,6 +63,7 @@ import {
   allModels,
   ENGINES,
   engineDescriptor,
+  isSelectableEngine,
   SELECTABLE_IDS,
   type EngineId,
 } from './engines/registry.ts';
@@ -131,11 +133,35 @@ interface BenchmarkSnapshot {
   readonly family: string | null;
 }
 
-interface BenchmarkLease {
+/** The control's side of a benchmark lease; the runner sees it as a `BenchmarkLease`. */
+class ControlLease implements BenchmarkLease {
   readonly gen: number;
-  readonly controller: AbortController;
   readonly snapshot: BenchmarkSnapshot;
   readonly done: Promise<void>;
+  readonly controller = new AbortController();
+  preempted: 'superseded' | 'config-changed' | null = null;
+  readonly #resolve: () => void;
+
+  constructor(gen: number, snapshot: BenchmarkSnapshot) {
+    this.gen = gen;
+    this.snapshot = snapshot;
+    const done = Promise.withResolvers<void>();
+    this.done = done.promise;
+    this.#resolve = done.resolve;
+  }
+
+  get signal(): AbortSignal {
+    return this.controller.signal;
+  }
+
+  abort(reason: string): void {
+    this.controller.abort(reason);
+  }
+
+  /** Resolves `done`. */
+  finish(): void {
+    this.#resolve();
+  }
 }
 
 /** A switch request; without an engine or device the current ones are kept. */
@@ -468,9 +494,8 @@ export class EngineControl {
   readonly #probe: ServerProbe;
   #decider: Decider | undefined;
   #pending: Promise<void> = Promise.resolve();
-  #lease: BenchmarkLease | null = null;
+  #lease: ControlLease | null = null;
   #leaseGen = 0;
-  readonly #leaseDoneResolvers = new WeakMap<BenchmarkLease, () => void>();
 
   constructor(options: EngineControlOptions) {
     const { store, paths } = options;
@@ -557,36 +582,34 @@ export class EngineControl {
     if (this.#lease !== null) {
       throw new EngineSwitchError(409, 'a benchmark is already running');
     }
-    let resolveDone!: () => void;
-    const done = new Promise<void>((resolve) => {
-      resolveDone = resolve;
+    const lease = new ControlLease(++this.#leaseGen, {
+      mode: this.#auto ? 'auto' : 'manual',
+      selection: { ...selection },
+      family: this.#config.selection?.family ?? familyOf(selection.model, selection.engine),
     });
-    const lease: BenchmarkLease = {
-      gen: ++this.#leaseGen,
-      controller: new AbortController(),
-      snapshot: {
-        mode: this.#auto ? 'auto' : 'manual',
-        selection: { ...selection },
-        family: this.#config.selection?.family ?? familyOf(selection.model, selection.engine),
-      },
-      done,
-    };
     this.#lease = lease;
-    this.#leaseDoneResolvers.set(lease, resolveDone);
     clearTimeout(this.#retryTimer);
     this.#retryTimer = undefined;
     this.#decider?.hold('engine benchmark running');
     return lease;
   }
 
-  benchmarkSwap(lease: BenchmarkLease, target: EngineSelection): Promise<void> {
-    const run = this.#pending.then(() => {
-      if (this.#lease !== lease || lease.controller.signal.aborted) {
+  /** Installs `target` for the lease and resolves to the engine now serving. */
+  benchmarkSwap(lease: BenchmarkLease, target: BenchSelection): Promise<BenchEngine> {
+    const run = this.#pending.then(async () => {
+      if (this.#lease !== lease || lease.signal.aborted) {
         throw new DOMException('benchmark lease is no longer active', 'AbortError');
       }
-      return this.#apply(target, false, false);
+      if (!isSelectableEngine(target.engine)) {
+        throw new EngineSwitchError(400, `unknown engine "${target.engine}"`);
+      }
+      await this.#apply({ ...target, engine: target.engine }, false, false);
+      return this.#engine;
     });
-    this.#pending = run.catch(() => undefined);
+    this.#pending = run.then(
+      () => undefined,
+      () => undefined,
+    );
     return run;
   }
 
@@ -594,7 +617,7 @@ export class EngineControl {
     lease: BenchmarkLease,
     options: { readonly restore: boolean },
   ): Promise<{ readonly ok: boolean; readonly error: string | null }> {
-    if (this.#lease !== lease) {
+    if (this.#lease !== lease || !(lease instanceof ControlLease)) {
       return { ok: false, error: 'benchmark lease is no longer active' };
     }
     let error: string | null = null;
@@ -614,8 +637,7 @@ export class EngineControl {
     } finally {
       if (this.#lease === lease) this.#lease = null;
       if (options.restore && this.#lease === null) this.#decider?.hold(null);
-      this.#leaseDoneResolvers.get(lease)?.();
-      this.#leaseDoneResolvers.delete(lease);
+      lease.finish();
     }
     return { ok: error === null, error };
   }

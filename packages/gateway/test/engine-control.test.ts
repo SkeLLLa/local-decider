@@ -14,6 +14,7 @@ import { join } from 'node:path';
 import { describe, it } from 'node:test';
 import { stringify } from 'yaml';
 
+import type { BenchmarkHost } from '../src/benchmark-job.ts';
 import {
   BENCH_VERSION,
   MemoryBenchmarkStore,
@@ -279,7 +280,41 @@ function measuredRecord(
   };
 }
 
+/** Compile-time check: the control implements the lease methods of the runner's host. */
+const hostSeam = (
+  control: EngineControl,
+): Pick<BenchmarkHost, 'beginBenchmark' | 'benchmarkSwap' | 'endBenchmark'> => control;
+
 describe('EngineControl benchmark lease', () => {
+  it('fits the runner host seam and refuses a lease it did not issue', async () => {
+    const { control } = setup();
+    const host = hostSeam(control);
+    const foreign = {
+      signal: new AbortController().signal,
+      abort: () => undefined,
+      preempted: null,
+      done: Promise.resolve(),
+      snapshot: {
+        mode: 'auto',
+        selection: { engine: 'strands-decider', model: E2B, device: null },
+        family: null,
+      },
+    } as const;
+    assert.deepEqual(await host.endBenchmark(foreign, { restore: false }), {
+      ok: false,
+      error: 'benchmark lease is no longer active',
+    });
+    const lease = host.beginBenchmark();
+    assert.equal(lease.signal.aborted, false);
+    lease.abort('user');
+    assert.equal(lease.signal.aborted, true);
+    await assert.rejects(
+      host.benchmarkSwap(lease, { engine: 'strands-decider', model: E2B, device: 'cpu' }),
+      (error: unknown) => error instanceof DOMException && error.name === 'AbortError',
+    );
+    await host.endBenchmark(lease, { restore: false });
+  });
+
   it('holds decisions through an unpersisted swap and restores the exact manual selection', async () => {
     const { control, decider, created } = setup();
     const selection = control.current();
@@ -293,11 +328,13 @@ describe('EngineControl benchmark lease', () => {
       /engine benchmark running/,
     );
 
-    await control.benchmarkSwap(lease, {
+    const swapped = await control.benchmarkSwap(lease, {
       engine: 'strands-decider',
       model: E2B,
       device: 'cpu',
     });
+    assert.equal(typeof swapped.decide, 'function');
+    assert.equal(swapped.health().resolvedDevice ?? 'cpu', 'cpu');
     assert.equal(control.current()?.model, E2B);
     assert.equal(stringify(control.settings), configBefore);
 

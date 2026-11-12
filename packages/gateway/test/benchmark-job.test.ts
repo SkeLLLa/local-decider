@@ -503,6 +503,7 @@ class FakeHost implements BenchmarkHost {
     const { flags } = this;
     this.lease = {
       signal: this.controller.signal,
+      done: Promise.resolve(),
       abort: (reason) => {
         this.controller.abort(reason);
       },
