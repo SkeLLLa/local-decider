@@ -12,12 +12,14 @@ the Paseo settings page all read it. Decision architecture is in
 |---|---|---|---|---|---|---|
 | `strands-decider` | Strands Decider | all | Apple Silicon: `auto`, `cpu`, `mlx`, `mps`; Linux: `auto`, `cpu`, `cuda`; else `auto`, `cpu` | `local-decider engine install [--flavor cpu\|mlx\|cuda]` | yes | Catalogue in `engines/strands/models.ts`, downloaded from Hugging Face |
 | `fastflowlm` | FastFlowLM (AMD NPU) | Linux | none | install FastFlowLM yourself (distribution package or upstream installer); `local-decider engine install --engine fastflowlm` validates and pulls a model | yes | Catalogue in `engines/fastflowlm/models.ts`, pulled with `flm pull` |
+| `llama-vulkan` | llama.cpp (Vulkan GPU) | Linux x86_64 | none | Install a Vulkan-enabled `llama-server` yourself on `PATH` or set `tools.llamaServer`; `local-decider engine install --engine llama-vulkan` downloads a pinned d3 GGUF | yes | Catalogue in `engines/llama/models.ts`, pinned GGUF downloads |
 | `openai-compatible` | OpenAI-compatible | all | none | nothing to install: start your server | **no** | Discovered from the server's `/models` |
 | `lmstudio` | LM Studio | macOS, Linux | none | nothing to install: `lms server start`, load a model | **no** | Discovered from the server's `/models`; defaults `api: chat`, `maxTokens: 8`, `promptSuffix: /no_think` |
 | `systemone-remote` | SystemOne Remote | all | none | nothing to install | yes | none; not selectable, pinned to `engine.url` |
 
-- **Selectable** engines (`strands-decider`, `fastflowlm`, `openai-compatible`) can be switched at
-  run time with `local-decider engine use`, `POST /v1/engine` or the Paseo settings page.
+- **Selectable** engines (`strands-decider`, `fastflowlm`, `llama-vulkan`, `openai-compatible`) can
+  be switched at run time with `local-decider engine use`, `POST /v1/engine` or the Paseo
+  settings page.
   `systemone-remote` is configured in `engine:` only.
 - **Calibrated** means the engine's probabilities were checked against the policy thresholds.
   `openai-compatible` scores one option token from a general-purpose model's logprobs, so its
@@ -29,6 +31,18 @@ the Paseo settings page all read it. Decision architecture is in
   gateway sends the active one as `engineTag` in `/health`.
 
 `local-decider engine list` prints the engines and models as the gateway sees them.
+
+The llama Vulkan engine uses llama.cpp's native `/v1/systemone` endpoint with calibrated d3
+decision GGUFs. It needs a Vulkan-enabled `llama-server` installed separately; the engine-specific
+`engines.llama-vulkan.binary` override takes precedence over `tools.llamaServer`, which takes
+precedence over `llama-server` on `PATH`. The gateway does not download the
+server binary. Vulkan detection uses `vulkaninfo --summary` and excludes software renderers such
+as llvmpipe, lavapipe and SwiftShader. Fedora 44's `llama-cpp` package provides a HIP/ROCm build
+(`b6153`), not Vulkan, and is too old for vllm-d3. d3 support landed upstream in build `b11572`
+([PR #30383](https://github.com/ggml-org/llama.cpp/pull/30383)); the `/v1/systemone` endpoint
+first shipped in `b11361` ([release notes](https://github.com/ggml-org/llama.cpp/releases/tag/b11361),
+[PR #29818](https://github.com/ggml-org/llama.cpp/pull/29818)). This engine requires `b11572`
+or newer, compiled with Vulkan.
 
 ### Configure an OpenAI-compatible server
 
@@ -124,8 +138,9 @@ within 80% of the machine's memory is listed but cannot be selected.
 selection: { mode: auto }
 ```
 
-**The ladder.** The gateway probes the host (AMD XDNA NPU, NVIDIA, Apple MLX and MPS) and ranks
-the candidates, best first: AMD NPU (`fastflowlm`), NVIDIA CUDA, Apple MLX, Apple MPS, CPU.
+**The ladder.** The gateway probes the host (AMD XDNA NPU, NVIDIA, Vulkan, Apple MLX and MPS) and
+ranks the candidates, best first: AMD NPU (`fastflowlm`), NVIDIA CUDA, **Vulkan GPU
+(`llama-vulkan`)**, Apple MLX, Apple MPS, CPU.
 Only calibrated engines are eligible, so `openai-compatible` and `lmstudio` are never chosen
 automatically. A probe that cannot tell reports `unknown`, which does not count as available. The
 ranking appears as `recommendation` in `GET /v1/engines`, apart from the active engine, and

@@ -153,6 +153,11 @@ pick it in Paseo's settings:
 local-decider engine install --engine fastflowlm --model d3:mini   # uses your flm: validate, pull
 ```
 
+On Linux x86_64 with a hardware Vulkan GPU, install llama.cpp with its Vulkan backend yourself,
+then run `local-decider engine install --engine llama-vulkan --model d3-mini-q4_k_m`. The gateway
+downloads only the pinned GGUF; set `tools.llamaServer` or `engines.llama-vulkan.binary` if the
+server is not found on `PATH`.
+
 Check that it answers:
 
 ```sh
@@ -223,7 +228,7 @@ share it.
 
 | Key | What it does | Default |
 |---|---|---|
-| `engine` | `type: strands-decider`, `systemone-remote` or `fastflowlm`, with `model`, `device`, `url` | strands-decider, `StrandsAgents/strands-decider-2B-qwen3.5-v1-2610`, `device: auto` |
+| `engine` | `type: strands-decider`, `systemone-remote`, `fastflowlm` or `llama-vulkan`, with `model`, `device`, `url` | strands-decider, `StrandsAgents/strands-decider-2B-qwen3.5-v1-2610`, `device: auto` |
 | `selection` | Engine and model picked in the settings page; beats `engine.type` and `engine.model` | unset |
 | `policies.<id>.mode` | `off` (never asked), `shadow` (log only), `act` (adapters may enforce) | the policy file's mode, `shadow` |
 | `policies.<id>.thresholds` | Rule thresholds by `<question>.<answer>`, e.g. `verdict.allow: 0.9`; an allow never goes below 0.5 | the policy file's values |

@@ -201,6 +201,7 @@ flowchart LR
 |---|---|
 | `strands-decider` | Spawns `strands-decider serve <model> --device cpu\|mlx\|mps\|cuda` from the managed uv venv, or attaches to `engine.url` |
 | `fastflowlm` | Spawns `flm serve --decision <model>` on the AMD XDNA NPU (Linux), or attaches to `engine.url` |
+| `llama-vulkan` | Spawns a user-installed Vulkan-enabled `llama-server` on loopback for native `/v1/systemone` d3 decisions |
 | `systemone-remote` | Any `/v1/systemone` server at `engine.url`, with an optional bearer token from `tokenEnv` |
 | `openai-compatible` | Scores one option token from an OpenAI-style server's logprobs (LM Studio, Ollama, llama-server, `mlx_lm.server`); uncalibrated |
 

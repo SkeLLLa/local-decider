@@ -47,8 +47,8 @@ alias local-decider "node $PWD/packages/gateway/dist/cli.js"
 Pick one. You can switch later in Paseo's settings or with `POST /v1/engine`.
 
 `local-decider engine install` with no flags picks for your hardware, in this order: AMD NPU,
-NVIDIA CUDA, Apple MLX, Apple MPS, CPU. It prints the reason. Flags and an explicit engine in
-`config.yaml` override it, and `--no-download` prepares nothing that needs a download. Installing
+NVIDIA CUDA, Vulkan GPU, Apple MLX, Apple MPS, CPU. It prints the reason. Flags and an explicit
+engine in `config.yaml` override it, and `--no-download` prepares nothing that needs a download. Installing
 never switches the running engine.
 
 | Hardware | Command | Default model | Notes |
@@ -57,6 +57,7 @@ never switches the running engine.
 | Apple Silicon (macOS default) | `local-decider engine install` | 2B on MLX | `--flavor mlx` is picked for you |
 | NVIDIA GPU | `local-decider engine install --flavor cuda` | 2B | `device: auto` lets strands-decider pick; or set `engine.device: cuda` |
 | AMD Ryzen AI NPU (Linux) | `local-decider engine install --engine fastflowlm --model d3:mini` | `d3:nano` without `--model` | 0.25–0.6 s per short decision (measured on one machine) |
+| Linux x86_64 Vulkan GPU | `local-decider engine install --engine llama-vulkan` | d3-mini Q4_K_M | Install a Vulkan-enabled `llama-server` yourself; only the pinned GGUF is downloaded |
 
 - **strands-decider** syncs a pinned uv project into
   `~/.local/share/local-decider/venvs/strands-decider` and downloads the weights into the Hugging
@@ -75,6 +76,35 @@ never switches the running engine.
   time the settings page asks, so a tool installed while the gateway runs is picked up without a
   restart. A missing engine shows an **Install guide** link in settings. Tool paths and model
   directories can be set under `tools:` and `dirs:` in `config.yaml` or in the settings page.
+
+### Linux GPU (Vulkan)
+
+Install llama.cpp with Vulkan support yourself, using an official Linux x86_64 release archive or
+a distribution package that includes Vulkan. The gateway only downloads the pinned d3 GGUF when
+you choose **Download** in Paseo or run `local-decider engine install --engine llama-vulkan`;
+it never downloads the server binary. Runtime requirements include `vulkan-loader` and a Mesa or
+vendor Vulkan driver. Install `vulkan-tools` (`vulkaninfo`) so the gateway can confirm a hardware
+Vulkan device; software renderers such as llvmpipe are excluded. Fedora 44's `llama-cpp` package
+is a HIP/ROCm build (`b6153`), not Vulkan, and predates vllm-d3 support. Upstream added d3 support
+in build `b11572` ([PR #30383](https://github.com/ggml-org/llama.cpp/pull/30383)); the
+`/v1/systemone` endpoint first shipped in `b11361` ([release notes](https://github.com/ggml-org/llama.cpp/releases/tag/b11361),
+[PR #29818](https://github.com/ggml-org/llama.cpp/pull/29818)). Use `b11572` or newer, compiled
+with Vulkan, for this engine.
+
+The gateway searches `llama-server` on `PATH`. In settings, `tools.llamaServer` can select an
+absolute executable path; `engines.llama-vulkan.binary` overrides it for this engine. For example:
+
+```yaml
+tools:
+  llamaServer: /usr/bin/llama-server
+engines:
+  llama-vulkan:
+    model: d3-mini-q4_k_m
+```
+
+The installed GGUF is stored under `~/.local/share/local-decider/models/gguf/`. Its pinned SHA-256
+is checked at download; when the engine loads it, the gateway checks the recorded size, modification
+time, and inode stamp without rehashing the file.
 
 ### Automatic selection
 
