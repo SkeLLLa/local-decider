@@ -121,11 +121,15 @@ function clamp01(x: number): number {
   return Number.isFinite(x) ? Math.min(1, Math.max(0, x)) : 0;
 }
 
+/** How far a probability map may stray from summing to 1 before the answer is rejected. */
+const PROBABILITY_SUM_TOLERANCE = 0.05;
+
+/** Noul: the answer is `true` only when p(true) is strictly above 0.5; an exact tie is `false`. */
 function normaliseNoul(wire: WireNoulAnswer): Answer {
-  const p = clamp01(wire.noul);
+  const p = wire.noul;
   return {
     type: 'noul',
-    answer: p >= 0.5 ? 'true' : 'false',
+    answer: p > 0.5 ? 'true' : 'false',
     probabilities: { false: 1 - p, true: p },
     confidence: noulConfidence(p),
   };
@@ -133,14 +137,15 @@ function normaliseNoul(wire: WireNoulAnswer): Answer {
 
 function normaliseChoice(wire: WireChoiceAnswer): Answer {
   const [best] = argmax(wire.probabilities);
-  return {
+  const answer: Answer = {
     type: 'choice',
-    answer: wire.choice === '' ? best : wire.choice,
+    // Always the argmax, even if a valid wire.choice names a different option.
+    answer: best,
     probabilities: wire.probabilities,
     // Recomputed for every engine: d3/FastFlowLM report 1 − normalised entropy, a different scale.
     confidence: choiceConfidence(wire.probabilities),
-    ...(wire.confidence === undefined ? {} : { engineConfidence: wire.confidence }),
   };
+  return wire.confidence === undefined ? answer : { ...answer, engineConfidence: wire.confidence };
 }
 
 function normaliseScore(wire: WireScoreAnswer, levels: readonly string[]): Answer {
@@ -158,17 +163,62 @@ function normaliseScore(wire: WireScoreAnswer, levels: readonly string[]): Answe
 }
 
 /**
- * False for answers an engine could not give: FastFlowLM returns per-question errors such as
- * `{"type":"choice","error":"max_length_exceeded"}` inside a 200, without probabilities.
+ * True when `probs` has one finite, non-negative number for every known key and sums to 1 within
+ * {@link PROBABILITY_SUM_TOLERANCE}.
  */
-function usable(wire: WireAnswer): boolean {
+function validProbabilities(probs: unknown, known: readonly string[]): boolean {
+  if (typeof probs !== 'object' || probs === null || Array.isArray(probs)) {
+    return false;
+  }
+  const entries = Object.entries(probs);
+  if (entries.length < 2 || known.length < 2 || entries.length !== known.length) {
+    return false;
+  }
+  let sum = 0;
+  for (const [key, p] of entries) {
+    if (!known.includes(key) || typeof p !== 'number' || !Number.isFinite(p) || p < 0 || p > 1) {
+      return false;
+    }
+    sum += p;
+  }
+  return (
+    known.every((key) => Object.hasOwn(probs, key)) &&
+    Math.abs(sum - 1) <= PROBABILITY_SUM_TOLERANCE
+  );
+}
+
+/** Choice option ids, or score level indices (`"0"`, `"1"`, ...), the wire keys probabilities by. */
+function optionIds(question: Question): string[] {
+  if (question.type === 'choice') {
+    return Object.keys(question.criteria);
+  }
+  if (question.type === 'score') {
+    return question.criteria.map((_, i) => String(i));
+  }
+  return ['true', 'false'];
+}
+
+/**
+ * False for answers an engine could not give or that do not fit the question: FastFlowLM returns
+ * per-question errors such as `{"type":"choice","error":"max_length_exceeded"}` inside a 200,
+ * and some engines key probabilities by label or return NaN, negative or non-normalised values.
+ * A dropped answer means "no decision", never a confident one.
+ */
+function usable(wire: WireAnswer, question: Question): boolean {
   if ('error' in wire) {
     return false;
   }
   if (wire.type === 'noul') {
-    return Number.isFinite(wire.noul);
+    return Number.isFinite(wire.noul) && wire.noul >= 0 && wire.noul <= 1;
   }
-  return typeof wire.probabilities === 'object' && wire.probabilities !== null;
+  const ids = optionIds(question);
+  if (!validProbabilities(wire.probabilities, ids)) {
+    return false;
+  }
+  if (wire.type === 'choice') {
+    return wire.choice === '' || ids.includes(wire.choice);
+  }
+  return Number.isFinite(wire.score) && wire.score >= 0 && wire.score <= ids.length - 1;
 }
 
 /**
@@ -179,14 +229,14 @@ export function normaliseAnswers(questions: Questions, response: SystemOneRespon
   const out: Record<string, Answer> = {};
   for (const [id, question] of Object.entries(questions)) {
     const wire = response.answers[id];
-    if (wire === undefined || wire.type !== question.type || !usable(wire)) {
+    if (wire === undefined || wire.type !== question.type || !usable(wire, question)) {
       continue;
     }
     if (wire.type === 'noul') {
       out[id] = normaliseNoul(wire);
-    } else if (wire.type === 'choice') {
+    } else if (wire.type === 'choice' && question.type === 'choice') {
       out[id] = normaliseChoice(wire);
-    } else if (question.type === 'score') {
+    } else if (wire.type === 'score' && question.type === 'score') {
       out[id] = normaliseScore(wire, question.criteria);
     }
   }
