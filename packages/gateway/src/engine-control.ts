@@ -959,62 +959,80 @@ export class EngineControl {
       (engine, model) => this.#stamps.get(engine, model),
     );
     return {
-      active: {
-        engine: this.#engine.id,
-        model: this.#engine.model,
-        device: this.#selected?.device ?? null,
-        ...(device === undefined
-          ? {}
-          : {
-              requestedDevice: device.requested,
-              ...(device.resolved === undefined ? {} : { resolvedDevice: device.resolved }),
-              ...(device.backend === undefined ? {} : { backend: device.backend }),
-            }),
-        state: health.state,
-        detail: health.detail ?? null,
-        selectionMode: this.#auto ? 'auto' : 'manual',
-        preferredFamily: this.#config.selection?.family ?? ranking.machine?.family ?? null,
-        ...(this.#fallbackNote === null
-          ? {}
-          : {
-              fallback: {
-                reason: this.#fallbackNote.reason,
-                ...failedCandidate(this.#fallbackNote.key),
-                ...(this.#fallbackNote.retryAt === undefined
-                  ? {}
-                  : { retryAt: new Date(this.#fallbackNote.retryAt).toISOString() }),
-              },
-            }),
-        lifecycle: life.lifecycle,
-        idleUnloadMinutes: life.idleUnloadMinutes,
-        lastUsedAt: this.#engine.lastUsedAt,
-      },
+      active: this.#activeStatus(ranking, health, life, device),
       switchable: this.switchable,
       totalMemoryGb: Math.round(this.#memory / 1e9),
       engines: this.#engines(),
-      models: models.map((m) => ({
-        id: m.id,
-        engine: m.engine,
-        label: m.label,
-        downloadGb: m.downloadGb,
-        memoryGb: modelMemoryGb(m, memoryDevice),
-        cpuMemoryGb: m.memoryGb,
-        gpuMemoryGb: m.gpuMemoryGb ?? null,
-        fits: modelFits(m.id, this.#memory, memoryDevice, m.engine),
-        quality: m.quality ?? null,
-        source: m.source ?? null,
-        installed: installed.get(m.id) ?? false,
-        latencyHint: m.latencyHint,
-        recommended: m.recommended === true,
-        family: modelFamily(m),
-        format: formatOf(m.quant),
-        measured: displayedMeasurements(m.engine, m.id, details),
-      })),
+      models: this.#modelStatuses(models, installed, memoryDevice, details),
       recommendation: ranking,
       downloads: this.#downloads.list(),
       paths: resolveAll(this.#config, this.#paths, this.#env, this.#host),
       pathsEditable: this.pathsEditable,
     };
+  }
+
+  #activeStatus(
+    ranking: Ranking,
+    health: ReturnType<ManagedEngine['health']>,
+    life: LifecycleOptions,
+    device: DeviceResolution | undefined,
+  ): Record<string, unknown> {
+    return {
+      engine: this.#engine.id,
+      model: this.#engine.model,
+      device: this.#selected?.device ?? null,
+      ...(device === undefined
+        ? {}
+        : {
+            requestedDevice: device.requested,
+            ...(device.resolved === undefined ? {} : { resolvedDevice: device.resolved }),
+            ...(device.backend === undefined ? {} : { backend: device.backend }),
+          }),
+      state: health.state,
+      detail: health.detail ?? null,
+      selectionMode: this.#auto ? 'auto' : 'manual',
+      preferredFamily: this.#config.selection?.family ?? ranking.machine?.family ?? null,
+      ...(this.#fallbackNote === null
+        ? {}
+        : {
+            fallback: {
+              reason: this.#fallbackNote.reason,
+              ...failedCandidate(this.#fallbackNote.key),
+              ...(this.#fallbackNote.retryAt === undefined
+                ? {}
+                : { retryAt: new Date(this.#fallbackNote.retryAt).toISOString() }),
+            },
+          }),
+      lifecycle: life.lifecycle,
+      idleUnloadMinutes: life.idleUnloadMinutes,
+      lastUsedAt: this.#engine.lastUsedAt,
+    };
+  }
+
+  #modelStatuses(
+    models: readonly ModelDescriptor<EngineId>[],
+    installed: ReadonlyMap<string, boolean>,
+    memoryDevice: Device | null | undefined,
+    details: ReadonlyMap<string, MeasurementDetails>,
+  ): Record<string, unknown>[] {
+    return models.map((m) => ({
+      id: m.id,
+      engine: m.engine,
+      label: m.label,
+      downloadGb: m.downloadGb,
+      memoryGb: modelMemoryGb(m, memoryDevice),
+      cpuMemoryGb: m.memoryGb,
+      gpuMemoryGb: m.gpuMemoryGb ?? null,
+      fits: modelFits(m.id, this.#memory, memoryDevice, m.engine),
+      quality: m.quality ?? null,
+      source: m.source ?? null,
+      installed: installed.get(m.id) ?? false,
+      latencyHint: m.latencyHint,
+      recommended: m.recommended === true,
+      family: modelFamily(m),
+      format: formatOf(m.quant),
+      measured: displayedMeasurements(m.engine, m.id, details),
+    }));
   }
 
   /** Ranked candidates from cached capabilities; the first call kicks the probe and shows unknowns. */

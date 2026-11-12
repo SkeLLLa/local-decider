@@ -1,9 +1,9 @@
-import type { ModelDescriptor } from './descriptor.ts';
 import { catalogModel } from '../models.ts';
+import type { ModelDescriptor } from './descriptor.ts';
 import type { EngineId } from './registry.ts';
 
 /** Labels for verified base checkpoints; upstream sources are cited in the catalogues. */
-export const FAMILY_LABELS: Readonly<Record<string, string>> = {
+const FAMILY_LABELS: Readonly<Record<string, string>> = {
   'vllm-sr/d3-lite': 'd3 lite',
   'vllm-sr/d3-nano': 'd3 nano',
   'vllm-sr/d3-mini': 'd3 mini',

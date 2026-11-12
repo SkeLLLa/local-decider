@@ -61,7 +61,7 @@ function pct(sorted: readonly number[], p: number): number {
   );
 }
 
-export function httpCall(url: string): BenchCall {
+function httpCall(url: string): BenchCall {
   return async (request, signal) => {
     const res = await fetch(`${url}/v1/systemone`, {
       method: 'POST',

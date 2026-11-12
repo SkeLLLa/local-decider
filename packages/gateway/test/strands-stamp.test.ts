@@ -23,9 +23,9 @@ describe('Strands runtime stamp', () => {
       env: { HF_HUB_CACHE: cache },
       host: { platform: 'linux', arch: 'x64', totalMemoryBytes: 1 },
     } as EngineContext;
-    assert.deepEqual(
-      strandsRuntimeStamp('StrandsAgents/strands-decider-2B-qwen3.5-v1-2610', ctx),
-      { runtime: 'strands-decider 1.2.3, torch 2.7.0', model: 'abc123' },
-    );
+    assert.deepEqual(strandsRuntimeStamp('StrandsAgents/strands-decider-2B-qwen3.5-v1-2610', ctx), {
+      runtime: 'strands-decider 1.2.3, torch 2.7.0',
+      model: 'abc123',
+    });
   });
 });

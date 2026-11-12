@@ -1,7 +1,7 @@
 import { modelFits } from '../models.ts';
 import type { Device, EngineDescriptor, HostInfo, ModelDescriptor } from './descriptor.ts';
-import type { CapabilityResult, HostCapabilities } from './host-capabilities.ts';
 import { familyId, familyOf, isKnownFamily } from './families.ts';
+import type { CapabilityResult, HostCapabilities } from './host-capabilities.ts';
 import {
   familyOrder,
   machineView,
@@ -254,7 +254,14 @@ export function rankEngines(input: SelectorInput): Ranking {
   const byId = new Map(input.engines.map((e) => [e.id, e]));
   const ladder = LADDER.flatMap((rung) => {
     const engine = byId.get(rung.engine);
-    return rungCandidate(rung, engine, engine === undefined ? undefined : recommendedModel(engine), input) ?? [];
+    return (
+      rungCandidate(
+        rung,
+        engine,
+        engine === undefined ? undefined : recommendedModel(engine),
+        input,
+      ) ?? []
+    );
   });
   const allOptions = allFamilyOptions(input, byId);
   const defaultPick = ladder.find((candidate) => candidate.eligible);
@@ -271,11 +278,7 @@ export function rankEngines(input: SelectorInput): Ranking {
   const autoFamily = preferredFamily ?? defaultFamily;
   const machineFamily = input.explicit === null ? autoFamily : manualFamily;
   const source =
-    input.explicit !== null
-      ? 'manual'
-      : preferredFamily !== null
-        ? 'preferred'
-        : 'default';
+    input.explicit !== null ? 'manual' : preferredFamily !== null ? 'preferred' : 'default';
   const members =
     autoFamily === null ? [] : allOptions.filter((option) => option.family === autoFamily);
   const ordered = familyOrder(members);
@@ -341,8 +344,7 @@ function makeMachineOption(
     quant: model.quant ?? null,
     downloaded: input.present?.get(`${rung.engine}|${model.id}`) ?? false,
     calibrated: engine.calibrated,
-    active:
-      active?.engine === rung.engine && active.model === model.id && activeDevice,
+    active: active?.engine === rung.engine && active.model === model.id && activeDevice,
     measured: measurement.measured,
     failed: measurement.failed,
     recommended: model.recommended === true,

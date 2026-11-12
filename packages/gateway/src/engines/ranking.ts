@@ -1,11 +1,10 @@
-import { familyLabel } from './families.ts';
 import type { Device } from './descriptor.ts';
+import { familyLabel } from './families.ts';
 import type { Backend, Candidate } from './selector.ts';
 
 export const TYPICAL_TOKENS = 1024;
 export const LONG_TOKENS = 3800;
 export const CLOSE_CALL = 0.1;
-export const MIN_RANK_RUNS = 3;
 
 export interface Timings {
   readonly p50Ms: number;
@@ -97,7 +96,9 @@ export interface FamilyOrder {
 export function pickVariant(variants: readonly MachineOption[]): MachineOption {
   const measured = variants
     .filter((variant) => variant.eligible && variant.failed === null && rankable(variant.measured))
-    .toSorted((left, right) => (left.measured?.typical.p50Ms ?? 0) - (right.measured?.typical.p50Ms ?? 0));
+    .toSorted(
+      (left, right) => (left.measured?.typical.p50Ms ?? 0) - (right.measured?.typical.p50Ms ?? 0),
+    );
   if (measured[0] !== undefined) return measured[0];
   return variants.find((variant) => variant.recommended) ?? variants[0]!;
 }
@@ -194,7 +195,10 @@ function chooseBest(order: FamilyOrder): RuntimeGroup | undefined {
   return eligible.find((group) => group.pick.ready && group.pick.downloaded) ?? eligible[0];
 }
 
-function bringFirst(groups: readonly RuntimeGroup[], selected: RuntimeGroup | undefined): RuntimeGroup[] {
+function bringFirst(
+  groups: readonly RuntimeGroup[],
+  selected: RuntimeGroup | undefined,
+): RuntimeGroup[] {
   if (selected === undefined) return [...groups];
   return [selected, ...groups.filter((group) => group !== selected)];
 }
@@ -227,7 +231,10 @@ function actionFor(best: MachineOption | null): MachineRecommendation['action'] 
   return 'use';
 }
 
-function staleView(options: readonly MachineOption[]): { stale: boolean; staleReason: string | null } {
+function staleView(options: readonly MachineOption[]): {
+  stale: boolean;
+  staleReason: string | null;
+} {
   const stale = options.find((option) => option.measured?.freshness === 'stale');
   return { stale: stale !== undefined, staleReason: stale?.measured?.staleReason ?? null };
 }
@@ -249,7 +256,10 @@ function fasterFamily(
     .map((family) => familyBest(allOptions.filter((option) => option.family === family)))
     .filter(hasRankableMeasurement)
     .toSorted((left, right) => left.measured.typical.p50Ms - right.measured.typical.p50Ms)[0];
-  if (faster === undefined || faster.measured.typical.p50Ms >= best.measured.typical.p50Ms * (1 - CLOSE_CALL)) {
+  if (
+    faster === undefined ||
+    faster.measured.typical.p50Ms >= best.measured.typical.p50Ms * (1 - CLOSE_CALL)
+  ) {
     return null;
   }
   return {
@@ -260,7 +270,10 @@ function fasterFamily(
   };
 }
 
-function measurementRatio(best: MachineOption | null, runnerUp: MachineOption | null): number | null {
+function measurementRatio(
+  best: MachineOption | null,
+  runnerUp: MachineOption | null,
+): number | null {
   if (!hasRankableMeasurement(best) || !hasRankableMeasurement(runnerUp)) return null;
   return runnerUp.measured.typical.p50Ms / best.measured.typical.p50Ms;
 }
@@ -274,10 +287,7 @@ export function machineView(
   const members = options.filter((option) => option.family === family);
   const order = familyOrder(members);
   const chosen = chooseBest(order);
-  const runtimes = bringFirst(
-    [...order.ranked, ...order.failed, ...order.ineligible],
-    chosen,
-  );
+  const runtimes = bringFirst([...order.ranked, ...order.failed, ...order.ineligible], chosen);
   const best = chosen?.pick ?? null;
   const runtimeCount = order.ranked.length + order.failed.length;
   const runnerUp = runnerUpFor(chosen, order);

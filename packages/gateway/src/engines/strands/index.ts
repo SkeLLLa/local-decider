@@ -135,7 +135,10 @@ function hubCachePath(ctx: EngineContext): string {
   );
 }
 
-export function strandsRuntimeStamp(model: string, ctx: EngineContext): {
+export function strandsRuntimeStamp(
+  model: string,
+  ctx: EngineContext,
+): {
   readonly runtime: string | null;
   readonly model: string | null;
 } {

@@ -25,7 +25,10 @@ describe('llama-server version stamp', () => {
     const file = join(tempPaths().data, 'llama-server');
     executable(file, 'no version available');
     const stat = await import('node:fs').then(({ statSync }) => statSync(file));
-    assert.equal(await llamaServerVersion(file), `stamp:${String(stat.size)}-${String(stat.mtimeMs)}`);
+    assert.equal(
+      await llamaServerVersion(file),
+      `stamp:${String(stat.size)}-${String(stat.mtimeMs)}`,
+    );
     assert.equal(await llamaServerVersion(undefined), null);
   });
 });
