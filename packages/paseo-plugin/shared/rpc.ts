@@ -2,10 +2,12 @@
 import { defineRpc } from '@getpaseo/plugin';
 import { z } from 'zod';
 
+import { benchmarkSchema, benchmarkStartInput } from './benchmark.ts';
 import { CONNECTABLE_ENGINES, connectionSchema, discoverySchema } from './connection.ts';
 import { HOOK_POLICIES, SERVICE_ACTIONS } from './constants.ts';
 import { downloadSchema, engineCatalogSchema, validationSchema } from './engines.ts';
 import { IDLE_MINUTES } from './lifecycle.ts';
+import { progressSchema } from './machine.ts';
 import { PATH_KEY, pathEntrySchema } from './paths.ts';
 import {
   policyPromptSchema,
@@ -29,6 +31,8 @@ export const statusRpc = defineRpc({
     detail: z.string().nullable(),
     model: z.string().nullable(),
     p50Ms: z.number().nullable(),
+    /** Progress of a running benchmark, from `/health`; null otherwise. */
+    benchmark: progressSchema.nullable(),
     gatewayUrl: z.string(),
     /** Consecutive failed checks, for client-side backoff. */
     downStreak: z.number().int(),
@@ -67,8 +71,39 @@ export const selectEngineRpc = defineRpc({
 /** Automatic selection on, or off keeping the running engine (`POST /v1/engine/mode`). */
 export const selectionModeRpc = defineRpc({
   name: 'selection-mode',
-  input: z.object({ mode: z.enum(['auto', 'manual']) }),
+  input: z.object({
+    mode: z.enum(['auto', 'manual']),
+    /** The model family automatic selection prefers; the gateway rejects it with `manual`. */
+    family: id.optional(),
+  }),
   output: z.object({ ok: z.boolean(), error: failure }),
+});
+
+const benchmarkOutput = z.object({
+  ok: z.boolean(),
+  error: failure,
+  benchmark: benchmarkSchema.nullable(),
+});
+
+/** The benchmark job's current view (`GET /v1/benchmark`). */
+export const benchmarkRpc = defineRpc({
+  name: 'benchmark',
+  input: z.object({}),
+  output: benchmarkOutput,
+});
+
+/** Start a benchmark (`POST /v1/benchmark`); every field is optional. */
+export const benchmarkStartRpc = defineRpc({
+  name: 'benchmark-start',
+  input: benchmarkStartInput,
+  output: benchmarkOutput,
+});
+
+/** Stop the running benchmark; completed results are kept (`POST /v1/benchmark/cancel`). */
+export const benchmarkCancelRpc = defineRpc({
+  name: 'benchmark-cancel',
+  input: z.object({}),
+  output: benchmarkOutput,
 });
 
 /** Start a model download (`POST /v1/models/download`). */

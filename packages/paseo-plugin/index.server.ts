@@ -3,9 +3,12 @@ import type { PluginServerContext, PluginSettingsState } from '@getpaseo/plugin/
 import { Background } from './server/background.ts';
 import type { HookDeps } from './server/deps.ts';
 import {
+  cancelBenchmark,
   downloadModel,
   engineLoad,
   listEngines,
+  readBenchmark,
+  startBenchmark,
   listPolicyThresholds,
   listPolicyVariants,
   policyPrompt,
@@ -34,6 +37,9 @@ import { defaultServiceEnv, runService, serviceInfo } from './server/service.ts'
 import { createTurnHandler } from './server/turn.ts';
 import { UsageLinks } from './server/usage.ts';
 import {
+  benchmarkCancelRpc,
+  benchmarkRpc,
+  benchmarkStartRpc,
   decideRpc,
   downloadModelRpc,
   engineLoadRpc,
@@ -154,6 +160,9 @@ export default function contribute(server: PluginServerContext): () => void {
   server.handle(enginesRpc, async () => listEngines(deps));
   server.handle(selectEngineRpc, async (input) => selectEngine(deps, input));
   server.handle(selectionModeRpc, async (input) => setSelectionMode(deps, input));
+  server.handle(benchmarkRpc, async () => readBenchmark(deps));
+  server.handle(benchmarkStartRpc, async (input) => startBenchmark(deps, input));
+  server.handle(benchmarkCancelRpc, async () => cancelBenchmark(deps));
   server.handle(saveConnectionRpc, async (input) => saveConnection(deps, input));
   server.handle(discoverServersRpc, async (input) => discoverServers(deps, input));
   server.handle(downloadModelRpc, async (input) => downloadModel(deps, input));

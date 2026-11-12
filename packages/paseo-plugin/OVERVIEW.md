@@ -45,7 +45,8 @@ checks still run, since Paseo has no equivalent.
 ## Settings
 
 - **Status:** whether the gateway is up, and the engine's state: loaded (with model and engine),
-  unloaded and loading on the next decision, loading, or failed and why. Load now and Unload act
+  unloaded and loading on the next decision, loading, failed and why, or "Benchmarking (3 of 6)"
+  while a benchmark runs. Load now and Unload act
   at once. Lifecycle picks automatic (load on demand, unload after 1 to 1440 idle minutes) or
   always loaded.
 - **Policies:** the mode of each policy (`off`, `shadow`, `act`).
@@ -53,16 +54,26 @@ checks still run, since Paseo has no equivalent.
   agent profile or a model, with effort (thinking level) and mode, a reload for policy files, and
   "Write with an agent", which starts an agent that interviews you and writes a routing policy
   for your models.
-- **Engine and model:** the engines, devices and models come from the gateway, so a gateway that
-  knows another engine shows it here without a plugin update. Pick an engine to see its
-  description and models with download size, memory, a latency hint and a recommendation.
-  Download shows progress; a model too big for the machine is disabled; Use switches the gateway
-  now. Strands Decider also has a device picker, which lists MLX and MPS on Apple Silicon. An
-  engine this machine cannot run is hidden unless it is the active one, and an uninstalled engine
-  says how to install it; the plugin never installs engines. An engine whose probabilities are not
-  calibrated, such as OpenAI-compatible, shows an "uncalibrated" badge. Its models are discovered
-  from the server and have no download size or Download button. An engine that supports a check
-  (FastFlowLM) shows its result with a Re-validate button.
+- **Engine and model** has three blocks, top to bottom. Everything comes from the gateway, so a
+  gateway that knows another engine or model shows it here without a plugin update.
+  - **Recommended for this machine:** the model family you are using, on the runtime that is
+    fastest here, in plain words (for example "d3 lite on NPU"), with its typical and long
+    latency, why it was picked, and what is running now. It shows one state at a time: nothing
+    to do, a download or install to finish, a backup engine after a failure, or a manual choice
+    that is slower than the recommendation. Badges say when a measurement is out of date, comes
+    from few runs, is noisy, or leaves other runtimes unmeasured. A single button acts on it:
+    Use, Download, Show install steps, Use automatic or Run benchmark. Switching to a specific
+    runtime while Automatic is on says "(turns off automatic)" and offers to turn it back on.
+  - **Benchmark this machine:** times every installed model on every runtime, one at a time, with
+    short, typical and long prompts. See [Benchmarks](#benchmarks).
+  - **Advanced: engine, device and model** (collapsed): the engine, device and model pickers with
+    download size, memory and a latency hint, Download with progress, Use, the connection form
+    for OpenAI-compatible servers, and the engine check (FastFlowLM) with a Re-validate button.
+    A model too big for the machine is disabled. An engine this machine cannot run is hidden
+    unless it is the active one, and an uninstalled engine says how to install it; the plugin
+    never installs engines. An engine whose probabilities are not calibrated, such as
+    OpenAI-compatible, shows an "uncalibrated" badge, and its models are discovered from the
+    server.
 - **Decisions in chat:** show all rows, only notable ones (changed something, need attention,
   failed, or below 70% confidence in shadow), or none. Hiding rows does not stop decisions or
   the gateway's log. The details line and feedback buttons can be turned off separately.
@@ -84,6 +95,36 @@ checks still run, since Paseo has no equivalent.
 Policy modes, thresholds, routing, engine, model, lifecycle and path changes are stored by the
 gateway in its `config.yaml`, so they apply to every client of that gateway, including the
 Claude Code and Codex hooks.
+
+## Benchmarks
+
+A benchmark runs inside the gateway, one model and runtime at a time, and keeps going if you
+close settings. It measures short, typical (1,024 tokens) and long (3,800 tokens) prompts.
+
+- **Decisions are passed to you while it runs.** The gateway fails open, so agents are never
+  blocked; the status views say "Benchmarking (k of n)".
+- **Your setup comes back when it ends.** In automatic mode the gateway then re-ranks with the
+  new results, so it may land on a faster runtime of the same model family. If it cannot switch
+  back, the card says so and offers Try again and Use automatic.
+- **Cancel keeps what finished.** Finish benchmark measures only what is missing.
+- **Results are from this machine only.** Each is stamped with the engine version and hardware,
+  and goes out of date when either changes; run the benchmark again then. Custom servers are not
+  benchmarked.
+
+### How the recommendation is chosen
+
+The recommendation compares runtimes of **one model family** and never changes the family. The
+family is the one you chose, else the gateway's default. Within it:
+
+1. Runtimes with a fresh measurement are ranked by typical latency; the fastest wins.
+2. Close calls (within about 10%) go to a dedicated runtime such as the NPU, then to the steadier
+   one, then to the hardware order NPU, CUDA, Vulkan, MLX, MPS, CPU.
+3. An out-of-date or few-run measurement counts as unmeasured: that runtime keeps its place in the
+   hardware order until it is measured again.
+4. A runtime whose last run failed moves behind the ranked ones.
+
+If a different family is clearly faster here, the card says so with a link to the results; it
+does not switch for you. In the results, Use fastest acts per family.
 
 ## Status and statistics
 

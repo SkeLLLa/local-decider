@@ -99,6 +99,8 @@ export interface GatewayHealth {
   readonly engineState?: string;
   readonly detail?: string;
   readonly p50Ms?: number;
+  /** `{completed, total}` while a benchmark runs; read leniently. */
+  readonly benchmark?: unknown;
 }
 
 export type OutcomeSource =

@@ -11,13 +11,14 @@ import {
   engineWhere,
   enginesView,
   fallbackLine,
+  installCommand,
   namesOf,
   parseRecommendation,
   runningView,
-  suggestionView,
   type ActiveInfo,
   type Names,
   type Recommendation,
+  type Target,
 } from '../shared/recommendation.ts';
 
 const TARGET = { engine: 'strands-decider', model: 'm', device: 'mlx', reason: 'fastest here' };
@@ -111,7 +112,6 @@ describe('recommendation parsing', () => {
     assert.equal(catalog.active?.selectionMode, null);
     assert.equal(catalog.active?.fallback, null);
     assert.equal(enginesView(catalog.recommendation, NAMES), null);
-    assert.equal(suggestionView(catalog.active, catalog.recommendation, NAMES), null);
     assert.equal(fallbackLine(catalog.active, NAMES), null);
   });
 
@@ -216,165 +216,33 @@ describe('current engine', () => {
   });
 });
 
-describe('suggestion', () => {
-  const cpu = active({ resolvedDevice: 'cpu', backend: 'CPU', device: 'cpu' });
+const target = (engine: string, model: string): Target => ({
+  engine,
+  model,
+  device: null,
+  reason: '',
+  explicit: false,
+});
 
-  it('offers a switch to an installed faster engine in manual mode', () => {
-    assert.deepEqual(suggestionView(cpu, rec(), NAMES), {
-      kind: 'switch',
-      hint: 'Apple GPU (MLX) is installed and faster than CPU.',
-      target: { engine: 'strands-decider', model: 'm', device: 'mlx' },
-    });
-  });
-
-  it('names Vulkan and suggests installing or switching to its calibrated engine', () => {
+describe('install command', () => {
+  it('names the Vulkan backend', () => {
     assert.equal(backendName('Vulkan'), 'GPU (Vulkan)');
-    const target = {
-      engine: 'llama-vulkan',
-      model: 'd3-mini-q4_k_m',
-      device: null,
-      reason: 'Vulkan GPU: available',
-      explicit: false,
-    };
-    const missing = rec({
-      recommended: target,
-      automatic: target,
-      candidates: [
-        cand({
-          engine: 'llama-vulkan',
-          model: target.model,
-          device: null,
-          backend: 'Vulkan',
-          ready: false,
-        }),
-        cand({ device: 'cpu', backend: 'CPU' }),
-      ],
-    });
-    assert.deepEqual(suggestionView(cpu, missing, NAMES), {
-      kind: 'install',
-      hint: 'GPU (Vulkan) is faster here but not installed.',
-      command: 'local-decider engine install --engine llama-vulkan --model d3-mini-q4_k_m',
-    });
-    const installed = rec({
-      recommended: target,
-      automatic: target,
-      candidates: [
-        cand({
-          engine: 'llama-vulkan',
-          model: target.model,
-          device: null,
-          backend: 'Vulkan',
-          ready: true,
-        }),
-        cand({ device: 'cpu', backend: 'CPU' }),
-      ],
-    });
-    assert.equal(suggestionView(cpu, installed, NAMES)?.kind, 'switch');
   });
 
-  it('follows the CUDA, Vulkan, CPU recommendation order', () => {
-    const cudaTarget = {
-      engine: 'strands-decider',
-      model: 'm',
-      device: 'cuda',
-      reason: 'NVIDIA GPU',
-      explicit: false,
-    };
-    const cudaRec = rec({
-      recommended: cudaTarget,
-      automatic: cudaTarget,
-      candidates: [
-        cand({ device: 'cuda', backend: 'CUDA' }),
-        cand({ engine: 'llama-vulkan', device: null, backend: 'Vulkan' }),
-      ],
-    });
+  it('words the command per engine', () => {
     assert.equal(
-      suggestionView(
-        active({ device: 'cuda', resolvedDevice: 'cuda', backend: 'CUDA' }),
-        cudaRec,
-        NAMES,
-      ),
-      null,
+      installCommand(target('llama-vulkan', 'd3-mini-q4_k_m'), 'Vulkan'),
+      'local-decider engine install --engine llama-vulkan --model d3-mini-q4_k_m',
     );
-    const vulkanActive = active({
-      engine: 'llama-vulkan',
-      model: 'd3-mini-q4_k_m',
-      device: null,
-      backend: 'Vulkan',
-    });
-    const cudaPick = rec({
-      recommended: cudaTarget,
-      automatic: cudaTarget,
-      candidates: [cand({ device: 'cuda', backend: 'CUDA', ready: true })],
-    });
-    assert.equal(suggestionView(vulkanActive, cudaPick, NAMES)?.kind, 'switch');
-
-    const vulkanTarget = {
-      engine: 'llama-vulkan',
-      model: 'd3-mini-q4_k_m',
-      device: null,
-      reason: 'Vulkan GPU',
-      explicit: false,
-    };
-    const vulkanRec = rec({
-      recommended: vulkanTarget,
-      automatic: vulkanTarget,
-      candidates: [
-        cand({
-          engine: 'llama-vulkan',
-          model: vulkanTarget.model,
-          device: null,
-          backend: 'Vulkan',
-          ready: true,
-        }),
-        cand({ device: 'cpu', backend: 'CPU' }),
-      ],
-    });
-    assert.equal(suggestionView(vulkanActive, vulkanRec, NAMES), null);
-  });
-
-  it('points to the install command when the pick is not installed', () => {
-    const missing = rec({
-      candidates: [cand({ ready: false }), cand({ device: 'cpu', backend: 'CPU' })],
-    });
-    assert.deepEqual(suggestionView(cpu, missing, NAMES), {
-      kind: 'install',
-      hint: 'Apple GPU (MLX) is faster here but not installed.',
-      command: 'local-decider engine install --flavor mlx',
-    });
-    const flm = rec({
-      automatic: {
-        engine: 'fastflowlm',
-        model: 'd3:mini',
-        device: null,
-        reason: '',
-        explicit: false,
-      },
-      candidates: [
-        cand({
-          engine: 'fastflowlm',
-          model: 'd3:mini',
-          device: null,
-          backend: 'NPU',
-          ready: false,
-        }),
-      ],
-    });
     assert.equal(
-      suggestionView(active(), flm, NAMES)?.kind === 'install' &&
-        (suggestionView(active(), flm, NAMES) as { command: string }).command,
+      installCommand(target('strands-decider', 'm'), 'MLX'),
+      'local-decider engine install --flavor mlx',
+    );
+    assert.equal(
+      installCommand(target('fastflowlm', 'd3:mini'), 'NPU'),
       'Install FastFlowLM with your package manager or from https://github.com/FastFlowLM/FastFlowLM, then:\n' +
         'local-decider engine install --engine fastflowlm --model d3:mini',
     );
-  });
-
-  it('shows nothing when it already runs the pick, in automatic mode, or without data', () => {
-    assert.equal(suggestionView(active(), rec(), NAMES), null);
-    assert.equal(suggestionView(active({ selectionMode: 'auto' }), rec(), NAMES), null);
-    assert.equal(suggestionView(active({ selectionMode: null }), rec(), NAMES), null);
-    assert.equal(suggestionView(cpu, rec({ automatic: null, recommended: null }), NAMES), null);
-    assert.equal(suggestionView(cpu, null, NAMES), null);
-    assert.equal(suggestionView(null, rec(), NAMES), null);
   });
 });
 

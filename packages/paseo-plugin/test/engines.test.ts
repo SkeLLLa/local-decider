@@ -2,13 +2,17 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
 import {
+  cancelBenchmark,
   downloadModel,
   listEngines,
+  readBenchmark,
+  startBenchmark,
   selectEngine,
   setSelectionMode,
   setPath,
   validateEngine,
 } from '../server/engines.ts';
+import { benchmarkStartInput } from '../shared/benchmark.ts';
 import {
   deviceOptions,
   engineOptions,
@@ -113,6 +117,9 @@ function model(overrides: Partial<EngineModel> = {}): EngineModel {
     installed: true,
     latencyHint: '~0.5 s',
     recommended: false,
+    family: null,
+    format: null,
+    measured: [],
     ...overrides,
   };
 }
@@ -146,6 +153,8 @@ function ctx(overrides: Partial<ModelRowContext> = {}): ModelRowContext {
       lastUsedAt: null,
       selectionMode: null,
       fallback: null,
+      preferredFamily: null,
+      benchmark: null,
     },
     downloads: [],
     engineAvailable: true,
@@ -200,6 +209,7 @@ describe('GET /v1/engines parsing', () => {
       connectable: false,
       connection: null,
       installUrl: null,
+      version: null,
     });
     assert.equal(catalog.engines[1]?.available, true);
     assert.deepEqual(catalog.models[0], {
@@ -212,6 +222,9 @@ describe('GET /v1/engines parsing', () => {
       installed: false,
       latencyHint: null,
       recommended: false,
+      family: null,
+      format: null,
+      measured: [],
     });
     assert.equal(catalog.active?.lifecycle, 'lazy');
     assert.equal(catalog.active?.idleUnloadMinutes, 15);
@@ -225,6 +238,183 @@ describe('GET /v1/engines parsing', () => {
       assert.deepEqual([catalog.engines, catalog.models, catalog.downloads], [[], [], []]);
       assert.equal(catalog.active, null);
     }
+  });
+});
+
+const MEASURED = {
+  device: null,
+  typical: { p50Ms: 461, p95Ms: 529 },
+  long: { p50Ms: 1550, p95Ms: 1991 },
+  sizes: [{ targetTokens: 256, inputTokens: 301, p50Ms: 160, p95Ms: 184 }, { targetTokens: 'x' }],
+  runs: 5,
+  provisional: false,
+  measuredAt: '2026-11-12T10:04:11.000Z',
+  freshness: 'fresh',
+  staleReason: null,
+  failed: null,
+};
+
+const OPTION = {
+  engine: 'llama-vulkan',
+  model: 'd3-lite-q8_0',
+  device: null,
+  backend: 'GPU',
+  code: 'available',
+  eligible: true,
+  supported: true,
+  ready: true,
+  reason: 'ok',
+  family: 'vllm-sr/d3-lite',
+  quant: 'Q8_0',
+  downloaded: true,
+  calibrated: true,
+  active: false,
+  measured: MEASURED,
+  failed: null,
+};
+
+const MACHINE = {
+  family: 'vllm-sr/d3-lite',
+  familyLabel: 'd3 lite',
+  source: 'preferred',
+  availability: 'ok',
+  best: OPTION,
+  runnerUp: { ...OPTION, engine: 'fastflowlm', measured: null, failed: { error: 'boom', at: 't' } },
+  ratio: 1.4,
+  reason: 'fastest-measured',
+  action: 'use',
+  partial: true,
+  stale: true,
+  staleReason: 'driver changed',
+  runtimes: [
+    { engine: 'llama-vulkan', device: null, backend: 'GPU', pick: OPTION, variants: [OPTION] },
+  ],
+  fasterFamily: { family: 'vllm-sr/d3-mini', label: 'd3 mini', best: OPTION, ratio: 2 },
+};
+
+describe('GET /v1/engines recommend fields', () => {
+  it('parses an old gateway body with null and empty new fields', () => {
+    const catalog = parseEngineCatalog({ ...BODY, recommendation: { candidates: [] } });
+    assert.equal(catalog.active?.preferredFamily, null);
+    assert.equal(catalog.active?.benchmark, null);
+    assert.equal(catalog.engines[0]?.version, null);
+    assert.equal(catalog.models[0]?.family, null);
+    assert.equal(catalog.models[0]?.format, null);
+    assert.deepEqual(catalog.models[0]?.measured, []);
+    assert.equal(catalog.recommendation?.machine, null);
+    assert.equal(parseEngineCatalog(BODY).recommendation, null);
+  });
+
+  it('parses the §4.1 fields', () => {
+    const catalog = parseEngineCatalog({
+      active: {
+        engine: 'x',
+        preferredFamily: 'vllm-sr/d3-lite',
+        benchmark: { completed: 3, total: 6 },
+      },
+      engines: [{ id: 'llama-vulkan', version: 'llama.cpp b12318' }],
+      models: [
+        {
+          id: 'm',
+          engine: 'x',
+          family: { id: 'vllm-sr/d3-lite', label: 'd3 lite' },
+          format: { short: 'Q8_0', label: '8-bit (Q8_0)' },
+          measured: [MEASURED, 'junk'],
+        },
+      ],
+      recommendation: { candidates: [], machine: MACHINE },
+    });
+    assert.equal(catalog.active?.preferredFamily, 'vllm-sr/d3-lite');
+    assert.deepEqual(catalog.active?.benchmark, { completed: 3, total: 6 });
+    assert.equal(catalog.engines[0]?.version, 'llama.cpp b12318');
+    const m = catalog.models[0];
+    assert.deepEqual(m?.family, { id: 'vllm-sr/d3-lite', label: 'd3 lite' });
+    assert.deepEqual(m?.format, { short: 'Q8_0', label: '8-bit (Q8_0)' });
+    assert.equal(m?.measured.length, 1);
+    assert.deepEqual(m?.measured[0]?.typical, { p50Ms: 461, p95Ms: 529 });
+    assert.deepEqual(m?.measured[0]?.sizes, [
+      { targetTokens: 256, inputTokens: 301, p50Ms: 160, p95Ms: 184 },
+    ]);
+    assert.equal(m?.measured[0]?.freshness, 'fresh');
+  });
+
+  it('parses the §4.1 machine recommendation', () => {
+    const catalog = parseEngineCatalog({
+      active: {
+        engine: 'x',
+        preferredFamily: 'vllm-sr/d3-lite',
+        benchmark: { completed: 3, total: 6 },
+      },
+      engines: [{ id: 'llama-vulkan', version: 'llama.cpp b12318' }],
+      models: [
+        {
+          id: 'm',
+          engine: 'x',
+          family: { id: 'vllm-sr/d3-lite', label: 'd3 lite' },
+          format: { short: 'Q8_0', label: '8-bit (Q8_0)' },
+          measured: [MEASURED, 'junk'],
+        },
+      ],
+      recommendation: { candidates: [], machine: MACHINE },
+    });
+    const machine = catalog.recommendation?.machine;
+    assert.equal(machine?.familyLabel, 'd3 lite');
+    assert.equal(machine?.reason, 'fastest-measured');
+    assert.equal(machine?.action, 'use');
+    assert.equal(machine?.best?.quant, 'Q8_0');
+    assert.equal(machine?.best?.measured?.runs, 5);
+    assert.deepEqual(machine?.runnerUp?.failed, { error: 'boom', at: 't' });
+    assert.equal(machine?.runtimes[0]?.variants.length, 1);
+    assert.equal(machine?.fasterFamily?.ratio, 2);
+    assert.equal(machine?.partial, true);
+    assert.equal(machine?.stale, true);
+  });
+
+  it('turns unknown codes into null and drops a machine without a family', () => {
+    const catalog = parseEngineCatalog({
+      models: [{ id: 'm', engine: 'x', measured: [{ ...MEASURED, freshness: 'old' }] }],
+      recommendation: {
+        machine: { ...MACHINE, source: 'x', availability: 'y', reason: 'z', action: 'q' },
+      },
+    });
+    assert.equal(catalog.models[0]?.measured[0]?.freshness, null);
+    const machine = catalog.recommendation?.machine;
+    assert.deepEqual(
+      [machine?.source, machine?.availability, machine?.reason, machine?.action],
+      [null, null, null, null],
+    );
+    const none = parseEngineCatalog({ recommendation: { machine: { ...MACHINE, family: '' } } });
+    assert.equal(none.recommendation?.machine, null);
+  });
+
+  it('caps lists and text', () => {
+    const many = Array.from({ length: 300 }, () => MEASURED);
+    const catalog = parseEngineCatalog({
+      models: [
+        {
+          id: 'm',
+          engine: 'x',
+          measured: many,
+          family: { id: 'a'.repeat(900), label: 'l' },
+        },
+      ],
+      recommendation: {
+        machine: {
+          ...MACHINE,
+          runtimes: Array.from({ length: 300 }, () => MACHINE.runtimes[0]),
+          staleReason: 'r'.repeat(900),
+        },
+      },
+    });
+    assert.equal(catalog.models[0]?.measured.length, 50);
+    assert.equal(catalog.models[0]?.family?.id.length, 500);
+    assert.equal(catalog.recommendation?.machine?.runtimes.length, 50);
+    assert.equal(catalog.recommendation?.machine?.staleReason?.length, 500);
+    const sizes = Array.from({ length: 40 }, () => MEASURED.sizes[0]);
+    const capped = parseEngineCatalog({
+      models: [{ id: 'm', engine: 'x', measured: [{ ...MEASURED, sizes }] }],
+    });
+    assert.equal(capped.models[0]?.measured[0]?.sizes.length, 12);
   });
 });
 
@@ -524,6 +714,85 @@ describe('engine selection helpers', () => {
       device: 'auto',
     });
     assert.deepEqual(sent, { engine: 'lmstudio', model: 'qwen3', device: 'auto' });
+  });
+});
+
+describe('benchmark RPC handlers', () => {
+  it('reads the job view, and reports an unreachable gateway', async () => {
+    const d = deps(
+      settings(),
+      fakeGateway(() => null),
+    );
+    const res = await readBenchmark(d);
+    assert.equal(res.ok, true);
+    assert.equal(res.benchmark?.state, 'idle');
+    const none = await readBenchmark(deps(settings(), null));
+    assert.equal(none.ok, false);
+    assert.equal(none.benchmark, null);
+    const silent = { ...fakeGateway(() => null), benchmark: async () => null };
+    assert.equal((await readBenchmark(deps(settings(), silent))).ok, false);
+  });
+
+  it('starts with only the given fields, and cancels', async () => {
+    const gw = fakeGateway(() => null);
+    const d = deps(settings(), gw);
+    const started = await startBenchmark(d, {
+      scope: 'family',
+      family: 'f',
+      only: undefined,
+      targets: [{ engine: 'e', model: 'm' }],
+    });
+    assert.equal(started.ok, true);
+    assert.equal(started.benchmark?.state, 'running');
+    assert.equal((await cancelBenchmark(d)).benchmark?.state, 'cancelling');
+    assert.deepEqual(gw.posts, [
+      {
+        name: 'benchmarkStart',
+        input: { scope: 'family', family: 'f', targets: [{ engine: 'e', model: 'm' }] },
+      },
+      { name: 'benchmarkCancel', input: {} },
+    ]);
+  });
+
+  it('maps a gateway refusal to ok: false with its message', async () => {
+    const gw = {
+      ...fakeGateway(() => null),
+      benchmarkStart: async () => ({ ok: false as const, error: 'a benchmark is already running' }),
+      benchmarkCancel: async () => ({ ok: false as const, error: 'no benchmark is running' }),
+    };
+    const d = deps(settings(), gw);
+    assert.deepEqual(await startBenchmark(d, {}), {
+      ok: false,
+      error: 'a benchmark is already running',
+      benchmark: null,
+    });
+    assert.equal((await cancelBenchmark(d)).error, 'no benchmark is running');
+    assert.ok(d.logs.includes('start benchmark: a benchmark is already running'));
+  });
+
+  it('forwards the family with the selection mode', async () => {
+    const gw = fakeGateway(() => null);
+    await setSelectionMode(deps(settings(), gw), { mode: 'auto', family: 'vllm-sr/d3-lite' });
+    assert.deepEqual(gw.posts, [
+      { name: 'setSelectionMode', input: { mode: 'auto', family: 'vllm-sr/d3-lite' } },
+    ]);
+  });
+
+  it('validates the start input and caps targets at 32', () => {
+    const input = benchmarkStartInput;
+    const target = { engine: 'e', model: 'm' };
+    assert.equal(input.safeParse({}).success, true);
+    assert.equal(input.safeParse({ scope: 'active', only: 'missing' }).success, true);
+    assert.equal(input.safeParse({ scope: 'all' }).success, false);
+    assert.equal(input.safeParse({ only: 'all' }).success, false);
+    assert.equal(
+      input.safeParse({ targets: Array.from({ length: 32 }, () => target) }).success,
+      true,
+    );
+    assert.equal(
+      input.safeParse({ targets: Array.from({ length: 33 }, () => target) }).success,
+      false,
+    );
   });
 });
 

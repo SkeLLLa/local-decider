@@ -1,3 +1,4 @@
+import { parseBenchmark, type BenchmarkView } from '../shared/benchmark.ts';
 import {
   buildDiscoverBody,
   parseConnection,
@@ -76,15 +77,58 @@ export async function selectEngine(
 
 export async function setSelectionMode(
   deps: Deps,
-  { mode }: { mode: 'auto' | 'manual' },
+  { mode, family }: { mode: 'auto' | 'manual'; family?: string | undefined },
 ): Promise<{ ok: boolean; error: string | null }> {
   const { ok, error } = await call(
     deps,
     mode === 'auto' ? 'turn automatic selection on' : 'turn automatic selection off',
-    async (gw) => gw.setSelectionMode(mode, { timeoutMs: 30_000 }),
+    async (gw) => gw.setSelectionMode(mode, family, { timeoutMs: 30_000 }),
     () => null,
   );
   return { ok, error };
+}
+
+type BenchmarkResult = { ok: boolean; error: string | null; benchmark: BenchmarkView | null };
+
+/** The benchmark job's view; `ok` is false when the gateway does not answer. */
+export async function readBenchmark(deps: Pick<HookDeps, 'gateway'>): Promise<BenchmarkResult> {
+  const gateway = await deps.gateway();
+  if (gateway === null) {
+    return { ok: false, error: BAD_URL, benchmark: null };
+  }
+  const benchmark = parseBenchmark(await gateway.benchmark());
+  return benchmark === null
+    ? { ok: false, error: 'The gateway did not answer.', benchmark: null }
+    : { ok: true, error: null, benchmark };
+}
+
+export async function startBenchmark(
+  deps: Deps,
+  input: {
+    scope?: string | undefined;
+    family?: string | undefined;
+    only?: string | undefined;
+    targets?: readonly { engine: string; model: string; device?: string | undefined }[] | undefined;
+  },
+): Promise<BenchmarkResult> {
+  const body = Object.fromEntries(Object.entries(input).filter(([, v]) => v !== undefined));
+  const res = await call(
+    deps,
+    'start benchmark',
+    async (gw) => gw.benchmarkStart(body),
+    parseBenchmark,
+  );
+  return { ok: res.ok, error: res.error, benchmark: res.value };
+}
+
+export async function cancelBenchmark(deps: Deps): Promise<BenchmarkResult> {
+  const res = await call(
+    deps,
+    'cancel benchmark',
+    async (gw) => gw.benchmarkCancel(),
+    parseBenchmark,
+  );
+  return { ok: res.ok, error: res.error, benchmark: res.value };
 }
 
 export async function downloadModel(

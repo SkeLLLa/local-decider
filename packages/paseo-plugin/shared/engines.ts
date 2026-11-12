@@ -5,6 +5,19 @@
 import { z } from 'zod';
 
 import { connectionSchema, isConnectable, parseConnection } from './connection.ts';
+import {
+  familySchema,
+  formatSchema,
+  machineSchema,
+  measuredSchema,
+  parseFamily,
+  parseFormat,
+  parseMachine,
+  parseMeasuredList,
+  parseProgress,
+  progressSchema,
+} from './machine.ts';
+import { bool, fields, items, MAX_TEXT, num, str } from './parse.ts';
 import { httpsUrl, parsePaths, pathEntrySchema } from './paths.ts';
 import {
   AUTO_ENGINE,
@@ -44,6 +57,8 @@ const engineSchema = z.object({
   connection: connectionSchema.nullable(),
   /** Where to install a missing engine; https only, null when installed or unknown. */
   installUrl: text,
+  /** Cached version stamp, e.g. `llama.cpp b12318`; null when unknown or on older gateways. */
+  version: text,
 });
 
 const modelSchema = z.object({
@@ -56,6 +71,12 @@ const modelSchema = z.object({
   installed: z.boolean(),
   latencyHint: text,
   recommended: z.boolean(),
+  /** The base checkpoint this model belongs to; null on older gateways. */
+  family: familySchema.nullable(),
+  /** Quantisation, e.g. `Q8_0`; null when not applicable or unknown. */
+  format: formatSchema.nullable(),
+  /** One benchmark per device; empty when never measured. */
+  measured: z.array(measuredSchema),
 });
 
 export const downloadSchema = z.object({
@@ -87,6 +108,10 @@ const activeSchema = z.object({
   selectionMode: z.enum(['auto', 'manual']).nullable(),
   /** Set while the gateway runs a replacement for a failed engine. */
   fallback: z.object({ reason: z.string(), engine: text, device: text, retryAt: text }).nullable(),
+  /** The model family automatic selection prefers; null when unset or on older gateways. */
+  preferredFamily: text,
+  /** Progress of a running benchmark job; null otherwise. */
+  benchmark: progressSchema.nullable(),
 });
 
 const targetSchema = z.object({
@@ -97,6 +122,8 @@ const targetSchema = z.object({
 });
 
 const recommendationSchema = z.object({
+  /** The per-machine view of the model family; null on older gateways. */
+  machine: machineSchema.nullable(),
   recommended: targetSchema.extend({ explicit: z.boolean() }).nullable(),
   automatic: targetSchema.extend({ explicit: z.boolean() }).nullable(),
   candidates: z.array(
@@ -142,41 +169,9 @@ export type EngineCatalog = z.output<typeof engineCatalogSchema>;
 
 const MAX_ITEMS = 200;
 const MAX_LINES = 200;
-const MAX_TEXT = 500;
 
-type Fields = Record<string, unknown>;
-
-function fields(value: unknown): Fields | null {
-  return typeof value === 'object' && value !== null && !Array.isArray(value)
-    ? (value as Fields)
-    : null;
-}
-
-function str(value: unknown): string | null {
-  return typeof value === 'string' && value !== '' ? value.slice(0, MAX_TEXT) : null;
-}
-
-function num(value: unknown): number | null {
-  return typeof value === 'number' && Number.isFinite(value) ? value : null;
-}
-
-function bool(value: unknown, fallback: boolean): boolean {
-  return typeof value === 'boolean' ? value : fallback;
-}
-
-function list<T>(value: unknown, parse: (entry: unknown) => T | null): T[] {
-  if (!Array.isArray(value)) {
-    return [];
-  }
-  const out: T[] = [];
-  for (const entry of value.slice(0, MAX_ITEMS)) {
-    const parsed = parse(entry);
-    if (parsed !== null) {
-      out.push(parsed);
-    }
-  }
-  return out;
-}
+const list = <T>(value: unknown, parse: (entry: unknown) => T | null): T[] =>
+  items(value, MAX_ITEMS, parse);
 
 export function parseValidation(value: unknown): Validation | null {
   const v = fields(value);
@@ -222,6 +217,7 @@ function parseEngine(value: unknown): EngineInfo | null {
     connectable: isConnectable(id) && 'connection' in v,
     connection: parseConnection(v['connection']),
     installUrl: httpsUrl(v['installUrl']),
+    version: str(v['version']),
   };
 }
 
@@ -243,6 +239,9 @@ function parseModel(value: unknown): EngineModel | null {
     installed: bool(v['installed'], false),
     latencyHint: str(v['latencyHint']),
     recommended: bool(v['recommended'], false),
+    family: parseFamily(v['family']),
+    format: parseFormat(v['format']),
+    measured: parseMeasuredList(v['measured']),
   };
 }
 
@@ -291,7 +290,14 @@ function parseActive(value: unknown): ActiveEngine | null {
     lastUsedAt: str(v['lastUsedAt']),
     selectionMode: parseSelectionMode(v['selectionMode']),
     fallback: parseFallback(v['fallback']),
+    preferredFamily: str(v['preferredFamily']),
+    benchmark: parseProgress(v['benchmark']),
   };
+}
+
+function parseCatalogRecommendation(value: unknown): EngineCatalog['recommendation'] {
+  const base = parseRecommendation(value);
+  return base === null ? null : { ...base, machine: parseMachine(fields(value)?.['machine']) };
 }
 
 /** Lenient read of `GET /v1/engines`: unknown fields are dropped, bad entries skipped. */
@@ -301,7 +307,7 @@ export function parseEngineCatalog(body: unknown): EngineCatalog {
     reachable: v !== null,
     active: parseActive(v?.['active']),
     totalMemoryGb: num(v?.['totalMemoryGb']),
-    recommendation: parseRecommendation(v?.['recommendation']),
+    recommendation: parseCatalogRecommendation(v?.['recommendation']),
     engines: list(v?.['engines'], parseEngine),
     models: list(v?.['models'], parseModel),
     downloads: list(v?.['downloads'], parseDownload),

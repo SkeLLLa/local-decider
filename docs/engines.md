@@ -169,6 +169,87 @@ page drives it with the "Automatic" option of its Engine select. `active.fallbac
 failed `engine` and `device`, and each ranking candidate has a stable `code` (`available`,
 `no-hardware`, `not-confirmed`, `unsupported-platform`, `no-memory`, `uncalibrated`).
 
+## 5b. Model families and the recommendation
+
+The gateway compares runtimes of **one model family** and never switches the family on its own.
+
+**Families.** A family is a verified upstream base checkpoint, so the same model stored for
+different runtimes counts as one. The gateway only groups models whose base it has checked at the
+source; every other model, including discovered ones, is its own family of one and is never ranked
+against anything else. Models served by `openai-compatible` and `lmstudio` have no family.
+
+| Family | Models | Source of the base checkpoint |
+|---|---|---|
+| `vllm-sr/d3-lite` | FastFlowLM `d3:lite`; llama.cpp `d3-lite-q8_0` | FastFlowLM `D3-Lite-NPU2/config.json` `base_model`; Hugging Face `ggml-org/vllm-d3-lite-GGUF` card `base_model` |
+| `vllm-sr/d3-nano` | FastFlowLM `d3:nano`; llama.cpp `d3-nano-q8_0` | `D3-Nano-NPU2/config.json`; `ggml-org/vllm-d3-nano-GGUF` |
+| `vllm-sr/d3-mini` | FastFlowLM `d3:mini`; llama.cpp `d3-mini-q4_k_m` and `d3-mini-q8_0` | `D3-Mini-NPU2/config.json`; `ggml-org/vllm-d3-mini-GGUF` |
+| `vllm-sr/d3-flash` | llama.cpp `d3-flash-q4_k_m` | `ggml-org/vllm-d3-flash-GGUF` |
+
+Each source is cited in a comment next to the model in its engine's `models.ts`; add a family
+member only after checking the same way. Each model also carries its weight format (`Q4_K_M`,
+`Q8_0`, or `FLM` for FastFlowLM), shown next to its results.
+
+**The rule.** Within the family you use (the family of the selected model, or the preferred one
+below), the runtimes are ranked like this:
+
+1. A runtime counts only with a **fresh, non-provisional** measurement. The number is the p50 at
+   1,024 tokens.
+2. The fastest wins. A **close call**, within 10%, goes to the dedicated runtime (the NPU), then to
+   the one with the steadier (lower) p95, then to the ladder order from
+   [5a](#5a-automatic-selection-and-fallback).
+3. A measurement counts as **unmeasured** when it is out of date or provisional (fewer than 3
+   runs). An unmeasured runtime keeps its ladder slot until it is measured again.
+4. A runtime whose latest benchmark **failed** goes behind the ranked ones, and stays a last-resort
+   fallback inside the family.
+5. With nothing measured, the ladder alone decides, as before.
+
+Where a runtime has several quantisations of the family (llama.cpp d3-mini with `Q4_K_M` and
+`Q8_0`), the faster measured one is used, else the catalogue's recommended one.
+
+**Staleness.** A record is **out of date** when the runtime version it was taken on changed (the
+FastFlowLM version, the llama.cpp build, or the strands-decider and torch versions) or the model
+files changed (a file size and modification stamp for FastFlowLM, the model's checksum for
+llama.cpp, the Hugging Face revision for strands-decider). Out-of-date numbers stay visible in the
+Paseo plugin with an "Out of date" label, but do not rank anything until you benchmark again.
+While a stamp has not been read yet, a record counts as unknown: shown, not ranked. Reading
+`GET /v1/engines` never waits for a stamp.
+
+**This machine only.** Every record carries a hardware fingerprint: platform, CPU model, memory
+(in GB) and the evidence for the NPU, NVIDIA, Vulkan and Apple capabilities. A record with another
+fingerprint is ignored completely, so copying `benchmarks.json` to another computer does nothing.
+A driver update that changes the evidence text, such as the NPU driver name, also orphans old
+records; benchmark again.
+
+**The preferred family.** In automatic mode the gateway keeps the family you prefer in the saved
+selection (`selection.family` in `config.yaml`), and re-ranks its runtimes whenever new results
+arrive:
+
+```yaml
+selection: { mode: auto, family: vllm-sr/d3-mini }
+```
+
+`POST /v1/engine/mode` takes `{"mode": "auto", "family": "vllm-sr/d3-mini"}`; without `family` it
+keeps the family of the running model. An unknown family is rejected with 400, and `family` with
+`manual` is a 400 too. An unknown family in `config.yaml` is ignored when ranking. Picking an
+engine by hand saves a manual selection, and the family follows from its model.
+`recommendation.machine` in `GET /v1/engines` carries the result: the family, the best runtime,
+the runner-up, why (`fastest-measured`, `tie-dedicated`, `tie-steadier`, `tie-ladder`,
+`only-measured`, `estimated`, `only-option`), and whether it is partial or out of date.
+
+**While a benchmark runs.** The gateway holds the engine for the job (see
+[benchmarks](benchmarks.md#benchmark-your-machine)):
+
+- Decisions **fail open** with the error `engine benchmark running`: hooks get no answer and
+  continue as if the gateway were down. The decision cache is cleared when the run starts.
+- Those fail-open decisions are excluded from the statistics.
+- `POST /v1/engine/mode`, `POST /v1/engine`, and config changes to the selection, engines or tool
+  paths **cancel** the job. Engine load, unload, lifecycle, paths and connection changes are
+  refused with 409 until it ends.
+- The run never touches the fallback bookkeeping and never writes `config.yaml`. When it ends or
+  is cancelled, the previous selection is put back: in automatic mode the gateway re-ranks with the
+  new results, so it may land on a faster runtime of the same family; in manual mode the same
+  engine, model and device return.
+
 ## 6. openai-compatible: prompt mapping and caveats
 
 The engine asks an OpenAI-style server to answer with exactly one option label, then reads the

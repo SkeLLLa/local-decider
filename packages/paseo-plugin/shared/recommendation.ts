@@ -3,6 +3,8 @@
  * (`active.selectionMode`, `active.fallback`): lenient parsers and the text the settings screen
  * shows. Older gateways send none of it, so every field here may be missing.
  */
+import { fields, runtimeOf, str } from './parse.ts';
+
 export interface Target {
   readonly engine: string;
   readonly model: string;
@@ -66,37 +68,23 @@ const CODES: readonly string[] = [
   'uncalibrated',
 ];
 
-function parseCode(value: unknown): CandidateCode | null {
+export function parseCode(value: unknown): CandidateCode | null {
   return typeof value === 'string' && CODES.includes(value) ? (value as CandidateCode) : null;
 }
 
-type Fields = Record<string, unknown>;
-
 const MAX_ITEMS = 50;
-const MAX_TEXT = 500;
-
-function fields(value: unknown): Fields | null {
-  return typeof value === 'object' && value !== null && !Array.isArray(value)
-    ? (value as Fields)
-    : null;
-}
-
-function text(value: unknown): string | null {
-  return typeof value === 'string' && value !== '' ? value.slice(0, MAX_TEXT) : null;
-}
 
 function parseTarget(value: unknown): Target | null {
-  const v = fields(value);
-  const engine = text(v?.['engine']);
-  const model = text(v?.['model']);
-  if (v === null || engine === null || model === null) {
+  const r = runtimeOf(value);
+  if (r === null) {
     return null;
   }
+  const { v, engine, model } = r;
   return {
     engine,
     model,
-    device: text(v['device']),
-    reason: text(v['reason']) ?? '',
+    device: str(v['device']),
+    reason: str(v['reason']) ?? '',
     explicit: v['explicit'] === true,
   };
 }
@@ -111,7 +99,7 @@ function parseCandidate(value: unknown): RankedCandidate | null {
     engine: target.engine,
     model: target.model,
     device: target.device,
-    backend: text(v['backend']),
+    backend: str(v['backend']),
     code: parseCode(v['code']),
     eligible: v['eligible'] === true,
     supported: v['supported'] !== false,
@@ -148,14 +136,14 @@ export function parseSelectionMode(value: unknown): SelectionMode | null {
 /** Lenient read of `active.fallback`; absent while no fallback is in effect. */
 export function parseFallback(value: unknown): Fallback | null {
   const v = fields(value);
-  const reason = text(v?.['reason']);
+  const reason = str(v?.['reason']);
   return v === null || reason === null
     ? null
     : {
         reason,
-        engine: text(v['engine']),
-        device: text(v['device']),
-        retryAt: text(v['retryAt']),
+        engine: str(v['engine']),
+        device: str(v['device']),
+        retryAt: str(v['retryAt']),
       };
 }
 
@@ -181,7 +169,7 @@ const DEVICE_BACKENDS: Record<string, string> = {
 };
 
 /** The backend an engine runs on, from the device it was started with. */
-function backendOf(engine: string | null, device: string | null): string | null {
+export function backendOf(engine: string | null, device: string | null): string | null {
   if (engine === 'fastflowlm') {
     return 'NPU';
   }
@@ -293,15 +281,7 @@ export const USE_AUTO_HINT =
 /** Hint on a specific engine while the gateway is in automatic mode. */
 export const LEAVES_AUTO_HINT = 'Picking an engine turns off automatic selection.';
 
-export type Suggestion =
-  | {
-      readonly kind: 'switch';
-      readonly hint: string;
-      readonly target: { engine: string; model: string; device: string | null };
-    }
-  | { readonly kind: 'install'; readonly hint: string; readonly command: string };
-
-function installCommand(t: Target, backend: string | null): string {
+export function installCommand(t: Target, backend: string | null): string {
   if (t.engine === 'fastflowlm') {
     return [
       `Install FastFlowLM with your package manager or from ${FLM_INSTALL_URL}, then:`,
@@ -319,52 +299,7 @@ function installCommand(t: Target, backend: string | null): string {
 /** FastFlowLM is installed by the user; local-decider never downloads it. */
 const FLM_INSTALL_URL = 'https://github.com/FastFlowLM/FastFlowLM';
 
-const LADDER = ['NPU', 'CUDA', 'Vulkan', 'MLX', 'MPS', 'CPU'];
-
-function fasterThan(better: string | null, worse: string | null): boolean {
-  const a = better === null ? -1 : LADDER.indexOf(better);
-  const b = worse === null ? -1 : LADDER.indexOf(worse);
-  return a >= 0 && b >= 0 && a < b;
-}
-
-/**
- * Manual mode only: the engine automatic selection would pick, when it is not the one running.
- * Installed: a switch. Not installed: how to install it. Otherwise nothing to suggest.
- */
-export function suggestionView(
-  active: ActiveInfo | null,
-  rec: Recommendation | null,
-  names: Names,
-): Suggestion | null {
-  const auto = rec?.automatic;
-  if (active?.selectionMode !== 'manual' || auto == null || active.engine === null) {
-    return null;
-  }
-  const candidate = rec?.candidates.find((c) => sameChoice(c, auto));
-  const backend = candidate?.backend ?? backendOf(auto.engine, auto.device);
-  const running = runningBackend(active);
-  if (auto.engine === active.engine && (backend === null || backend === running)) {
-    return null;
-  }
-  const name = shortName(auto.engine, backend, names);
-  if (candidate?.ready !== true) {
-    return {
-      kind: 'install',
-      hint: `${name} is faster here but not installed.`,
-      command: installCommand(auto, backend),
-    };
-  }
-  const than = fasterThan(backend, running)
-    ? ` and faster than ${shortName(active.engine, running, names)}`
-    : '';
-  return {
-    kind: 'switch',
-    hint: `${name} is installed${than}.`,
-    target: { engine: auto.engine, model: auto.model, device: auto.device },
-  };
-}
-
-function minutes(seconds: number): string {
+export function minutes(seconds: number): string {
   if (seconds < 60) {
     return 'under a minute';
   }
@@ -391,15 +326,6 @@ export function fallbackLine(
   }
   const seconds = Math.max(0, Math.round((at - now) / 1000));
   return `${who} failed; retrying in ${minutes(seconds)}.`;
-}
-
-function sameChoice(a: Choice, b: Choice): boolean {
-  return a.engine === b.engine && a.device === b.device;
-}
-
-interface Choice {
-  readonly engine: string;
-  readonly device: string | null;
 }
 
 export interface EngineRow {
