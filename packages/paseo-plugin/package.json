@@ -1,6 +1,6 @@
 {
   "name": "@ziptie-soft/paseo-plugin-local-decider",
-  "version": "1.0.3",
+  "version": "1.1.0",
   "description": "Paseo plugin for local-decider: auto-allows routine permission prompts, routes new agents to models and flags turns that need you, using a local decision model.",
   "keywords": [
     "ai-agents",

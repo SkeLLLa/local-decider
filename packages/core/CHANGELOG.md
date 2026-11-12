@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.1.0](https://github.com/ziptie-soft/local-decider/compare/core-v1.0.2...core-v1.1.0) (2026-11-12)
+
+
+### Features
+
+* sqlite store ([#15](https://github.com/ziptie-soft/local-decider/issues/15)) ([fd1499e](https://github.com/ziptie-soft/local-decider/commit/fd1499e700e6f0bc807a3838c9fd2d599f349e5c))
+
 ## [1.0.2](https://github.com/ziptie-soft/local-decider/compare/core-v1.0.1...core-v1.0.2) (2026-11-11)
 
 
