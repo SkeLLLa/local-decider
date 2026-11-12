@@ -66,7 +66,7 @@ const CODES: readonly string[] = [
   'uncalibrated',
 ];
 
-function parseCode(value: unknown): CandidateCode | null {
+export function parseCode(value: unknown): CandidateCode | null {
   return typeof value === 'string' && CODES.includes(value) ? (value as CandidateCode) : null;
 }
 
