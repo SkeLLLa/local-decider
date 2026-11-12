@@ -9,6 +9,7 @@ export const MODELS: readonly ModelDescriptor<'fastflowlm'>[] = [
     memoryGb: 2,
     latencyHint: '~0.06 s (NPU, FLM figure)',
     source: 'https://huggingface.co/vllm-sr',
+    quant: 'FLM',
   },
   {
     id: 'd3:lite',
@@ -18,6 +19,9 @@ export const MODELS: readonly ModelDescriptor<'fastflowlm'>[] = [
     memoryGb: 3,
     latencyHint: '~0.23 s (NPU, measured here)',
     source: 'https://fastflowlm.com/docs/models/d3/',
+    // Verified in ~/.config/flm/models/D3-Lite-NPU2/config.json (base_model), 2026-11-12.
+    baseModel: 'vllm-sr/d3-lite',
+    quant: 'FLM',
   },
   {
     id: 'd3:nano',
@@ -28,6 +32,9 @@ export const MODELS: readonly ModelDescriptor<'fastflowlm'>[] = [
     latencyHint: '~0.33 s (NPU, measured here)',
     quality: { decisionIndex: 34.3 },
     source: 'https://fastflowlm.com/docs/models/d3/',
+    // Verified in ~/.config/flm/models/D3-Nano-NPU2/config.json (base_model), 2026-11-12.
+    baseModel: 'vllm-sr/d3-nano',
+    quant: 'FLM',
   },
   {
     id: 'd3:mini',
@@ -39,6 +46,9 @@ export const MODELS: readonly ModelDescriptor<'fastflowlm'>[] = [
     recommended: true,
     quality: { decisionIndex: 50 },
     source: 'https://fastflowlm.com/docs/models/d3/',
+    // Verified in ~/.config/flm/models/D3-Mini-NPU2/config.json (base_model), 2026-11-12.
+    baseModel: 'vllm-sr/d3-mini',
+    quant: 'FLM',
   },
   {
     id: 'd3:flash',
@@ -48,6 +58,7 @@ export const MODELS: readonly ModelDescriptor<'fastflowlm'>[] = [
     memoryGb: 14,
     latencyHint: '~0.85 s (NPU, FLM figure)',
     source: 'https://huggingface.co/vllm-sr',
+    quant: 'FLM',
   },
   {
     id: 'd3:turbo',
@@ -57,6 +68,7 @@ export const MODELS: readonly ModelDescriptor<'fastflowlm'>[] = [
     memoryGb: 28,
     latencyHint: '~3 s (NPU, FLM figure)',
     source: 'https://fastflowlm.com/docs/models/d3/',
+    quant: 'FLM',
   },
   {
     id: 'd3:ultra',
@@ -66,5 +78,6 @@ export const MODELS: readonly ModelDescriptor<'fastflowlm'>[] = [
     memoryGb: 28,
     latencyHint: '~3 s (NPU, FLM figure)',
     source: 'https://fastflowlm.com/docs/models/d3/',
+    quant: 'FLM',
   },
 ];
