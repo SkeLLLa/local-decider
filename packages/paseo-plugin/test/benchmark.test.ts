@@ -5,6 +5,7 @@ import {
   BENCHMARK_POLL_MS,
   benchmarkPollInterval,
   benchmarkSchema,
+  type BenchmarkView,
   parseBenchmark,
 } from '../shared/benchmark.ts';
 
@@ -131,9 +132,10 @@ describe('benchmark parsing', () => {
   });
 });
 
+const state = (s: string): BenchmarkView | null => parseBenchmark({ state: s });
+
 describe('benchmark polling', () => {
   it('polls every second while running or cancelling, else stops', () => {
-    const state = (s: string) => parseBenchmark({ state: s });
     assert.equal(BENCHMARK_POLL_MS, 1000);
     assert.equal(benchmarkPollInterval(state('running')), 1000);
     assert.equal(benchmarkPollInterval(state('cancelling')), 1000);

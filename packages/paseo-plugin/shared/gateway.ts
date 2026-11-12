@@ -61,7 +61,20 @@ export interface Gateway {
    */
   selectEngine(selection: EngineSelection, options?: CallOptions): Promise<PostResult>;
   /** `POST /v1/engine/mode`: automatic selection on, or manual keeping the running engine. */
-  setSelectionMode(mode: 'auto' | 'manual', options?: CallOptions): Promise<PostResult>;
+  setSelectionMode(
+    mode: 'auto' | 'manual',
+    family?: string,
+    options?: CallOptions,
+  ): Promise<PostResult>;
+  /** `GET /v1/benchmark`: the benchmark job's view; null when the gateway does not answer. */
+  benchmark(options?: CallOptions): Promise<unknown>;
+  /** `POST /v1/benchmark`: start a job (202 with its view); `client: 'paseo'` is added. */
+  benchmarkStart(
+    body: Readonly<Record<string, unknown>>,
+    options?: CallOptions,
+  ): Promise<PostResult>;
+  /** `POST /v1/benchmark/cancel`: stop the running job; 409 when none runs. */
+  benchmarkCancel(options?: CallOptions): Promise<PostResult>;
   /** `POST /v1/models/download`: start downloading a model; 202 with `{download}`. */
   downloadModel(
     target: { engine: string; model: string },
@@ -135,6 +148,8 @@ export interface EngineSelection {
 export type PostResult = { ok: true; body: unknown } | { ok: false; error: string };
 
 const DEFAULT_TIMEOUT_MS = 2000;
+const BENCHMARK_READ_MS = 3000;
+const BENCHMARK_POST_MS = 10_000;
 
 function credentials(
   baseUrl: string,
@@ -300,7 +315,18 @@ export function createGateway(options: GatewayOptions = {}): Gateway | null {
     engines: async (call) => request('GET', '/v1/engines', undefined, call),
     stats: async (call) => request('GET', '/v1/stats', undefined, call),
     selectEngine: async (selection, call) => post('/v1/engine', selectionBody(selection), call),
-    setSelectionMode: async (mode, call) => post('/v1/engine/mode', { mode }, call),
+    setSelectionMode: async (mode, family, call) =>
+      post('/v1/engine/mode', family === undefined ? { mode } : { mode, family }, call),
+    benchmark: async (call) =>
+      request('GET', '/v1/benchmark', undefined, { timeoutMs: BENCHMARK_READ_MS, ...call }),
+    benchmarkStart: async (body, call) =>
+      post(
+        '/v1/benchmark',
+        { ...body, client: 'paseo' },
+        { timeoutMs: BENCHMARK_POST_MS, ...call },
+      ),
+    benchmarkCancel: async (call) =>
+      post('/v1/benchmark/cancel', {}, { timeoutMs: BENCHMARK_POST_MS, ...call }),
     downloadModel: async (target, call) => post('/v1/models/download', { ...target }, call),
     validateEngine: async (engine, call) => post('/v1/engines/validate', { engine }, call),
     saveEngineConnection: async (body, call) => post('/v1/config/engine', { ...body }, call),

@@ -105,7 +105,17 @@ export function fakeGateway(
     engines: async () => ({}),
     stats: async () => ({}),
     selectEngine: record('selectEngine'),
-    setSelectionMode: async (mode) => record('setSelectionMode')({ mode }),
+    setSelectionMode: async (mode, family) =>
+      record('setSelectionMode')(family === undefined ? { mode } : { mode, family }),
+    benchmark: async () => ({ state: 'idle' }),
+    benchmarkStart: async (body) => {
+      posts.push({ name: 'benchmarkStart', input: body });
+      return { ok: true, body: { state: 'running', total: 2 } };
+    },
+    benchmarkCancel: async () => {
+      posts.push({ name: 'benchmarkCancel', input: {} });
+      return { ok: true, body: { state: 'cancelling' } };
+    },
     downloadModel: record('downloadModel'),
     validateEngine: record('validateEngine'),
     saveEngineConnection: record('saveEngineConnection'),
