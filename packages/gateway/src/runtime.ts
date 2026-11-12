@@ -117,6 +117,7 @@ export async function startGateway(options: StartOptions): Promise<Gateway> {
     async close() {
       unwatch();
       stopPruning();
+      await cancelBenchmark(engineControl);
       await engineControl?.idle();
       await decider.engine.stop();
       stats.close();
@@ -125,6 +126,24 @@ export async function startGateway(options: StartOptions): Promise<Gateway> {
       await new Promise<void>((resolve) => server.close(() => resolve()));
     },
   };
+}
+
+const BENCHMARK_STOP_CAP_MS = 5000;
+
+/** Ends a running benchmark before shutdown, waiting a little for it to let go of the engine. */
+async function cancelBenchmark(engineControl: EngineControl | undefined): Promise<void> {
+  const runner = engineControl?.benchmark;
+  if (runner?.progress() == null) {
+    return;
+  }
+  runner.cancel('shutdown');
+  let timer: NodeJS.Timeout | undefined;
+  const capped = new Promise<void>((resolve) => {
+    timer = setTimeout(resolve, BENCHMARK_STOP_CAP_MS);
+    timer.unref();
+  });
+  await Promise.race([runner.settled(), capped]);
+  clearTimeout(timer);
 }
 
 function pruneLogs(log: LogStore, retainDays: number, report: (line: string) => void): void {

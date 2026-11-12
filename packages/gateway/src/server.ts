@@ -14,6 +14,7 @@ import { timingSafeEqual } from 'node:crypto';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import { totalmem } from 'node:os';
 
+import { BenchmarkError, parseBenchmarkRequest } from './benchmark-job.ts';
 import type { GatewayConfig } from './config.ts';
 import { UnknownPolicyError, type Decider } from './decider.ts';
 import { DownloadError } from './downloads.ts';
@@ -363,6 +364,7 @@ function health(decider: Decider, engineControl?: EngineControl): Record<string,
     p50Ms: decider.latency(50),
     p95Ms: decider.latency(95),
     queueDepth: decider.queueDepth,
+    benchmark: engineControl?.benchmark.progress() ?? null,
   };
 }
 
@@ -386,6 +388,12 @@ const CONTROL_ROUTES: Readonly<Record<string, ControlHandler>> = {
     const selection = parseSelectionMode(await readJson(req));
     return [200, { mode: await c.setSelectionMode(selection.mode, selection.family) }];
   },
+  'GET /v1/benchmark': async (_req, c) => [200, await c.benchmark.view()],
+  'POST /v1/benchmark': async (req, c) => [
+    202,
+    await c.benchmark.start(parseBenchmarkRequest(await readJson(req))),
+  ],
+  'POST /v1/benchmark/cancel': async (_req, c) => [202, c.benchmark.cancel('user')],
   'POST /v1/engine/load': async (_req, c, d) => {
     await c.load();
     return [202, { state: d.engine.health().state }];
@@ -635,6 +643,7 @@ function sendError(res: ServerResponse, error: unknown, report?: (line: string) 
   if (
     error instanceof HttpError ||
     error instanceof EngineSwitchError ||
+    error instanceof BenchmarkError ||
     error instanceof DownloadError
   ) {
     send(res, error.status, { error: error.message });
