@@ -1,10 +1,13 @@
-/** Daemon-side RPC handlers: status, stats, feedback and `/decide`. Engines: engines.ts. */
-import { ROW_KIND, ROW_VERSION } from '../shared/constants.ts';
+/**
+ * Daemon-side RPC handlers: status, stats, feedback and `/decide`. Engines: engines.ts.
+ * Permission labels: labels.ts.
+ */
 import type { GatewayHealth } from '../shared/decision.ts';
 import { manualInput } from '../shared/manual.ts';
 import { toRowData, type DecisionRow } from '../shared/row.ts';
 import { parsePolicyStats, type PolicyStats } from '../shared/stats.ts';
 import type { HookDeps, PaseoLike } from './deps.ts';
+import { appendRow } from './timeline.ts';
 
 const STATUS_TIMEOUT_MS = 1500;
 const STATS_MAX_CHARS = 20_000;
@@ -94,7 +97,7 @@ export async function recordFeedback(
   const { row, outcome } = input;
   if (row.source === 'permission') {
     // Accept/Deny on the prompt is the outcome; a second, possibly contradicting one would win.
-    throw new Error('Permission decisions take your Accept or Deny as feedback.');
+    throw new Error('Permission rows take your Accept or Decline; label a decline with the chips.');
   }
   if (!row.options.includes(outcome)) {
     throw new Error(`"${outcome}" is not an option of this decision.`);
@@ -107,13 +110,7 @@ export async function recordFeedback(
   }
   const next: DecisionRow = { ...row, feedback: outcome };
   if (row.rowId !== '') {
-    await paseo.agents.ref(input.agentId).timeline.append({
-      type: 'plugin',
-      id: row.rowId,
-      kind: ROW_KIND,
-      version: ROW_VERSION,
-      data: { ...next },
-    });
+    await appendRow(paseo.agents.ref(input.agentId), next);
   }
   return next;
 }
@@ -150,13 +147,7 @@ export async function manualDecide(
     note: 'via /decide',
   });
   if (input.agentId !== null) {
-    await paseo.agents.ref(input.agentId).timeline.append({
-      type: 'plugin',
-      id: row.rowId,
-      kind: ROW_KIND,
-      version: ROW_VERSION,
-      data: { ...row },
-    });
+    await appendRow(paseo.agents.ref(input.agentId), row);
   }
   return row;
 }

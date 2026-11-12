@@ -149,12 +149,15 @@ request before. ADR: [0006](adr/0006-outcome-precedent.md).
 - A policy names an input key as its subject (`precedent.from`). The adapter normalises it (for
   example `Bash: git status`). The gateway redacts it and hashes it with the policy id and
   project. The hash is logged; the subject is not, and it is never sent to the model.
-- Only `ask` decisions collect evidence, and only their first `allow` or `deny` outcome counts.
+- Only `ask` decisions collect allow evidence; their first verified outcome counts. `deny` and
+  `unsafe` veto; `decline` and `interrupted` are neutral and can be corrected once to a veto.
+  An `unsafe` label on a keyed auto-allowed request also vetoes its subject. A veto blocks the
+  precedent rule only, for `maxAgeDays`; rules with a higher threshold can still allow.
   The outcome's source must be in `precedent.sources`. Decision and outcome must be within
   `maxAgeDays` (1–90, default 14). `minAllows` defaults to 3, `sources` to `[user]`.
-- A `precedent: allow` rule matches when the subject has at least `minAllows` allows, no deny,
+- A `precedent: allow` rule matches when the subject has at least `minAllows` allows, no veto,
   and the current model still selects `allow` at the rule's threshold (0.6 in `permission`).
-  Any deny vetoes it. Precedent never bypasses the model.
+  Any veto blocks it. Precedent never bypasses the model.
 - It is exact-match and per project: it does not generalise to similar commands.
 - The gateway rebuilds it from the last 90 days of the decision log at start and on policy reload, and
   keeps at most 10,000 keys in memory.

@@ -23,6 +23,7 @@ import {
   setPath,
   validateEngine,
 } from './server/engines.ts';
+import { LabelRegistry, recordPermissionLabel } from './server/labels.ts';
 import { createOpenHandler } from './server/open.ts';
 import { createPermissionHandlers } from './server/permission.ts';
 import { preloadOnStart } from './server/preload.ts';
@@ -38,6 +39,7 @@ import {
   engineLoadRpc,
   enginesRpc,
   feedbackRpc,
+  permissionLabelRpc,
   lifecycleRpc,
   policyModeRpc,
   policyThresholdsRpc,
@@ -144,7 +146,8 @@ export default function contribute(server: PluginServerContext): () => void {
     log(`preload skipped: ${String(error)}`);
   });
   const onTurn = createTurnHandler(deps, { background });
-  const permission = createPermissionHandlers(deps, background);
+  const labels = new LabelRegistry();
+  const permission = createPermissionHandlers(deps, background, { labels });
   const usage = new UsageLinks();
   const onCreate = createRoutingHandler(deps, undefined, usage);
   const onOpen = createOpenHandler(deps, token);
@@ -164,6 +167,9 @@ export default function contribute(server: PluginServerContext): () => void {
   server.handle(statsRpc, async () => statsText(deps));
   server.handle(decideRpc, async (input, { paseo }) => manualDecide(deps, paseo, input));
   server.handle(feedbackRpc, async (input, { paseo }) => recordFeedback(deps, paseo, input));
+  server.handle(permissionLabelRpc, async (input, { paseo }) =>
+    recordPermissionLabel(deps, paseo, labels, input),
+  );
   server.handle(enginesRpc, async () => listEngines(deps));
   server.handle(selectEngineRpc, async (input) => selectEngine(deps, input));
   server.handle(selectionModeRpc, async (input) => setSelectionMode(deps, input));

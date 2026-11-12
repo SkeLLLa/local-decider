@@ -223,9 +223,9 @@ In Paseo, a decision row appears in the chat after each agent turn. If nothing h
 
 1. **Shadow.** Leave every policy in `shadow` and work normally. Every decision is logged with
    what it *would* have done.
-2. **Label.** In Paseo, answer permission prompts as usual and use the "Right answer?" buttons
-   on turn rows. Those are the ground truth for stats. (The Claude Code and Codex hooks cannot
-   report outcomes.)
+2. **Label.** In Paseo, answer permission prompts as usual (after you decline, tell the row
+   whether it was a safety issue) and use the "Right answer?" buttons on turn rows. Those are
+   the ground truth for stats. (The Claude Code and Codex hooks cannot report outcomes.)
 3. **Read stats.** `local-decider stats`, or the statistics screen in Paseo. Look at accuracy in
    the high-confidence buckets, the calibration hints, and the would-allow prompt time.
 4. **Act.** When the high-confidence buckets are accurate, switch one policy:

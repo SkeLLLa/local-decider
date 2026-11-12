@@ -22,6 +22,7 @@ import {
 import { basename, dirname, join } from 'node:path';
 
 import type { LogStore } from './log-store.ts';
+import { ALLOW_VETO_REPLAY_MS } from './outcome-labels.ts';
 import type { Paths } from './paths.ts';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -109,24 +110,41 @@ export class SqliteLog implements LogStore {
     return this.#readRows(from);
   }
 
-  /** Small startup query for precedent: only the first verified outcome can teach a key. */
+  /**
+   * Startup query for precedent (ADR-0006 addendum): escalated decisions with all their verified
+   * outcomes (so a neutral outcome's correction replays); recent keyed auto-allows, with or
+   * without outcomes (so a first veto after a restart lands); and older keyed auto-allows that
+   * already have a verified veto. Each decision precedes its outcomes in `seq` order.
+   */
   readVerifiedPrecedent(maxAgeDays: number, now = Date.now()): LogRecord[] {
     const from = utcDateStart(now - maxAgeDays * DAY_MS);
+    const recent = Math.max(from, now - ALLOW_VETO_REPLAY_MS);
     const rows = this.#statement(
       `SELECT d.*, o.seq AS outcome_seq, o.ts AS outcome_ts, o.outcome, o.source, o.verified
        FROM decision d
-       LEFT JOIN outcome o ON o.seq = (
-         SELECT MIN(first.seq) FROM outcome first
-         WHERE first.decision_id = d.id AND first.verified = 1 AND first.source <> 'unverified'
-       )
+       LEFT JOIN outcome o
+         ON o.decision_id = d.id AND o.verified = 1 AND o.source <> 'unverified'
        WHERE d.action = 'ask' AND d.precedent_key IS NOT NULL AND d.ts >= ?
-       ORDER BY d.ts, d.id`,
-    ).all(from);
-    return rows.flatMap((row) =>
-      row['outcome_seq'] === null || row['outcome_seq'] === undefined
-        ? [decisionRecord(row)]
-        : [decisionRecord(row), outcomeRecord(row)],
-    );
+       UNION ALL
+       SELECT d.*, o.seq AS outcome_seq, o.ts AS outcome_ts, o.outcome, o.source, o.verified
+       FROM decision d
+       LEFT JOIN outcome o
+         ON o.decision_id = d.id AND o.verified = 1 AND o.source <> 'unverified'
+       WHERE d.action = 'allow' AND d.precedent_key IS NOT NULL AND d.ts >= ?
+       UNION ALL
+       SELECT d.*, o.seq AS outcome_seq, o.ts AS outcome_ts, o.outcome, o.source, o.verified
+       FROM decision d
+       JOIN outcome o
+         ON o.decision_id = d.id AND o.verified = 1 AND o.source <> 'unverified'
+       WHERE d.action = 'allow' AND d.precedent_key IS NOT NULL AND d.ts >= ? AND d.ts < ?
+         AND d.id IN (
+           SELECT v.decision_id FROM outcome v
+           WHERE v.verified = 1 AND v.source <> 'unverified'
+             AND v.outcome IN ('deny', 'unsafe') AND v.ts >= ?
+         )
+       ORDER BY ts, id, outcome_seq`,
+    ).all(from, recent, from, recent, from);
+    return precedentRecords(rows);
   }
 
   prune(retainDays: number, now = Date.now()): number {
@@ -641,6 +659,23 @@ function outcomeRecord(row: Row): OutcomeRecord {
     source: text(row['source']) as OutcomeRecord['source'],
     verified: Number(row['verified']) === 1,
   };
+}
+
+/** One decision record per decision id, then its outcome rows (rows are grouped by id). */
+function precedentRecords(rows: readonly Row[]): LogRecord[] {
+  const records: LogRecord[] = [];
+  let last: string | undefined;
+  for (const row of rows) {
+    const id = text(row['id']);
+    if (id !== last) {
+      records.push(decisionRecord(row));
+      last = id;
+    }
+    if (row['outcome_seq'] !== null && row['outcome_seq'] !== undefined) {
+      records.push(outcomeRecord(row));
+    }
+  }
+  return records;
 }
 
 function usageRecord(row: Row): UsageRecord {

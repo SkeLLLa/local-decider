@@ -6,6 +6,8 @@ import type {
   ShadowRecord,
 } from '@ziptie-soft/local-decider-core';
 
+import { correctedOutcome, isVerifiedOutcome, outcomeClass } from './outcome-labels.ts';
+
 const DAY_MS = 24 * 60 * 60 * 1000;
 const MAX_KEYS = 10_000;
 
@@ -16,6 +18,9 @@ interface DecisionRef {
   readonly key: string;
   readonly policyId: string;
   readonly ts: string;
+  readonly action: 'ask' | 'allow';
+  /** The effective verified outcome so far: absent, or neutral (final ones leave the map). */
+  readonly label?: string;
 }
 
 interface Evidence {
@@ -27,12 +32,15 @@ interface TallyEntry {
   readonly evidence: readonly Evidence[];
 }
 
-/** Exact-match precedent built from recent escalated decisions and their first outcomes. */
+/**
+ * Exact-match precedent from recent escalated decisions, their effective verified outcomes
+ * (ADR-0006), and vetoes on keyed auto-allowed decisions.
+ */
 export class PrecedentStore {
   readonly #settingsFor: SettingsFor;
   readonly #now: () => number;
   readonly #decisions = new Map<string, DecisionRef>();
-  readonly #seenOutcomes = new Map<string, true>();
+  readonly #allowed = new Map<string, DecisionRef>();
   readonly #tallies = new Map<string, TallyEntry>();
 
   constructor(settingsFor: SettingsFor, now: () => number = Date.now) {
@@ -43,7 +51,7 @@ export class PrecedentStore {
   /** Rebuild recent tallies from log records; old decisions are discarded by their policy age. */
   rebuild(records: readonly LogRecord[]): void {
     this.#decisions.clear();
-    this.#seenOutcomes.clear();
+    this.#allowed.clear();
     this.#tallies.clear();
     for (const record of records) {
       if (record.kind === 'decision') {
@@ -54,10 +62,10 @@ export class PrecedentStore {
     }
   }
 
-  /** Remember an escalated decision until its first outcome arrives. */
+  /** Remember escalated decisions, and keyed auto-allowed ones for vetoes, until final. */
   noteDecision(record: ShadowRecord): void {
     const key = record.precedentKey;
-    if (key === undefined || record.action !== 'ask') {
+    if (key === undefined || (record.action !== 'ask' && record.action !== 'allow')) {
       return;
     }
     const policyId = record.variant ?? record.policy;
@@ -65,35 +73,81 @@ export class PrecedentStore {
     if (settings === undefined || !isRecent(record.ts, settings.maxAgeDays, this.#now())) {
       return;
     }
-    setLru(this.#decisions, record.decisionId, { key, policyId, ts: record.ts });
+    setLru(this.#pendingMap(record.action), record.decisionId, {
+      key,
+      policyId,
+      ts: record.ts,
+      action: record.action,
+    });
   }
 
-  /** Count the first eligible allow/deny outcome for a remembered escalated decision. */
+  /**
+   * Count a verified outcome for a remembered decision: the first one is final, except that a
+   * neutral one may be corrected once to a veto (ADR-0006 addendum).
+   */
   noteOutcome(outcome: OutcomeRecord): void {
-    if (outcome.verified !== true || outcome.source === 'unverified') {
+    if (!isVerifiedOutcome(outcome)) {
       return;
     }
-    if (this.#seenOutcomes.has(outcome.decisionId)) {
+    const decision =
+      this.#decisions.get(outcome.decisionId) ?? this.#allowed.get(outcome.decisionId);
+    if (decision === undefined || !this.#mayCount(decision, outcome)) {
       return;
     }
-    setLru(this.#seenOutcomes, outcome.decisionId, true);
-    const decision = this.#decisions.get(outcome.decisionId);
-    this.#decisions.delete(outcome.decisionId);
-    if (decision === undefined || !isAnswer(outcome.outcome)) {
+    const next = this.#nextLabel(decision, outcome);
+    if (next === undefined) {
       return;
     }
+    const answer = evidenceFor(decision, next);
+    const settings = answer === undefined ? undefined : this.#eligible(decision, outcome);
+    if (answer === undefined || settings === undefined) {
+      return;
+    }
+    const expiresAt =
+      Math.min(Date.parse(decision.ts), Date.parse(outcome.ts)) + settings.maxAgeDays * DAY_MS;
+    this.#add(decision.key, answer, expiresAt);
+  }
+
+  /** A keyed auto-allow only reacts to an eligible veto; anything else leaves it untouched. */
+  #mayCount(decision: DecisionRef, outcome: OutcomeRecord): boolean {
+    return (
+      decision.action === 'ask' ||
+      (outcomeClass(outcome.outcome) === 'veto' && this.#eligible(decision, outcome) !== undefined)
+    );
+  }
+
+  #pendingMap(action: 'ask' | 'allow'): Map<string, DecisionRef> {
+    return action === 'ask' ? this.#decisions : this.#allowed;
+  }
+
+  /** The new effective label, or undefined when the outcome is ignored. Updates pending state. */
+  #nextLabel(decision: DecisionRef, outcome: OutcomeRecord): string | undefined {
+    const next = correctedOutcome(decision.label, outcome.outcome);
+    if (next === undefined) {
+      return undefined;
+    }
+    const map = this.#pendingMap(decision.action);
+    if (outcomeClass(next) === 'neutral') {
+      // Still correctable: the label stays with its decision, so both are evicted together.
+      setLru(map, outcome.decisionId, { ...decision, label: next });
+    } else {
+      map.delete(outcome.decisionId);
+    }
+    return next;
+  }
+
+  #eligible(decision: DecisionRef, outcome: OutcomeRecord): PrecedentSettings | undefined {
     const settings = this.#settingsFor(decision.policyId);
+    const now = this.#now();
     if (
       settings === undefined ||
-      !settings.sources.includes(outcome.source) ||
-      !isRecent(decision.ts, settings.maxAgeDays, this.#now()) ||
-      !isRecent(outcome.ts, settings.maxAgeDays, this.#now())
+      !(settings.sources as readonly string[]).includes(outcome.source) ||
+      !isRecent(decision.ts, settings.maxAgeDays, now) ||
+      !isRecent(outcome.ts, settings.maxAgeDays, now)
     ) {
-      return;
+      return undefined;
     }
-    const maxAgeMs = settings.maxAgeDays * DAY_MS;
-    const expiresAt = Math.min(Date.parse(decision.ts), Date.parse(outcome.ts)) + maxAgeMs;
-    this.#add(decision.key, outcome.outcome, expiresAt);
+    return settings;
   }
 
   /** Current allow/deny counts for a key, evicting expired evidence and refreshing LRU order. */
@@ -136,8 +190,12 @@ function setLru<V>(map: Map<string, V>, key: string, value: V): void {
   }
 }
 
-function isAnswer(value: string): value is 'allow' | 'deny' {
-  return value === 'allow' || value === 'deny';
+function evidenceFor(decision: DecisionRef, outcome: string): 'allow' | 'deny' | undefined {
+  const cls = outcomeClass(outcome);
+  if (cls === 'veto') {
+    return 'deny';
+  }
+  return cls === 'allow' && decision.action === 'ask' ? 'allow' : undefined;
 }
 
 function isRecent(timestamp: string, maxAgeDays: number, now: number): boolean {

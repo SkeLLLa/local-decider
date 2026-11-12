@@ -22,7 +22,7 @@ sequenceDiagram
     P->>G: POST /v1/outcomes, source supervised
     G->>G: tally for policy, project and exact subject
   end
-  Note over G: after 3 allows and no deny, p 0.6 is enough for this exact request
+  Note over G: after 3 allows and no veto, p 0.6 is enough for this exact request
 ```
 
 ## Setup
@@ -100,11 +100,13 @@ change these rules.
 - The plugin reports any answer to a child agent's request (usually the parent's) as a
   `supervised` outcome, and answers on top-level agents as `user`. The shipped `permission`
   policy accepts both.
+- A parent's deny is reported as a neutral `decline` (source `supervised`).
 - Only the first answer to an escalated (`ask`) request counts, within 14 days.
 - The key is the policy, the project and the exact redacted request, such as
   `Bash: git status`. Only its hash is stored.
-- After three allows and no deny, the precedent rule allows the same request when the model
-  still picks allow with p(allow) ≥ 0.6. Any deny vetoes it. It never covers similar commands or
+- After three allows and no veto, the precedent rule allows the same request when the model
+  still picks allow with p(allow) ≥ 0.6. Any veto (`deny` or an `unsafe` label)
+  blocks it; a parent's decline is neutral. It never covers similar commands or
   other projects.
 
 Supervised labels are only as good as the parent's judgement. Keep its scope rules the same

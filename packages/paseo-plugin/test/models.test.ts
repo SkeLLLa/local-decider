@@ -98,7 +98,7 @@ describe('feedback RPC', () => {
     const row = toRowData(response(), { source: 'permission', key: 'r1', enforced: false });
     await assert.rejects(
       recordFeedback(deps(settings(), gw), paseo, { agentId: 'a1', row, outcome: 'done' }),
-      /Accept or Deny/,
+      /Accept or Decline/,
     );
     assert.deepEqual(gw.outcomes, []);
     assert.equal(paseo.agent.appended.length, 0);

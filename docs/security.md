@@ -60,6 +60,10 @@ without a matching token are still logged as `source: unverified` and `verified:
 count in agreement and reliability statistics; only verified outcomes can update precedent or
 calibration hints.
 
+Labels can only add vetoes; no outcome or label path creates allow evidence on an auto-allowed
+decision. The Paseo daemon labels only rows it drew itself: the label RPC names a row, and the
+decision, agent and answer time come from daemon state, within 24 hours.
+
 The token does not stop an agent running as the same user without a sandbox from reading the file
 and forging a verified report. Claude Code and Codex sandboxes block reads outside the workspace,
 including this config path.

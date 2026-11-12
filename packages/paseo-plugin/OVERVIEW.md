@@ -96,10 +96,16 @@ Claude Code and Codex hooks.
 ## Feedback
 
 Turn and `/decide` rows can ask "Right answer?" with one button per option. Your answer goes to
-the gateway as ground truth for agreement, Brier score and calibration. Permission rows have no
-buttons: your Accept or Deny on the prompt is the outcome, and the row then reads "You allowed"
-or "You denied". A row says "auto-allowed" when the plugin allowed the request, otherwise "asked
-you", followed by what the model leaned towards.
+the gateway as ground truth for agreement, Brier score and calibration. Permission rows take your
+Accept or Decline on the prompt as the outcome, and the row then reads "You allowed", "You
+declined" or "You stopped the agent" (a Stop without Paseo's `interrupt` flag shows as a
+decline). A decline is neutral; the row then offers *Not a safety issue*, *Unsafe* and *Skip*,
+and only *Unsafe* is reported (as a veto). An auto-allowed row with a precedent key offers
+*Mark unsafe*, which stops your past allows from lowering that subject's threshold; a
+high-confidence rule may still allow it. Chips work for 24 hours and one tap, are unavailable
+for rows drawn before a daemon restart, and follow "Ask for feedback". A row says "auto-allowed"
+when the plugin allowed the request, otherwise "asked you", followed by what the model leaned
+towards.
 
 ## Commands
 

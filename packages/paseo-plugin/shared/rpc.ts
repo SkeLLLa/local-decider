@@ -13,7 +13,7 @@ import {
   policyVariantsSchema,
   routingSettingsSchema,
 } from './policies.ts';
-import { decisionRowSchema } from './row.ts';
+import { decisionRowSchema, LABEL_CHOICES } from './row.ts';
 import { policyStatsSchema } from './stats.ts';
 
 export const statusRpc = defineRpc({
@@ -248,6 +248,20 @@ export const feedbackRpc = defineRpc({
     agentId: z.string().min(1).max(200),
     row: decisionRowSchema,
     outcome: z.string().min(1).max(100),
+  }),
+  output: decisionRowSchema,
+});
+
+/**
+ * Label a permission row the daemon drew, by its row id. The daemon resolves the decision,
+ * kind and time from its own state; the client sends nothing security-relevant.
+ */
+export const permissionLabelRpc = defineRpc({
+  name: 'permission-label',
+  input: z.object({
+    agentId: z.string().min(1).max(200),
+    rowId: z.string().min(1).max(300),
+    label: z.enum(LABEL_CHOICES),
   }),
   output: decisionRowSchema,
 });

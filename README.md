@@ -86,8 +86,9 @@ See [docs/architecture.md](docs/architecture.md) for the full pipeline.
   configured retention period (30 days by default). Switch a policy to `act` when the numbers
   look right.
 - **Learns from your answers (Paseo).** Exact-match precedent: after three allows of the same
-  request in the same project, and no deny, a lower threshold (p ≥ 0.6) applies. Any deny vetoes
-  it.
+  request in the same project, and no unsafe label, a lower threshold (p ≥ 0.6) applies. A
+  decline is neutral unless you mark it unsafe; "Mark unsafe" on an auto-allowed row stops your
+  past allows from lowering its threshold.
 - **Supervised subagents in Paseo.** An orchestrator agent can answer its child's escalated
   permission request, and that answer counts as precedent. Paseo notifies the orchestrator
   before the decider has answered, so the orchestrator should wait and answer only what is still
