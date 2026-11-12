@@ -21,7 +21,7 @@ lcov.info
 packages/gateway/policies/
 packages/gateway/schemas/
 # Built at release and published in @ziptie-soft/local-decider-agent-plugin (dist/ is covered above).
-plugins/local-decider/hooks/register.mjs
+plugins/local-decider/hooks/local-decider-auto-mode.mjs
 
 # Agent research, review and scratch docs (kept locally, not in git)
 docs/research/

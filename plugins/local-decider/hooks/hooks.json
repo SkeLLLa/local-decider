@@ -1,6 +1,6 @@
 {
   "description": "local-decider: deterministic command guard plus local decision-model policies (fail-open)",
-  "modules": ["./register.mjs"],
+  "modules": ["./local-decider-auto-mode.mjs"],
   "hooks": {
     "PreToolUse": [
       {
@@ -8,8 +8,9 @@
         "hooks": [
           {
             "type": "command",
-            "command": "sh \"${CLAUDE_PLUGIN_ROOT}/hooks/run-hook.sh\" claude PreToolUse",
-            "timeout": 5
+            "command": "sh \"${CLAUDE_PLUGIN_ROOT}/hooks/local-decider-hook.sh\" claude PreToolUse",
+            "timeout": 5,
+            "statusMessage": "local-decider: checking tool call"
           }
         ]
       }
@@ -20,8 +21,9 @@
         "hooks": [
           {
             "type": "command",
-            "command": "sh \"${CLAUDE_PLUGIN_ROOT}/hooks/run-hook.sh\" claude PermissionRequest",
-            "timeout": 5
+            "command": "sh \"${CLAUDE_PLUGIN_ROOT}/hooks/local-decider-hook.sh\" claude PermissionRequest",
+            "timeout": 5,
+            "statusMessage": "local-decider: reviewing permission request"
           }
         ]
       }
@@ -31,8 +33,9 @@
         "hooks": [
           {
             "type": "command",
-            "command": "sh \"${CLAUDE_PLUGIN_ROOT}/hooks/run-hook.sh\" claude UserPromptSubmit",
-            "timeout": 5
+            "command": "sh \"${CLAUDE_PLUGIN_ROOT}/hooks/local-decider-hook.sh\" claude UserPromptSubmit",
+            "timeout": 5,
+            "statusMessage": "local-decider: picking model for prompt"
           }
         ]
       }
@@ -42,8 +45,9 @@
         "hooks": [
           {
             "type": "command",
-            "command": "sh \"${CLAUDE_PLUGIN_ROOT}/hooks/run-hook.sh\" claude Stop",
-            "timeout": 5
+            "command": "sh \"${CLAUDE_PLUGIN_ROOT}/hooks/local-decider-hook.sh\" claude Stop",
+            "timeout": 5,
+            "statusMessage": "local-decider: logging turn outcome"
           }
         ]
       }

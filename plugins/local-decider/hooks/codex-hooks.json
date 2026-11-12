@@ -7,8 +7,9 @@
         "hooks": [
           {
             "type": "command",
-            "command": "sh \"${CLAUDE_PLUGIN_ROOT}/hooks/run-hook.sh\" codex PreToolUse",
-            "timeout": 5
+            "command": "sh \"${CLAUDE_PLUGIN_ROOT}/hooks/local-decider-hook.sh\" codex PreToolUse",
+            "timeout": 5,
+            "statusMessage": "local-decider: checking tool call"
           }
         ]
       }
@@ -19,8 +20,9 @@
         "hooks": [
           {
             "type": "command",
-            "command": "sh \"${CLAUDE_PLUGIN_ROOT}/hooks/run-hook.sh\" codex PermissionRequest",
-            "timeout": 5
+            "command": "sh \"${CLAUDE_PLUGIN_ROOT}/hooks/local-decider-hook.sh\" codex PermissionRequest",
+            "timeout": 5,
+            "statusMessage": "local-decider: reviewing permission request"
           }
         ]
       }
@@ -30,8 +32,9 @@
         "hooks": [
           {
             "type": "command",
-            "command": "sh \"${CLAUDE_PLUGIN_ROOT}/hooks/run-hook.sh\" codex UserPromptSubmit",
-            "timeout": 5
+            "command": "sh \"${CLAUDE_PLUGIN_ROOT}/hooks/local-decider-hook.sh\" codex UserPromptSubmit",
+            "timeout": 5,
+            "statusMessage": "local-decider: picking model for prompt"
           }
         ]
       }
@@ -41,8 +44,9 @@
         "hooks": [
           {
             "type": "command",
-            "command": "sh \"${CLAUDE_PLUGIN_ROOT}/hooks/run-hook.sh\" codex Stop",
-            "timeout": 5
+            "command": "sh \"${CLAUDE_PLUGIN_ROOT}/hooks/local-decider-hook.sh\" codex Stop",
+            "timeout": 5,
+            "statusMessage": "local-decider: logging turn outcome"
           }
         ]
       }

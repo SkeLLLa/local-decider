@@ -64,7 +64,7 @@ See [docs/architecture.md](docs/architecture.md) for the full pipeline.
 |---|---|
 | [`packages/core`](packages/core) | `@ziptie-soft/local-decider-core`: `/v1/systemone` types, policy schema and rules, redaction, truncation, gateway client |
 | [`packages/gateway`](packages/gateway) | `@ziptie-soft/local-decider`: the local HTTP service, engine adapters, MCP server and CLI |
-| [`packages/hooks`](packages/hooks) | The Claude Code and Codex hook runner, bundled into `plugins/local-decider/dist/hook.mjs` at release and published to npm |
+| [`packages/hooks`](packages/hooks) | The Claude Code and Codex hook runner, bundled into `plugins/local-decider/dist/local-decider-hook.mjs` at release and published to npm |
 | [`packages/paseo-plugin`](packages/paseo-plugin) | `@ziptie-soft/paseo-plugin-local-decider`: the Paseo plugin, with settings, chat rows and sidebar status |
 | [`plugins/local-decider`](plugins/local-decider) | One plugin directory for both Claude Code and Codex (both manifests) |
 | [`policies/`](policies) | Default policies: `turn-outcome`, `permission`, `routing` (plus two variants), `command-risk`; fixtures in `policies/fixtures/` |

@@ -1,5 +1,5 @@
 /**
- * Claude Code mod entry (bundled to `plugins/local-decider/hooks/register.mjs`): in auto mode, a
+ * Claude Code mod entry (bundled to `plugins/local-decider/hooks/local-decider-auto-mode.mjs`): in auto mode, a
  * plain permission `ask` goes to the local decider before the server-side classifier. It only
  * ever upgrades such an ask to `allow`, and only when the `claude-auto` scope is in `act` mode;
  * every other path returns what Claude Code decided. A failure skips the hook, so the classifier
