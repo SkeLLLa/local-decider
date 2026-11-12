@@ -495,6 +495,8 @@ export class EngineControl {
   #decider: Decider | undefined;
   #pending: Promise<void> = Promise.resolve();
   #lease: ControlLease | null = null;
+  /** Engines built for a benchmark: they never feed fallback accounting. */
+  readonly #leasedEngines = new WeakSet<ManagedEngine>();
   #leaseGen = 0;
 
   constructor(options: EngineControlOptions) {
@@ -603,7 +605,8 @@ export class EngineControl {
       if (!isSelectableEngine(target.engine)) {
         throw new EngineSwitchError(400, `unknown engine "${target.engine}"`);
       }
-      await this.#apply({ ...target, engine: target.engine }, false, false);
+      await this.#apply({ ...target, engine: target.engine }, false, false, true);
+      this.#leasedEngines.add(this.#engine);
       return this.#engine;
     });
     this.#pending = run.then(
@@ -637,6 +640,7 @@ export class EngineControl {
     } finally {
       if (this.#lease === lease) this.#lease = null;
       if (options.restore && this.#lease === null) this.#decider?.hold(null);
+      if (options.restore) this.#leasedEngines.delete(this.#engine);
       lease.finish();
     }
     return { ok: error === null, error };
@@ -1556,11 +1560,17 @@ export class EngineControl {
   }
 
   /** Swap engines: stop the old one first so two models never share memory. */
-  async #apply(next: EngineSelection, force: boolean, persist = true): Promise<void> {
+  async #apply(
+    next: EngineSelection,
+    force: boolean,
+    persist = true,
+    leased = false,
+  ): Promise<void> {
     if (!force && this.#same(next)) {
       return;
     }
     const engine = this.#build(next);
+    if (leased) this.#leasedEngines.add(engine);
     const previous = this.#engine;
     this.#engine = engine;
     this.#switching = true;
@@ -1582,6 +1592,9 @@ export class EngineControl {
 
   /** A lazy engine never reports ready on start; its first answer proves it is healthy. */
   #engineSucceeded(engine: ManagedEngine): void {
+    if (this.#leasedEngines.has(engine)) {
+      return;
+    }
     if (engine === this.#engine && this.#selected !== null) {
       this.#fallback.recordSuccess(candidateKey(this.#selected));
     }
@@ -1596,7 +1609,7 @@ export class EngineControl {
 
   /** An eager engine finished loading: a failure backs off, a healthy start clears the slate. */
   #started(engine: ManagedEngine): void {
-    if (engine !== this.#engine || this.#selected === null) {
+    if (this.#leasedEngines.has(engine) || engine !== this.#engine || this.#selected === null) {
       return;
     }
     if (engine.health().state === 'ready') {
@@ -1610,6 +1623,7 @@ export class EngineControl {
   #engineFailed(engine: ManagedEngine): void {
     const health = engine.health();
     if (
+      this.#leasedEngines.has(engine) ||
       !this.#auto ||
       engine !== this.#engine ||
       this.#selected === null ||
@@ -1642,6 +1656,9 @@ export class EngineControl {
 
   /** Move to the best installed, eligible candidate that is not cooling down. Never downloads. */
   async #reconcile(): Promise<void> {
+    if (this.#lease !== null) {
+      return;
+    }
     if (!this.#auto) {
       this.#leaveAuto();
       return;
@@ -1705,6 +1722,9 @@ export class EngineControl {
 
   /** Wake up when the earliest cooldown ends, so a recovered engine is retried without polling. */
   #armRetry(): void {
+    if (this.#lease !== null) {
+      return;
+    }
     clearTimeout(this.#retryTimer);
     const at = this.#fallback.nextRetryAt();
     if (at === undefined) {
