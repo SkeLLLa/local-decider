@@ -110,7 +110,28 @@ function isWeak(key: string, words: readonly string[]): boolean {
   return words.length > 1 && WEAK_LAST.has(last);
 }
 
-export function isSecretKey(key: string): boolean {
+/**
+ * Key classification is pure and runs once per `key: value` match; adversarial or repetitive
+ * input repeats the same keys, so memoise per key. Cleared when full to stay bounded.
+ */
+const CACHE_LIMIT = 1024;
+
+function memo(fn: (key: string) => boolean): (key: string) => boolean {
+  const cache = new Map<string, boolean>();
+  return (key) => {
+    const hit = cache.get(key);
+    if (hit !== undefined) return hit;
+    if (cache.size >= CACHE_LIMIT) cache.clear();
+    const value = fn(key);
+    cache.set(key, value);
+    return value;
+  };
+}
+
+export const isSecretKey = memo(classifySecretKey);
+export const isLineKey = memo(classifyLineKey);
+
+function classifySecretKey(key: string): boolean {
   if (key.length === 0 || key.length > MAX_KEY) return false;
   const words = keyWords(key);
   if (words.length === 0) return false;
@@ -123,7 +144,7 @@ export function isSecretKey(key: string): boolean {
   );
 }
 
-export function isLineKey(key: string): boolean {
+function classifyLineKey(key: string): boolean {
   if (key.length === 0 || key.length > MAX_KEY) return false;
   return candidates(keyWords(key)).some((c) => hits(c, 'cookie') || hits(c, 'authorization'));
 }
