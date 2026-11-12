@@ -46,7 +46,7 @@ import type {
   ModelDescriptor,
   RuntimeStamp,
 } from './engines/descriptor.ts';
-import { familyOf, familyLabel, formatOf } from './engines/families.ts';
+import { familyOf, familyLabel, formatOf, isKnownFamily } from './engines/families.ts';
 import { cachedFlmVersion, FLM_INSTALL_URL } from './engines/fastflowlm/status.ts';
 import { hardwareFingerprint } from './engines/fingerprint.ts';
 import {
@@ -173,12 +173,35 @@ export function parseSelection(body: unknown): EngineRequest {
 
 export type SelectionModeName = 'auto' | 'manual';
 
-export function parseSelectionMode(body: unknown): SelectionModeName {
-  const mode = isRecord(body) ? body['mode'] : undefined;
+export interface SelectionModeRequest {
+  readonly mode: SelectionModeName;
+  readonly family?: string;
+}
+
+function validateSelectionFamily(mode: SelectionModeName, family: string | undefined): void {
+  if (family !== undefined && mode === 'manual') {
+    throw new EngineSwitchError(400, 'family applies to automatic mode only');
+  }
+  if (family !== undefined && !isKnownFamily(family)) {
+    throw new EngineSwitchError(400, `unknown model family "${family}"`);
+  }
+}
+
+export function parseSelectionMode(body: unknown): SelectionModeRequest {
+  const record = isRecord(body) ? body : {};
+  const mode = record['mode'];
   if (mode !== 'auto' && mode !== 'manual') {
     throw new EngineSwitchError(400, 'mode must be "auto" or "manual"');
   }
-  return mode;
+  const family = record['family'];
+  if (family !== undefined && typeof family !== 'string') {
+    throw new EngineSwitchError(400, 'family must be a string');
+  }
+  if (typeof family === 'string' && (family.length < 1 || family.length > 400)) {
+    throw new EngineSwitchError(400, 'family must be 1..400 characters');
+  }
+  validateSelectionFamily(mode, family);
+  return { mode, ...(family === undefined ? {} : { family }) };
 }
 
 /** The engine and device behind a fallback note's `engine|device|model` key. */
@@ -554,10 +577,21 @@ export class EngineControl {
    * Turn automatic selection on, or off while keeping the engine that runs now. Persisted like a
    * manual `select`, so it survives a restart.
    */
-  async setSelectionMode(mode: SelectionModeName): Promise<SelectionModeName> {
+  async setSelectionMode(
+    mode: SelectionModeName,
+    requestedFamily?: string,
+  ): Promise<SelectionModeName> {
+    validateSelectionFamily(mode, requestedFamily);
     const current = this.#requireSwitchable();
     if (mode === 'auto') {
-      this.#save([{ path: ['selection'], value: { mode: 'auto' } }]);
+      const family = requestedFamily ?? familyOf(current.model, current.engine);
+      if (family !== null && family !== undefined) validateSelectionFamily(mode, family);
+      this.#save([
+        {
+          path: ['selection'],
+          value: { mode: 'auto', ...(family === null || family === undefined ? {} : { family }) },
+        },
+      ]);
       this.#applied = this.#config;
       await this.reconcileAuto();
       return 'auto';

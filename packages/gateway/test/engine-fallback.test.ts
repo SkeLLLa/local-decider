@@ -3,11 +3,17 @@ import { chmodSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, it } from 'node:test';
 
+import {
+  BENCH_VERSION,
+  MemoryBenchmarkStore,
+  type BenchmarkRecord,
+} from '../src/benchmark-store.ts';
 import { MemoryConfigStore } from '../src/config-file.ts';
 import { parseConfig, type EngineConfig } from '../src/config.ts';
 import { Decider } from '../src/decider.ts';
 import { EngineControl, parseSelectionMode } from '../src/engine-control.ts';
 import type { HostInfo } from '../src/engines/descriptor.ts';
+import { hardwareFingerprint } from '../src/engines/fingerprint.ts';
 import type { HostCapabilities } from '../src/engines/host-capabilities.ts';
 import {
   EngineError,
@@ -23,6 +29,10 @@ const LINUX: HostInfo = { platform: 'linux', arch: 'x64', totalMemoryBytes: 64e9
 const NPU: HostCapabilities = {
   ...NO_CAPABILITIES,
   npu: { status: 'available', evidence: 'accel0: amdxdna' },
+};
+const NPU_AND_VULKAN: HostCapabilities = {
+  ...NPU,
+  vulkan: { status: 'available', evidence: 'Vulkan0: test GPU' },
 };
 const INPUT = { project: '/p', tool: 'Bash', request: { command: 'ls' }, history: 'user: ls' };
 
@@ -87,7 +97,7 @@ class ScriptedEngine implements Engine {
   }
 }
 
-function fakeBinaries(paths: Paths): void {
+function fakeBinaries(paths: Paths, includeLlama = false): void {
   const flm = join(paths.data, 'bin');
   const strands = join(paths.venvs, 'strands-decider', 'bin');
   for (const [dir, name] of [
@@ -97,6 +107,11 @@ function fakeBinaries(paths: Paths): void {
     mkdirSync(dir, { recursive: true });
     writeFileSync(join(dir, name), `#!${process.execPath}\n`);
     chmodSync(join(dir, name), 0o755);
+  }
+  if (includeLlama) {
+    const llama = join(flm, 'llama-server');
+    writeFileSync(llama, `#!${process.execPath}\nconsole.log('version: 123')\n`);
+    chmodSync(llama, 0o755);
   }
 }
 
@@ -108,7 +123,17 @@ interface Setup {
   readonly decide: (history?: string) => ReturnType<Decider['decide']>;
 }
 
-function setup(raw: Record<string, unknown>, timeoutMs = 1000): Setup {
+interface SetupOverrides {
+  readonly capabilities?: HostCapabilities;
+  readonly benchmarkStore?: MemoryBenchmarkStore;
+  readonly llamaServer?: boolean;
+}
+
+function setup(
+  raw: Record<string, unknown>,
+  timeoutMs = 1000,
+  overrides: SetupOverrides = {},
+): Setup {
   const world: World = {
     behaviour: {},
     probs: { allow: 0.97, ask: 0.02, deny: 0.01 },
@@ -128,16 +153,21 @@ function setup(raw: Record<string, unknown>, timeoutMs = 1000): Setup {
     },
   };
   const paths = tempPaths();
-  fakeBinaries(paths);
+  fakeBinaries(paths, overrides.llamaServer);
   const store = new MemoryConfigStore(parseConfig({ lifecycle: { mode: 'eager' }, ...raw }));
   const control = new EngineControl({
     store,
     paths,
-    env: { PATH: join(paths.data, 'bin') },
+    env: {
+      PATH: join(paths.data, 'bin'),
+      FLM_MODEL_PATH: join(paths.data, 'flm-models'),
+      HF_HUB_CACHE: join(paths.data, 'hf-cache'),
+    },
     host: LINUX,
     totalMemory: 64e9,
     installed: async (ids) => new Map(ids.map((id) => [id, true])),
-    capabilities: () => Promise.resolve(NPU),
+    capabilities: () => Promise.resolve(overrides.capabilities ?? NPU),
+    ...(overrides.benchmarkStore === undefined ? {} : { benchmarkStore: overrides.benchmarkStore }),
     fallback: { now: () => world.now, baseMs: 1000, maxMs: 8000, stableMs: 60_000 },
     create: (config) => {
       if (world.unbuildable.has(config.type)) {
@@ -176,6 +206,43 @@ async function settle(control: EngineControl): Promise<void> {
   await control.idle();
   await new Promise((resolve) => setImmediate(resolve));
   await control.idle();
+}
+
+function measuredRecord(
+  engine: 'fastflowlm' | 'llama-vulkan',
+  model: string,
+  p50Ms: number,
+): BenchmarkRecord {
+  return {
+    jobId: `bench-${engine}`,
+    engine,
+    model,
+    device: null,
+    family: 'vllm-sr/d3-mini',
+    quant: engine === 'fastflowlm' ? 'FLM' : 'Q4_K_M',
+    status: 'ok',
+    error: null,
+    measuredAt: '2026-11-12T10:04:11.000Z',
+    benchVersion: BENCH_VERSION,
+    gatewayVersion: '2.0.0',
+    runtime: null,
+    modelStamp: null,
+    fingerprint: hardwareFingerprint(LINUX, NPU_AND_VULKAN) ?? '',
+    backend: engine === 'fastflowlm' ? 'NPU' : 'Vulkan',
+    resolvedDevice: null,
+    runs: 5,
+    loadMs: 1,
+    sizes: [
+      {
+        targetTokens: 1024,
+        inputTokens: 1024,
+        p50Ms,
+        p95Ms: p50Ms + 20,
+        answer: 'done',
+        error: null,
+      },
+    ],
+  };
 }
 
 describe('automatic runtime fallback', () => {
@@ -371,16 +438,22 @@ describe('automatic runtime fallback', () => {
 });
 
 describe('selection mode switch', () => {
-  it('goes automatic: persists the mode and moves to the best engine', async () => {
+  it('goes automatic while keeping the current catalogue family preferred', async () => {
     const { control, store } = setup({
-      selection: { engine: 'strands-decider', model: 'strands-decider-2b' },
+      selection: {
+        engine: 'strands-decider',
+        model: 'StrandsAgents/strands-decider-2B-qwen3.5-v1-2610',
+      },
     });
     await settle(control);
     assert.equal(active(control), 'strands-decider');
     assert.equal(await control.setSelectionMode('auto'), 'auto');
     await settle(control);
-    assert.deepEqual(store.current.selection, { mode: 'auto' });
-    assert.equal(active(control), 'fastflowlm');
+    assert.deepEqual(store.current.selection, {
+      mode: 'auto',
+      family: 'strands-decider:StrandsAgents/strands-decider-2B-qwen3.5-v1-2610',
+    });
+    assert.equal(active(control), 'strands-decider');
     const status = await control.status();
     assert.equal((status['active'] as { selectionMode: string }).selectionMode, 'auto');
   });
@@ -402,11 +475,46 @@ describe('selection mode switch', () => {
     assert.equal((status['active'] as { selectionMode: string }).selectionMode, 'manual');
   });
 
+  it('keeps the preferred family and chooses its fastest measured runtime', async () => {
+    const benchmarks = new MemoryBenchmarkStore();
+    benchmarks.append(measuredRecord('fastflowlm', 'd3:mini', 300));
+    benchmarks.append(measuredRecord('llama-vulkan', 'd3-mini-q4_k_m', 100));
+    const { control, store } = setup(
+      { selection: { engine: 'fastflowlm', model: 'd3:nano' } },
+      1000,
+      { capabilities: NPU_AND_VULKAN, benchmarkStore: benchmarks, llamaServer: true },
+    );
+    await control.setSelectionMode('auto', 'vllm-sr/d3-mini');
+    await settle(control);
+    assert.deepEqual(store.current.selection, { mode: 'auto', family: 'vllm-sr/d3-mini' });
+    assert.equal(active(control), 'llama-vulkan');
+    assert.equal(control.current()?.model, 'd3-mini-q4_k_m');
+  });
+
+  it('defaults the auto family to the current catalogue model family', async () => {
+    const { control, store } = setup({ selection: { engine: 'fastflowlm', model: 'd3:nano' } });
+    await control.setSelectionMode('auto');
+    assert.deepEqual(store.current.selection, { mode: 'auto', family: 'vllm-sr/d3-nano' });
+  });
+
   it('validates the requested mode', () => {
-    assert.equal(parseSelectionMode({ mode: 'auto' }), 'auto');
-    assert.equal(parseSelectionMode({ mode: 'manual' }), 'manual');
+    assert.deepEqual(parseSelectionMode({ mode: 'auto' }), { mode: 'auto' });
+    assert.deepEqual(parseSelectionMode({ mode: 'manual' }), { mode: 'manual' });
+    assert.deepEqual(parseSelectionMode({ mode: 'auto', family: 'vllm-sr/d3-mini' }), {
+      mode: 'auto',
+      family: 'vllm-sr/d3-mini',
+    });
     for (const bad of [null, {}, { mode: 'x' }, { mode: 1 }, 'auto']) {
       assert.throws(() => parseSelectionMode(bad), /mode must be/);
     }
+    assert.throws(
+      () => parseSelectionMode({ mode: 'manual', family: 'vllm-sr/d3-mini' }),
+      /family applies to automatic mode only/,
+    );
+    assert.throws(
+      () => parseSelectionMode({ mode: 'auto', family: 'unknown-family' }),
+      /unknown model family "unknown-family"/,
+    );
+    assert.throws(() => parseSelectionMode({ mode: 'auto', family: 1 }), /family must be a string/);
   });
 });
