@@ -49,7 +49,7 @@ import {
 } from '../shared/rpc.ts';
 import { ConnectionForm } from './connection-form.tsx';
 import { type Outcome, outcomeOf, useAction, useEngines } from './hooks.ts';
-import { Badge, InlineMessage, Mono, Progress, type Theme, Value } from './ui.tsx';
+import { Badge, Disclosure, InlineMessage, Mono, Progress, type Theme, Value } from './ui.tsx';
 
 type Action = ReturnType<typeof useAction>;
 
@@ -481,44 +481,46 @@ function EnginePicker({ theme, catalog }: { theme: Theme; catalog: EngineCatalog
   const engine = catalog.engines.find((e) => e.id === id) ?? null;
   return (
     <>
-      <EngineCard
-        theme={theme}
-        catalog={catalog}
-        id={id}
-        engine={engine}
-        device={device}
-        onEngine={(next) => {
-          setPicked(next);
-          setDevice('auto');
-          action.clear();
-        }}
-        onDevice={setDevice}
-      />
       <RunningCard theme={theme} catalog={catalog} />
-      {engines === null ? null : <EnginesCard view={engines} />}
-      <ConnectionSlot
-        theme={theme}
-        engine={engine}
-        seed={seed}
-        onSetupLmStudio={(server: DiscoveredServer) => {
-          setSeed({ url: server.url, models: server.models });
-          setPicked('lmstudio');
-          setDevice('auto');
-          action.clear();
-        }}
-      />
-      {engine === null ? null : (
-        <ModelList
+      <Disclosure theme={theme} title="Advanced: engine, device and model">
+        <EngineCard
           theme={theme}
           catalog={catalog}
+          id={id}
           engine={engine}
           device={device}
-          action={action}
+          onEngine={(next) => {
+            setPicked(next);
+            setDevice('auto');
+            action.clear();
+          }}
+          onDevice={setDevice}
         />
-      )}
-      {engine?.capabilities.validate === true ? (
-        <ValidationCard theme={theme} engine={engine} />
-      ) : null}
+        {engines === null ? null : <EnginesCard view={engines} />}
+        <ConnectionSlot
+          theme={theme}
+          engine={engine}
+          seed={seed}
+          onSetupLmStudio={(server: DiscoveredServer) => {
+            setSeed({ url: server.url, models: server.models });
+            setPicked('lmstudio');
+            setDevice('auto');
+            action.clear();
+          }}
+        />
+        {engine === null ? null : (
+          <ModelList
+            theme={theme}
+            catalog={catalog}
+            engine={engine}
+            device={device}
+            action={action}
+          />
+        )}
+        {engine?.capabilities.validate === true ? (
+          <ValidationCard theme={theme} engine={engine} />
+        ) : null}
+      </Disclosure>
     </>
   );
 }
