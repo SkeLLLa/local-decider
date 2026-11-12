@@ -1,12 +1,17 @@
 /** Queries and settings shared by the plugin's screens, sidebar items and timeline rows. */
 import { useRpc, useSettings } from '@getpaseo/plugin/client';
 import { useQuery, useQueryClient, type UseQueryResult } from '@tanstack/react-query';
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { z } from 'zod';
 
+import {
+  BENCHMARK_POLL_MS,
+  benchmarkPollInterval,
+  type BenchmarkView,
+} from '../shared/benchmark.ts';
 import { enginesPollInterval, type EngineCatalog } from '../shared/engines.ts';
 import { nextPollDelay } from '../shared/poll.ts';
-import { enginesRpc, serviceInfoRpc, statusRpc } from '../shared/rpc.ts';
+import { benchmarkRpc, enginesRpc, serviceInfoRpc, statusRpc } from '../shared/rpc.ts';
 import { deciderSettings, type DeciderSettings } from '../shared/settings.ts';
 import { useQueryKey } from './host-scope.ts';
 
@@ -45,6 +50,38 @@ export function useEngines(gatewayUrl: string): UseQueryResult<EngineCatalog> {
     staleTime: 10_000,
     refetchInterval: (query) => enginesPollInterval(query.state.data),
   });
+}
+
+/**
+ * The benchmark job (`GET /v1/benchmark`). Polls every second while it runs or is cancelling, and
+ * also while `watch` is set (the catalog says another client started one). When a job leaves
+ * running/cancelling the engines query is refreshed, because new results and a restored
+ * selection land then.
+ */
+export function useBenchmark(
+  gatewayUrl: string,
+  watch = false,
+): UseQueryResult<BenchmarkView | null> {
+  const benchmark = useRpc(benchmarkRpc);
+  const queryClient = useQueryClient();
+  const enginesKey = useQueryKey('engines', gatewayUrl);
+  const query = useQuery({
+    queryKey: useQueryKey('benchmark', gatewayUrl),
+    queryFn: async () => (await benchmark({})).benchmark,
+    retry: false,
+    staleTime: 0,
+    refetchInterval: (q) =>
+      benchmarkPollInterval(q.state.data) || (watch ? BENCHMARK_POLL_MS : false),
+  });
+  const wasRunning = useRef(false);
+  const running = benchmarkPollInterval(query.data) !== false;
+  useEffect(() => {
+    if (wasRunning.current && !running) {
+      void queryClient.invalidateQueries({ queryKey: enginesKey });
+    }
+    wasRunning.current = running;
+  }, [running, queryClient, enginesKey]);
+  return query;
 }
 
 /** Whether the gateway runs as a user service here, and the command behind each button. */

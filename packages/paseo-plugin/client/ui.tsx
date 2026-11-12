@@ -13,6 +13,7 @@ export function Button({
   variant = 'primary',
   grow = false,
   icon,
+  hint,
 }: {
   label: string;
   /** Lucide icon name shown before the label, e.g. `RefreshCw`. */
@@ -24,6 +25,8 @@ export function Button({
   variant?: 'primary' | 'secondary';
   /** Share a row's width equally with sibling buttons. */
   grow?: boolean;
+  /** Read after the label by screen readers, e.g. why the button is disabled. */
+  hint?: string | null;
 }): ReactNode {
   const primary = variant === 'primary';
   const textColor = primary ? theme.colors.accentForeground : theme.colors.foreground;
@@ -31,6 +34,7 @@ export function Button({
     <Pressable
       accessibilityRole="button"
       accessibilityLabel={label}
+      {...(hint == null ? {} : { accessibilityHint: hint })}
       accessibilityState={{ disabled }}
       disabled={disabled}
       onPress={onPress}
@@ -234,19 +238,29 @@ export function Disclosure({
   theme,
   title,
   children,
+  expanded: controlled,
+  onExpandedChange,
 }: {
   theme: Theme;
   title: string;
   children: ReactNode;
+  /** Control it from outside, e.g. to open it from a link elsewhere. */
+  expanded?: boolean;
+  onExpandedChange?: (expanded: boolean) => void;
 }): ReactNode {
-  const [expanded, setExpanded] = useState(false);
+  const [own, setOwn] = useState(false);
+  const expanded = controlled ?? own;
+  const setExpanded = (next: boolean): void => {
+    setOwn(next);
+    onExpandedChange?.(next);
+  };
   return (
     <View style={{ gap: 12 }}>
       <Pressable
         accessibilityRole="button"
         accessibilityLabel={title}
         accessibilityState={{ expanded }}
-        onPress={() => setExpanded((open) => !open)}
+        onPress={() => setExpanded(!expanded)}
         style={({ pressed }) => ({
           flexDirection: 'row' as const,
           alignItems: 'center' as const,

@@ -2,7 +2,7 @@
  * Settings: pick an engine, then a model for it. Rows download models, switch the gateway to one
  * (the gateway persists it) and show an engine's validation result when it has one.
  */
-import { openExternalUrl, useRpc } from '@getpaseo/plugin/client';
+import { useRpc } from '@getpaseo/plugin/client';
 import {
   SettingsAction,
   SettingsCard,
@@ -33,13 +33,8 @@ import {
   autoHint,
   engineWhere,
   enginesView,
-  fallbackLine,
   namesOf,
-  runningView,
-  suggestionView,
   type EnginesView,
-  type RunningView,
-  type Suggestion,
 } from '../shared/recommendation.ts';
 import {
   downloadModelRpc,
@@ -48,7 +43,9 @@ import {
   validateEngineRpc,
 } from '../shared/rpc.ts';
 import { ConnectionForm } from './connection-form.tsx';
-import { type Outcome, outcomeOf, useAction, useEngines } from './hooks.ts';
+import { type Outcome, outcomeOf, useAction, useBenchmark, useEngines } from './hooks.ts';
+import { InstallRow } from './install.tsx';
+import { RecommendedCard } from './settings-recommended.tsx';
 import { Badge, Disclosure, InlineMessage, Mono, Progress, type Theme, Value } from './ui.tsx';
 
 type Action = ReturnType<typeof useAction>;
@@ -269,100 +266,6 @@ function EnginesCard({ view }: { view: EnginesView }): ReactNode {
   );
 }
 
-function SuggestionRow({
-  theme,
-  suggestion,
-  action,
-  onSwitch,
-}: {
-  theme: Theme;
-  suggestion: Suggestion;
-  action: Action;
-  onSwitch: (target: SwitchTarget) => void;
-}): ReactNode {
-  const [open, setOpen] = useState(false);
-  if (suggestion.kind === 'switch') {
-    return (
-      <SettingsAction
-        label="Faster engine available"
-        hint={suggestion.hint}
-        actionLabel={action.busy === null ? 'Switch' : 'Working…'}
-        disabled={action.busy !== null}
-        onPress={() => onSwitch(suggestion.target)}
-      />
-    );
-  }
-  return (
-    <>
-      <SettingsAction
-        label="Faster engine available"
-        hint={suggestion.hint}
-        actionLabel={open ? 'Hide' : 'How to install'}
-        onPress={() => setOpen(!open)}
-      />
-      {open ? (
-        <View style={{ paddingHorizontal: 16, paddingVertical: 8 }}>
-          <Mono theme={theme} lines={0}>
-            {suggestion.command}
-          </Mono>
-        </View>
-      ) : null}
-    </>
-  );
-}
-
-type SwitchTarget = { engine: string; model: string; device: string | null };
-
-function RunningRow({ theme, view }: { theme: Theme; view: RunningView }): ReactNode {
-  return (
-    <SettingsRow label="Running" {...(view.hint === '' ? {} : { hint: view.hint })}>
-      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-        <Value theme={theme}>{view.value}</Value>
-        {view.state === null ? null : (
-          <Badge theme={theme} tone={view.state.tone} text={view.state.text} />
-        )}
-      </View>
-    </SettingsRow>
-  );
-}
-
-function RunningCard({ theme, catalog }: { theme: Theme; catalog: EngineCatalog }): ReactNode {
-  const select = useRpc(selectEngineRpc);
-  const action = useAction();
-  const { active } = catalog;
-  const names = namesOf(catalog);
-  const running = runningView(active, names);
-  const fallback = fallbackLine(active, names);
-  const suggestion = suggestionView(active, catalog.recommendation, names);
-  if (running === null) {
-    return null;
-  }
-  const switchTo = (target: SwitchTarget): void => {
-    void action.run('suggestion', async () =>
-      outcomeOf(
-        await select({ ...target, device: target.device ?? 'auto' }),
-        'Switching engines. Decisions fail open until it is ready.',
-      ),
-    );
-  };
-  return (
-    <SettingsCard>
-      <RunningRow theme={theme} view={running} />
-      {fallback === null ? null : (
-        <SettingsRow label="Using a backup engine" hint={fallback}>
-          <Badge theme={theme} tone="warning" text="Backup" />
-        </SettingsRow>
-      )}
-      {suggestion === null ? null : (
-        <SuggestionRow theme={theme} suggestion={suggestion} action={action} onSwitch={switchTo} />
-      )}
-      {action.outcome === null ? null : (
-        <InlineMessage theme={theme} tone={action.outcome.tone} text={action.outcome.text} />
-      )}
-    </SettingsCard>
-  );
-}
-
 function pickerHint(catalog: EngineCatalog, id: string | null, engine: EngineInfo | null): string {
   const { active, recommendation } = catalog;
   const auto = active?.selectionMode === 'auto';
@@ -398,22 +301,6 @@ function UseAutomatic({ theme }: { theme: Theme }): ReactNode {
         <InlineMessage theme={theme} tone={action.outcome.tone} text={action.outcome.text} />
       )}
     </>
-  );
-}
-
-/** A missing engine the user installs themselves: a link to its install page, nothing run here. */
-function InstallRow({ engine }: { engine: EngineInfo | null }): ReactNode {
-  if (engine === null || engine.installed || !engine.supported || engine.installUrl === null) {
-    return null;
-  }
-  const url = engine.installUrl;
-  return (
-    <SettingsAction
-      label={`Install ${engine.label}`}
-      hint={engine.detail ?? 'Not installed on the gateway machine.'}
-      actionLabel="Install guide"
-      onPress={() => void openExternalUrl(url)}
-    />
   );
 }
 
@@ -476,13 +363,19 @@ function EnginePicker({ theme, catalog }: { theme: Theme; catalog: EngineCatalog
   const [picked, setPicked] = useState<string | null>(null);
   const [device, setDevice] = useState('auto');
   const [seed, setSeed] = useState<Seed | null>(null);
+  const [advanced, setAdvanced] = useState(false);
   const id = picked ?? initialEngine(catalog);
   const engines = enginesView(catalog.recommendation, namesOf(catalog));
   const engine = catalog.engines.find((e) => e.id === id) ?? null;
   return (
     <>
-      <RunningCard theme={theme} catalog={catalog} />
-      <Disclosure theme={theme} title="Advanced: engine, device and model">
+      <RecommendedCard theme={theme} catalog={catalog} onOpenAdvanced={() => setAdvanced(true)} />
+      <Disclosure
+        theme={theme}
+        title="Advanced: engine, device and model"
+        expanded={advanced}
+        onExpandedChange={setAdvanced}
+      >
         <EngineCard
           theme={theme}
           catalog={catalog}
@@ -533,6 +426,7 @@ export function EngineSection({
   gatewayUrl: string;
 }): ReactNode {
   const { data, isFetching, refetch } = useEngines(gatewayUrl);
+  useBenchmark(gatewayUrl, data?.active?.benchmark != null);
   const reachable = data?.reachable === true;
   return (
     <SettingsSection
