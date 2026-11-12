@@ -4,6 +4,7 @@ import { describe, it } from 'node:test';
 import type { HostInfo } from '../src/engines/descriptor.ts';
 import type { CapabilityResult, HostCapabilities } from '../src/engines/host-capabilities.ts';
 import { ENGINES } from '../src/engines/registry.ts';
+import type { Measured } from '../src/engines/ranking.ts';
 import { rankEngines, type Ranking } from '../src/engines/selector.ts';
 
 const NO: CapabilityResult = { status: 'unavailable', evidence: 'none' };
@@ -37,7 +38,11 @@ function rank(
 }
 
 function ladder(r: Ranking): string[] {
-  return r.candidates.filter((c) => c.eligible).map((c) => `${c.engine}:${c.backend}`);
+  return [
+    ...new Set(
+      r.candidates.filter((c) => c.eligible).map((c) => `${c.engine}:${c.backend}`),
+    ),
+  ];
 }
 
 describe('engine ranking', () => {
@@ -141,14 +146,14 @@ describe('engine ranking', () => {
     );
   });
 
-  it('NVIDIA and Vulkan keeps CUDA before Vulkan', () => {
+  it('NVIDIA keeps its model family ahead of a faster-family fallback', () => {
     assert.deepEqual(
       ladder(
         rank(LINUX, caps({ nvidia: YES(), vulkan: YES() }), {
           installed: new Set(['llama-vulkan']),
         }),
       ),
-      ['strands-decider:CUDA', 'llama-vulkan:Vulkan', 'strands-decider:CPU'],
+      ['strands-decider:CUDA', 'strands-decider:CPU', 'llama-vulkan:Vulkan'],
     );
   });
 
@@ -192,5 +197,71 @@ describe('engine ranking', () => {
   it('marks installed engines ready', () => {
     const r = rank(LINUX, caps({}), { installed: new Set(['strands-decider']) });
     assert.equal(r.candidates.find((c) => c.backend === 'CPU')?.ready, true);
+  });
+
+  it('uses a known preferred family and ignores an unknown one', () => {
+    const preferred = rank(LINUX, caps({ npu: YES() }), {
+      preferredFamily: 'vllm-sr/d3-lite',
+    });
+    assert.equal(preferred.machine?.family, 'vllm-sr/d3-lite');
+    assert.equal(preferred.machine?.source, 'preferred');
+    const unknown = rank(LINUX, caps({ npu: YES() }), { preferredFamily: 'missing-family' });
+    assert.equal(unknown.machine?.family, 'vllm-sr/d3-mini');
+    assert.equal(unknown.machine?.source, 'default');
+  });
+
+  it('falls back to the ladder when a preferred family is not runnable', () => {
+    const result = rank(LINUX, caps({}), { preferredFamily: 'vllm-sr/d3-lite' });
+    assert.equal(result.machine?.availability, 'family-unavailable');
+    assert.equal(result.automatic?.engine, 'strands-decider');
+    assert.equal(result.automatic?.device, 'cpu');
+  });
+
+  it('does not make a machine recommendation for an uncatalogued explicit model', () => {
+    const result = rank(LINUX, caps({ npu: YES() }), {
+      explicit: { engine: 'lmstudio', model: 'custom-model', device: null },
+    });
+    assert.equal(result.recommended?.engine, 'lmstudio');
+    assert.equal(result.machine, null);
+  });
+
+  it('matches an automatic Strands device to the resolved runtime', () => {
+    const result = rank(LINUX, caps({}), {
+      active: {
+        engine: 'strands-decider',
+        model: 'StrandsAgents/strands-decider-2B-qwen3.5-v1-2610',
+        device: 'auto',
+        resolvedDevice: 'cpu',
+      },
+    });
+    assert.equal(result.machine?.best?.active, true);
+    assert.equal(result.machine?.action, 'none');
+  });
+
+  it('uses fresh measurements and downloaded status to select the best runtime', () => {
+    const timing = (p50Ms: number): Measured => ({
+      typical: { p50Ms, p95Ms: p50Ms + 10 },
+      long: null,
+      runs: 5,
+      measuredAt: '2026-11-12T00:00:00.000Z',
+      freshness: 'fresh',
+      staleReason: null,
+      provisional: false,
+    });
+    const result = rank(LINUX, caps({ npu: YES(), vulkan: YES() }), {
+      installed: new Set(['llama-vulkan']),
+      preferredFamily: 'vllm-sr/d3-lite',
+      present: new Map([
+        ['fastflowlm|d3:lite', true],
+        ['llama-vulkan|d3-lite-q8_0', true],
+      ]),
+      measurements: new Map([
+        ['fastflowlm|d3:lite|', { ok: timing(200), failed: null }],
+        ['llama-vulkan|d3-lite-q8_0|', { ok: timing(100), failed: null }],
+      ]),
+    });
+    assert.equal(result.machine?.best?.engine, 'llama-vulkan');
+    assert.equal(result.automatic?.engine, 'llama-vulkan');
+    assert.equal(result.machine?.action, 'use');
   });
 });

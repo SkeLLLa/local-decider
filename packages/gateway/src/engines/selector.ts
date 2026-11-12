@@ -1,6 +1,16 @@
 import { modelFits } from '../models.ts';
 import type { Device, EngineDescriptor, HostInfo, ModelDescriptor } from './descriptor.ts';
 import type { CapabilityResult, HostCapabilities } from './host-capabilities.ts';
+import { familyId, familyOf, isKnownFamily } from './families.ts';
+import {
+  familyOrder,
+  machineView,
+  type MachineOption,
+  type MachineRecommendation,
+  type Measured,
+  type Measurements,
+  type MeasurementView,
+} from './ranking.ts';
 import type { EngineId } from './registry.ts';
 
 export type Backend = 'NPU' | 'CUDA' | 'Vulkan' | 'MLX' | 'MPS' | 'CPU';
@@ -52,6 +62,7 @@ export interface Ranking {
   readonly recommended: Target | null;
   /** What automatic selection would pick; null when nothing is eligible. */
   readonly automatic: Target | null;
+  readonly machine: MachineRecommendation | null;
 }
 
 export interface SelectorInput {
@@ -64,6 +75,16 @@ export interface SelectorInput {
     readonly engine: string;
     readonly model: string;
     readonly device: Device | null;
+  } | null;
+  readonly measurements?: Measurements;
+  /** `${engine}|${model}` → downloaded. */
+  readonly present?: ReadonlyMap<string, boolean>;
+  readonly preferredFamily?: string | null;
+  readonly active?: {
+    readonly engine: string;
+    readonly model: string;
+    readonly device: Device | null;
+    readonly resolvedDevice: string | null;
   } | null;
 }
 
@@ -152,9 +173,9 @@ function verdict(rung: Rung, caps: HostCapabilities | undefined): Verdict {
 function rungCandidate(
   rung: Rung,
   engine: SelectorEngine | undefined,
+  model: ModelDescriptor | undefined,
   input: SelectorInput,
 ): Candidate | undefined {
-  const model = engine === undefined ? undefined : recommendedModel(engine);
   if (engine === undefined || model === undefined) {
     return undefined;
   }
@@ -231,17 +252,110 @@ function target(candidate: Candidate): Target {
 /** Pure: ranks engine/device/model candidates for a host. Never changes any selection. */
 export function rankEngines(input: SelectorInput): Ranking {
   const byId = new Map(input.engines.map((e) => [e.id, e]));
-  const ladder = LADDER.flatMap((rung) => rungCandidate(rung, byId.get(rung.engine), input) ?? []);
-  const extra = input.engines.flatMap((e) => uncalibrated(e, input.installed) ?? []);
+  const ladder = LADDER.flatMap((rung) => {
+    const engine = byId.get(rung.engine);
+    return rungCandidate(rung, engine, engine === undefined ? undefined : recommendedModel(engine), input) ?? [];
+  });
+  const allOptions = allFamilyOptions(input, byId);
+  const defaultPick = ladder.find((candidate) => candidate.eligible);
+  const defaultFamily =
+    defaultPick === undefined ? null : familyOf(defaultPick.model, defaultPick.engine);
+  const preferredFamily =
+    input.preferredFamily !== undefined &&
+    input.preferredFamily !== null &&
+    isKnownFamily(input.preferredFamily)
+      ? input.preferredFamily
+      : null;
+  const manualFamily =
+    input.explicit === null ? null : familyOf(input.explicit.model, input.explicit.engine);
+  const autoFamily = preferredFamily ?? defaultFamily;
+  const machineFamily = input.explicit === null ? autoFamily : manualFamily;
+  const source =
+    input.explicit !== null
+      ? 'manual'
+      : preferredFamily !== null
+        ? 'preferred'
+        : 'default';
+  const members =
+    autoFamily === null ? [] : allOptions.filter((option) => option.family === autoFamily);
+  const ordered = familyOrder(members);
+  const rankedPicks = ordered.ranked.map((group) => group.pick);
+  const rankedAlternates = ordered.ranked.flatMap((group) =>
+    group.variants.filter((variant) => variant !== group.pick),
+  );
+  const failedPicks = ordered.failed.map((group) => group.pick);
+  const familyKeys = new Set(members.map(candidateKey));
+  const rest = ladder.filter((candidate) => !familyKeys.has(candidateKey(candidate)));
+  const autoOptions = [...rankedPicks, ...rankedAlternates, ...failedPicks];
   const candidates = [
-    ...ladder.filter((c) => c.eligible),
-    ...ladder.filter((c) => !c.eligible),
-    ...extra,
+    ...autoOptions,
+    ...rest.filter((candidate) => candidate.eligible),
+    ...ordered.ineligible.map((group) => group.pick),
+    ...rest.filter((candidate) => !candidate.eligible),
   ];
+  const extra = input.engines.flatMap((e) => uncalibrated(e, input.installed) ?? []);
+  candidates.push(...extra);
   const first = candidates.find((c) => c.eligible);
   const automatic = first === undefined ? null : target(first);
   const { explicit } = input;
   const recommended =
     explicit === null ? automatic : { ...explicit, reason: 'explicit selection', explicit: true };
-  return { candidates, recommended, automatic };
+  return {
+    candidates,
+    recommended,
+    automatic,
+    machine:
+      machineFamily === null ? null : machineView(machineFamily, source, allOptions, allOptions),
+  };
+}
+
+function candidateKey(candidate: Pick<Candidate, 'engine' | 'model' | 'device'>): string {
+  return `${candidate.engine}|${candidate.model}|${candidate.device ?? ''}`;
+}
+
+function measuredOption(view: MeasurementView | undefined): {
+  measured: Measured | null;
+  failed: MeasurementView['failed'];
+} {
+  return { measured: view?.ok ?? null, failed: view?.failed ?? null };
+}
+
+function makeMachineOption(
+  rung: Rung,
+  engine: SelectorEngine,
+  model: ModelDescriptor,
+  input: SelectorInput,
+): MachineOption | undefined {
+  const candidate = rungCandidate(rung, engine, model, input);
+  if (candidate === undefined) return undefined;
+  const active = input.active;
+  const activeDevice =
+    active?.device === rung.device ||
+    (active?.device === 'auto' && active.resolvedDevice === rung.device);
+  const measurement = measuredOption(
+    input.measurements?.get(`${rung.engine}|${model.id}|${rung.device ?? ''}`),
+  );
+  return {
+    ...candidate,
+    family: familyId(model),
+    quant: model.quant ?? null,
+    downloaded: input.present?.get(`${rung.engine}|${model.id}`) ?? false,
+    calibrated: engine.calibrated,
+    active:
+      active?.engine === rung.engine && active.model === model.id && activeDevice,
+    measured: measurement.measured,
+    failed: measurement.failed,
+    recommended: model.recommended === true,
+  };
+}
+
+function allFamilyOptions(
+  input: SelectorInput,
+  engines: ReadonlyMap<string, SelectorEngine>,
+): MachineOption[] {
+  return LADDER.flatMap((rung) => {
+    const engine = engines.get(rung.engine);
+    if (engine === undefined) return [];
+    return engine.models.flatMap((model) => makeMachineOption(rung, engine, model, input) ?? []);
+  });
 }
