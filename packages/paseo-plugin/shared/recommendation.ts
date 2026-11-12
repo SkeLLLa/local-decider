@@ -181,7 +181,7 @@ const DEVICE_BACKENDS: Record<string, string> = {
 };
 
 /** The backend an engine runs on, from the device it was started with. */
-function backendOf(engine: string | null, device: string | null): string | null {
+export function backendOf(engine: string | null, device: string | null): string | null {
   if (engine === 'fastflowlm') {
     return 'NPU';
   }
@@ -364,7 +364,7 @@ export function suggestionView(
   };
 }
 
-function minutes(seconds: number): string {
+export function minutes(seconds: number): string {
   if (seconds < 60) {
     return 'under a minute';
   }
