@@ -38,7 +38,7 @@ import type {
   HostInfo,
   ModelDescriptor,
 } from './engines/descriptor.ts';
-import { cachedFlmVersion } from './engines/fastflowlm/status.ts';
+import { cachedFlmVersion, FLM_INSTALL_URL } from './engines/fastflowlm/status.ts';
 import {
   invalidateHostCapabilities,
   probeHostCapabilities,
@@ -67,6 +67,7 @@ import {
   probe,
   resolveAll,
   resolveEntry,
+  STRANDS_INSTALL_URL,
   toolchain,
   type PathEntry,
   type PathKey,
@@ -74,6 +75,16 @@ import {
 } from './toolchain.ts';
 
 const SWITCHABLE_ENGINES: readonly EngineId[] = SELECTABLE_IDS;
+
+/** The listed keys of `entry` that are set, so absent ones stay out of the response. */
+function optionalFields(
+  entry: Record<string, unknown> | undefined,
+  keys: readonly string[],
+): Record<string, unknown> {
+  return Object.fromEntries(
+    keys.flatMap((key) => (entry?.[key] === undefined ? [] : [[key, entry[key]]])),
+  );
+}
 
 export interface EngineSelection {
   readonly engine: EngineId;
@@ -727,15 +738,32 @@ export class EngineControl {
     }
   }
 
+  /**
+   * Look for the tools again, so one installed (or removed) since the gateway started is picked
+   * up without a restart. The engine restarts only when its own binary changed.
+   */
+  #rediscover(): void {
+    const next = toolchain(this.#config, this.#paths, this.#env);
+    if (JSON.stringify(next) === JSON.stringify(this.#tools)) {
+      return;
+    }
+    const engine = this.#selected?.engine;
+    const restart =
+      JSON.stringify(next.env) !== JSON.stringify(this.#tools.env) ||
+      (engine === 'fastflowlm' && next.flm !== this.#tools.flm) ||
+      (engine === 'strands-decider' && next.strandsDecider !== this.#tools.strandsDecider);
+    this.#retool(next, restart);
+  }
+
   /** Rebuild the toolchain from the config and restart the engine on it. */
-  #retool(): void {
-    this.#tools = toolchain(this.#config, this.#paths, this.#env);
+  #retool(next: Toolchain = toolchain(this.#config, this.#paths, this.#env), restart = true): void {
+    this.#tools = next;
     invalidateHostCapabilities();
     this.#capabilities = undefined;
     this.#probing = false;
     this.#generation += 1;
     this.#status.reset(this.#context());
-    if (this.#selected !== null) {
+    if (restart && this.#selected !== null) {
       const sel = this.#selected;
       this.#pending = this.#pending
         .then(() => this.#apply(sel, true, !this.#auto))
@@ -777,6 +805,7 @@ export class EngineControl {
 
   /** The `GET /v1/engines` view. */
   async status(): Promise<Record<string, unknown>> {
+    this.#rediscover();
     this.#discoverAll();
     const models = this.#catalogModels();
     const installed = await this.#installed(models);
@@ -920,8 +949,9 @@ export class EngineControl {
         available: strandsInstalled,
         detail: strandsInstalled
           ? this.#tools.strandsDecider
-          : 'not installed; run `local-decider engine install`',
+          : 'Not found on PATH or in the local-decider venv; run `local-decider engine install`.',
         validation: null,
+        ...(strandsInstalled ? {} : { installUrl: STRANDS_INSTALL_URL }),
       },
       {
         id: 'fastflowlm',
@@ -929,8 +959,9 @@ export class EngineControl {
         available: flmInstalled && validation?.ok !== false,
         detail: flmInstalled
           ? (cachedFlmVersion(this.#tools.flm) ?? this.#tools.flm)
-          : 'not installed; run `local-decider engine install --engine fastflowlm`',
+          : 'FastFlowLM not found on PATH. Install it with your package manager or the upstream installer, or set its path below.',
         validation,
+        ...(flmInstalled ? {} : { installUrl: FLM_INSTALL_URL }),
       },
       ...OPENAI_LIKE_ENGINES.map((id) => this.#openAIDetails(id)),
     ];
@@ -949,7 +980,7 @@ export class EngineControl {
         detail: existing?.['detail'] ?? null,
         devices: [...(engine.devices?.(this.#host) ?? [])],
         validation: existing?.['validation'] ?? null,
-        ...(existing?.['connection'] === undefined ? {} : { connection: existing['connection'] }),
+        ...optionalFields(existing, ['installUrl', 'connection']),
         supported: support.ok,
         ...(support.ok ? {} : { unsupportedReason: support.reason }),
       };

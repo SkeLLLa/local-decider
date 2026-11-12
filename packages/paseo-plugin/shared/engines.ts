@@ -5,7 +5,7 @@
 import { z } from 'zod';
 
 import { connectionSchema, isConnectable, parseConnection } from './connection.ts';
-import { parsePaths, pathEntrySchema } from './paths.ts';
+import { httpsUrl, parsePaths, pathEntrySchema } from './paths.ts';
 import {
   AUTO_ENGINE,
   AUTO_OPTION_LABEL,
@@ -42,6 +42,8 @@ const engineSchema = z.object({
   /** True when the gateway reports connection settings for this engine (OpenAI-like, new gateways). */
   connectable: z.boolean(),
   connection: connectionSchema.nullable(),
+  /** Where to install a missing engine; https only, null when installed or unknown. */
+  installUrl: text,
 });
 
 const modelSchema = z.object({
@@ -219,6 +221,7 @@ function parseEngine(value: unknown): EngineInfo | null {
     // Only a gateway that sends the `connection` key (null or an object) can save one.
     connectable: isConnectable(id) && 'connection' in v,
     connection: parseConnection(v['connection']),
+    installUrl: httpsUrl(v['installUrl']),
   };
 }
 

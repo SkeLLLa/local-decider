@@ -5,7 +5,7 @@ import { describe, it } from 'node:test';
 
 import { parseConfig } from '../src/config.ts';
 import type { HostInfo } from '../src/engines/descriptor.ts';
-import { flmServeArgs, managedFlm } from '../src/engines/fastflowlm/server.ts';
+import { flmServeArgs } from '../src/engines/fastflowlm/server.ts';
 import { modelFits } from '../src/models.ts';
 import { checkPath, resolveAll, resolveEntry, toolchain } from '../src/toolchain.ts';
 import { tempPaths } from './helpers.ts';
@@ -30,20 +30,33 @@ function executable(path: string): string {
 }
 
 describe('toolchain discovery', () => {
-  it('prefers config over the managed install over PATH', () => {
+  it('finds flm on PATH only, never a copy under the data directory, and config wins', () => {
     const paths = tempPaths();
     const bin = join(paths.data, 'bin');
+    const config = parseConfig({});
+    executable(join(paths.engines, 'fastflowlm', '1.0.12', 'dist', 'flm'));
+    assert.equal(resolveEntry('tools.flm', config, paths, { PATH: '' }).source, 'missing');
     const onPath = executable(join(bin, 'flm'));
     const env = { PATH: bin };
-    const config = parseConfig({});
-    assert.equal(resolveEntry('tools.flm', config, paths, env).source, 'path');
-    const managed = executable(join(paths.engines, 'fastflowlm', '1.0.12', 'dist', 'flm'));
-    executable(join(paths.engines, 'fastflowlm', '1.0.9', 'dist', 'flm'));
-    assert.equal(managedFlm(paths), managed, 'newest version wins');
-    assert.equal(resolveEntry('tools.flm', config, paths, env).effective, managed);
-    const fromConfig = parseConfig({ tools: { flm: onPath } });
+    const found = resolveEntry('tools.flm', config, paths, env);
+    assert.deepEqual([found.source, found.effective], ['path', onPath]);
+    const fromConfig = parseConfig({ tools: { flm: '/opt/fastflowlm/bin/flm' } });
     const entry = resolveEntry('tools.flm', fromConfig, paths, env);
-    assert.deepEqual([entry.source, entry.value], ['config', onPath]);
+    assert.deepEqual([entry.source, entry.value], ['config', '/opt/fastflowlm/bin/flm']);
+  });
+
+  it('prefers a strands-decider on PATH over the managed venv', () => {
+    const paths = tempPaths();
+    const config = parseConfig({});
+    const managed = executable(join(paths.venvs, 'strands-decider', 'bin', 'strands-decider'));
+    assert.equal(
+      resolveEntry('tools.strandsDecider', config, paths, { PATH: '' }).effective,
+      managed,
+    );
+    const bin = join(paths.data, 'bin');
+    const system = executable(join(bin, 'strands-decider'));
+    const entry = resolveEntry('tools.strandsDecider', config, paths, { PATH: bin });
+    assert.deepEqual([entry.source, entry.effective], ['path', system]);
   });
 
   it('reports missing tools and sets model-store env only for overrides', () => {

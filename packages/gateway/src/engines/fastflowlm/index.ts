@@ -15,7 +15,7 @@ const flmSchema = z.strictObject({
     .string()
     .regex(/^[a-z0-9][a-z0-9.-]*:[a-z0-9][a-z0-9.-]*$/)
     .default(DEFAULT_FLM_MODEL),
-  /** The `flm` launcher; default: the managed install (`local-decider engine install --engine fastflowlm`). */
+  /** The `flm` launcher; default: `tools.flm`, else `flm` on PATH (installed by the user). */
   binary: z.string().min(1).optional(),
   /** Attach to a running `flm serve --decision` instead of spawning one. */
   url: z.url().optional(),

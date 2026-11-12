@@ -4,7 +4,7 @@ import { basename, delimiter, isAbsolute, join } from 'node:path';
 
 import type { GatewayConfig } from './config.ts';
 import type { HostInfo } from './engines/descriptor.ts';
-import { managedFlm } from './engines/fastflowlm/server.ts';
+import { FLM_INSTALL_URL } from './engines/fastflowlm/status.ts';
 import { hostInfo } from './engines/host.ts';
 import { engineDescriptor, type EngineId } from './engines/registry.ts';
 import { strandsBinary } from './engines/strands/server.ts';
@@ -52,6 +52,10 @@ interface PathDef {
   ) => readonly [PathSource, string | undefined][];
 }
 
+/** Where to read how to install strands-decider; a fixed https constant. */
+export const STRANDS_INSTALL_URL =
+  'https://github.com/ziptie-soft/local-decider/blob/master/docs/install.md#2-engine';
+
 export function onPath(name: string, env: NodeJS.ProcessEnv): string | undefined {
   for (const dir of (env['PATH'] ?? '').split(delimiter)) {
     const candidate = join(dir, name);
@@ -75,20 +79,19 @@ const DEFS: Readonly<Record<PathKey, PathDef>> = {
     kind: 'executable',
     engine: 'fastflowlm',
     tool: 'flm',
-    installUrl: 'https://github.com/FastFlowLM/FastFlowLM',
-    auto: (paths, env) => [
-      ['managed', managedFlm(paths)],
-      ['path', onPath('flm', env)],
-    ],
+    installUrl: FLM_INSTALL_URL,
+    // Installed by the user (dnf, apt or the upstream installer); the gateway never downloads it.
+    auto: (_paths, env) => [['path', onPath('flm', env)]],
   },
   'tools.strandsDecider': {
     label: 'strands-decider',
     kind: 'executable',
     tool: 'strands-decider',
-    installUrl: 'https://github.com/ziptie-soft/local-decider/blob/master/docs/install.md#2-engine',
+    installUrl: STRANDS_INSTALL_URL,
+    // A system-wide install wins over the venv `local-decider engine install` prepares.
     auto: (paths, env) => [
-      ['managed', strandsBinary(paths)],
       ['path', onPath('strands-decider', env)],
+      ['managed', strandsBinary(paths)],
     ],
   },
   'tools.uv': {

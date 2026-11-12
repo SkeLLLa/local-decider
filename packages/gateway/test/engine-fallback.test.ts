@@ -89,7 +89,7 @@ class ScriptedEngine implements Engine {
 }
 
 function fakeBinaries(paths: Paths): void {
-  const flm = join(paths.engines, 'fastflowlm', '1.0.12', 'dist');
+  const flm = join(paths.data, 'bin');
   const strands = join(paths.venvs, 'strands-decider', 'bin');
   for (const [dir, name] of [
     [flm, 'flm'],
@@ -134,7 +134,7 @@ function setup(raw: Record<string, unknown>, timeoutMs = 1000): Setup {
   const control = new EngineControl({
     store,
     paths,
-    env: { PATH: '' },
+    env: { PATH: join(paths.data, 'bin') },
     host: LINUX,
     totalMemory: 64e9,
     installed: async (ids) => new Map(ids.map((id) => [id, true])),

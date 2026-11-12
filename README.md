@@ -141,10 +141,12 @@ local-decider gateway status
 ```
 
 `engine install` takes `--flavor cpu|mlx|cuda`, `--model <id>` and `--no-download`. On Linux with
-an AMD Ryzen AI NPU, install FastFlowLM instead and pick it in Paseo's settings:
+an AMD Ryzen AI NPU, install [FastFlowLM](https://github.com/FastFlowLM/FastFlowLM) yourself with
+your package manager or its installer (local-decider never downloads it), then pull a model and
+pick it in Paseo's settings:
 
 ```sh
-local-decider engine install --engine fastflowlm --model d3:mini   # sha256-checked, runs flm validate
+local-decider engine install --engine fastflowlm --model d3:mini   # uses your flm: validate, pull
 ```
 
 Check that it answers:

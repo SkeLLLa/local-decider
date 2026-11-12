@@ -33,7 +33,7 @@ function str(value: unknown, max = 500): string | null {
 }
 
 /** An https URL (at most 500 characters) or null; anything else is dropped. */
-function httpsUrl(value: unknown): string | null {
+export function httpsUrl(value: unknown): string | null {
   const text = str(value);
   return text !== null && /^https:\/\/[^\s/]+/i.test(text) ? text : null;
 }

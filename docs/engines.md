@@ -11,7 +11,7 @@ the Paseo settings page all read it. Decision architecture is in
 | id | Label | Platforms | Devices | Install | Calibrated | Models |
 |---|---|---|---|---|---|---|
 | `strands-decider` | Strands Decider | all | Apple Silicon: `auto`, `cpu`, `mlx`, `mps`; Linux: `auto`, `cpu`, `cuda`; else `auto`, `cpu` | `local-decider engine install [--flavor cpu\|mlx\|cuda]` | yes | Catalogue in `engines/strands/models.ts`, downloaded from Hugging Face |
-| `fastflowlm` | FastFlowLM (AMD NPU) | Linux (x86_64 for the installer) | none | `local-decider engine install --engine fastflowlm` | yes | Catalogue in `engines/fastflowlm/models.ts`, pulled with `flm pull` |
+| `fastflowlm` | FastFlowLM (AMD NPU) | Linux | none | install FastFlowLM yourself (distribution package or upstream installer); `local-decider engine install --engine fastflowlm` validates and pulls a model | yes | Catalogue in `engines/fastflowlm/models.ts`, pulled with `flm pull` |
 | `openai-compatible` | OpenAI-compatible | all | none | nothing to install: start your server | **no** | Discovered from the server's `/models` |
 | `lmstudio` | LM Studio | macOS, Linux | none | nothing to install: `lms server start`, load a model | **no** | Discovered from the server's `/models`; defaults `api: chat`, `maxTokens: 8`, `promptSuffix: /no_think` |
 | `systemone-remote` | SystemOne Remote | all | none | nothing to install | yes | none; not selectable, pinned to `engine.url` |
