@@ -1,15 +1,25 @@
+import type { SystemOneRequest, SystemOneResponse } from '@ziptie-soft/local-decider-core';
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
 import {
   BenchmarkError,
+  BenchmarkRunner,
   parseBenchmarkRequest,
   resolveTargets,
+  type BenchEngine,
+  type BenchSelection,
+  type BenchmarkHost,
   type BenchmarkInventory,
+  type BenchmarkLease,
+  type BenchmarkView,
   type BenchmarkRequest,
   type InventoryEngine,
   type InventoryModel,
 } from '../src/benchmark-job.ts';
+import { MemoryBenchmarkStore, type BenchmarkStore } from '../src/benchmark-store.ts';
+import type { RuntimeStamp } from '../src/engines/descriptor.ts';
+import { GATEWAY_VERSION } from '../src/version.ts';
 
 function rejects(body: unknown, status: 400 | 409, pattern: RegExp): void {
   assert.throws(
@@ -425,5 +435,512 @@ describe('resolveTargets: only missing', () => {
       409,
       /nothing to benchmark: every target already has a result/,
     );
+  });
+});
+
+// ── BenchmarkRunner ──────────────────────────────────────────────────────────────────────────
+
+const RESPONSE = {
+  answers: { outcome: { type: 'choice', choice: 'done' } },
+  usage: { input_tokens: 5 },
+} as unknown as SystemOneResponse;
+
+interface FakeEngineSpec {
+  loadError?: Error;
+  ensureReady?: (signal: AbortSignal) => Promise<void>;
+  decide?: (request: SystemOneRequest, signal: AbortSignal) => Promise<SystemOneResponse>;
+  backend?: string;
+}
+
+/** Rejects when `signal` aborts, else never settles until `release` is called. */
+function gate(): {
+  wait: (signal: AbortSignal) => Promise<SystemOneResponse>;
+  entered: Promise<void>;
+  release: () => void;
+} {
+  const open = Promise.withResolvers<void>();
+  const entered = Promise.withResolvers<void>();
+  return {
+    entered: entered.promise,
+    release: () => {
+      open.resolve();
+    },
+    wait: async (signal) => {
+      entered.resolve();
+      await new Promise<void>((resolve, reject) => {
+        void open.promise.then(resolve);
+        signal.addEventListener('abort', () => {
+          reject(new Error('aborted'));
+        });
+      });
+      return RESPONSE;
+    },
+  };
+}
+
+function hang(signal: AbortSignal): Promise<void> {
+  return new Promise((_resolve, reject) => {
+    signal.addEventListener('abort', () => {
+      reject(new Error('timed out'));
+    });
+  });
+}
+
+class FakeHost implements BenchmarkHost {
+  readonly calls: string[] = [];
+  readonly clock = { t: 1_700_000_000_000 };
+  readonly controller = new AbortController();
+  readonly engines = new Map<string, FakeEngineSpec>();
+  readonly host = { platform: 'linux', arch: 'x64', totalMemoryBytes: 1 } as const;
+  readonly flags: { preempted: 'superseded' | 'config-changed' | null } = { preempted: null };
+  endResult = { ok: true, error: null as string | null };
+  swapHook: (key: string) => Promise<void> | void = () => undefined;
+  active = 0;
+  maxActive = 0;
+  readonly lease: BenchmarkLease;
+
+  constructor() {
+    const { flags } = this;
+    this.lease = {
+      signal: this.controller.signal,
+      abort: (reason) => {
+        this.controller.abort(reason);
+      },
+      get preempted() {
+        return flags.preempted;
+      },
+      snapshot: {
+        mode: 'auto',
+        selection: { engine: 'fastflowlm', model: 'd3:nano', device: null },
+        family: 'f/nano',
+      },
+    };
+  }
+
+  beginBenchmark(): BenchmarkLease {
+    this.calls.push('begin');
+    return this.lease;
+  }
+
+  async benchmarkSwap(_lease: BenchmarkLease, t: BenchSelection): Promise<BenchEngine> {
+    const key = `${t.engine}:${t.model}`;
+    this.calls.push(`swap ${key}`);
+    await this.swapHook(key);
+    const spec = this.engines.get(key) ?? {};
+    if (spec.loadError !== undefined) {
+      throw spec.loadError;
+    }
+    return {
+      decide: async (req, signal) => {
+        if (spec.decide !== undefined) {
+          return spec.decide(req, signal);
+        }
+        this.active += 1;
+        this.maxActive = Math.max(this.maxActive, this.active);
+        await Promise.resolve();
+        this.active -= 1;
+        return RESPONSE;
+      },
+      ...(spec.ensureReady === undefined ? {} : { ensureReady: spec.ensureReady }),
+      health: () => (spec.backend === undefined ? {} : { backend: spec.backend }),
+    };
+  }
+
+  async endBenchmark(
+    _lease: BenchmarkLease,
+    o: { restore: boolean },
+  ): Promise<{ ok: boolean; error: string | null }> {
+    this.calls.push(`end restore=${String(o.restore)}`);
+    return this.endResult;
+  }
+
+  async benchmarkInventory(): Promise<BenchmarkInventory> {
+    return inventory();
+  }
+
+  async checkBenchmarkTarget(t: BenchSelection): Promise<void> {
+    this.calls.push(`check ${t.engine}:${t.model}`);
+  }
+
+  async refreshStamps(stampKeys: readonly string[]): Promise<void> {
+    this.calls.push(`stamps ${stampKeys.join(',')}`);
+  }
+
+  stampFor(): RuntimeStamp | undefined {
+    return { runtime: 'llama.cpp b1', model: null };
+  }
+
+  fingerprint(): string | undefined {
+    return 'fp1';
+  }
+}
+
+const THREE = [
+  { engine: 'fastflowlm', model: 'd3:lite', device: null },
+  { engine: 'llama-vulkan', model: 'lite-q4', device: null },
+  { engine: 'fastflowlm', model: 'd3:mini', device: null },
+];
+
+function job(over: Record<string, unknown> = {}): BenchmarkRequest {
+  return parseBenchmarkRequest({ targets: THREE, sizes: [256], runs: 1, client: 'cli', ...over });
+}
+
+function setup(store: BenchmarkStore = new MemoryBenchmarkStore()): {
+  host: FakeHost;
+  store: BenchmarkStore;
+  runner: BenchmarkRunner;
+} {
+  const host = new FakeHost();
+  const runner = new BenchmarkRunner({ host, store, now: () => host.clock.t });
+  return { host, store, runner };
+}
+
+describe('BenchmarkRunner: a run', () => {
+  it('measures one target at a time, in order, and stores one record each', async () => {
+    const { host, store, runner } = setup();
+    host.engines.set('fastflowlm:d3:lite', { backend: 'NPU' });
+    const started = await runner.start(job());
+    assert.equal(started.state, 'running');
+    assert.equal(started.id, 'bench-1');
+    await runner.settled();
+    assert.equal(host.maxActive, 1);
+    assert.deepEqual(host.calls, [
+      'check fastflowlm:d3:lite',
+      'check llama-vulkan:lite-q4',
+      'check fastflowlm:d3:mini',
+      'begin',
+      'swap fastflowlm:d3:lite',
+      'stamps fastflowlm|d3:lite',
+      'swap llama-vulkan:lite-q4',
+      'stamps llama-vulkan|lite-q4',
+      'swap fastflowlm:d3:mini',
+      'stamps fastflowlm|d3:mini',
+      'end restore=true',
+    ]);
+    const records = store.records();
+    assert.equal(records.length, 3);
+    const first = records[0];
+    assert.equal(first?.jobId, 'bench-1');
+    assert.equal(first?.engine, 'fastflowlm');
+    assert.equal(first?.family, 'f/lite');
+    assert.equal(first?.status, 'ok');
+    assert.equal(first?.runs, 1);
+    assert.equal(first?.benchVersion, 1);
+    assert.equal(first?.gatewayVersion, GATEWAY_VERSION);
+    assert.equal(first?.runtime, 'llama.cpp b1');
+    assert.equal(first?.fingerprint, 'fp1');
+    assert.equal(first?.backend, 'NPU');
+    assert.equal(records[1]?.backend, 'Vulkan');
+    assert.deepEqual(
+      first?.sizes.map((x) => x.targetTokens),
+      [256, 1024],
+    );
+    assert.equal(first?.sizes[0]?.inputTokens, 5);
+    assert.equal(first?.sizes[0]?.answer, 'done');
+    assert.equal(typeof first?.loadMs, 'number');
+    const view = await runner.view();
+    assert.equal(view.state, 'done');
+    assert.equal(view.completed, 3);
+    assert.equal(view.failed, 0);
+    assert.equal(view.restoredOk, true);
+    assert.equal(view.cancelReason, null);
+    assert.ok(view.finishedAt !== null);
+    assert.deepEqual(
+      view.targets.map((t) => t.state),
+      ['done', 'done', 'done'],
+    );
+    assert.equal(runner.progress(), null);
+  });
+
+  it('skips larger sizes after a size fails, and keeps the sizes that worked', async () => {
+    const { host, store, runner } = setup();
+    host.engines.set('fastflowlm:d3:lite', {
+      decide: async (req) => {
+        if ((req.state as string).length > 10_000) throw new Error('context overflow');
+        return RESPONSE;
+      },
+    });
+    await runner.start(job({ targets: [THREE[0]], sizes: [256, 1024, 3800, 4096] }));
+    await runner.settled();
+    const view = await runner.view();
+    const sizes = view.targets[0]?.sizes ?? [];
+    assert.deepEqual(
+      sizes.map((s) => [s.targetTokens, s.p50Ms === null ? s.error : 'ok']),
+      [
+        [256, 'ok'],
+        [1024, 'ok'],
+        [3800, 'context overflow'],
+        [4096, 'skipped after failure at 3800 tokens'],
+      ],
+    );
+    assert.equal(view.targets[0]?.state, 'done');
+    assert.deepEqual(
+      store.records()[0]?.sizes.map((s) => s.targetTokens),
+      [256, 1024],
+    );
+  });
+
+  it('marks a target failed when every size fails', async () => {
+    const { host, store, runner } = setup();
+    host.engines.set('fastflowlm:d3:lite', {
+      decide: async () => {
+        throw new Error('boom');
+      },
+    });
+    await runner.start(job({ targets: [THREE[0]] }));
+    await runner.settled();
+    const view = await runner.view();
+    assert.equal(view.targets[0]?.state, 'failed');
+    assert.equal(view.targets[0]?.error, 'boom');
+    assert.equal(store.records()[0]?.status, 'failed');
+    assert.equal(store.records()[0]?.error, 'boom');
+    assert.equal(view.failed, 1);
+    assert.equal(view.state, 'done');
+  });
+
+  it('continues after a load failure and after a load timeout', async () => {
+    const { host, store } = setup();
+    host.engines.set('fastflowlm:d3:lite', { loadError: new Error('engine would not start') });
+    host.engines.set('llama-vulkan:lite-q4', { ensureReady: hang });
+    const timed = new BenchmarkRunner({ host, store, now: () => host.clock.t, loadTimeoutMs: 20 });
+    await timed.start(job());
+    await timed.settled();
+    const view = await timed.view();
+    assert.deepEqual(
+      view.targets.map((t) => [t.state, t.error]),
+      [
+        ['failed', 'engine would not start'],
+        ['failed', 'timed out'],
+        ['done', null],
+      ],
+    );
+    assert.equal(view.failed, 2);
+    assert.deepEqual(
+      store.records().map((r) => r.status),
+      ['failed', 'failed', 'ok'],
+    );
+    assert.equal(store.records()[0]?.loadMs, null);
+  });
+
+  it('ends failed, and restores, when something unexpected throws', async () => {
+    class Broken extends MemoryBenchmarkStore {
+      override append(): void {
+        throw new Error('disk full');
+      }
+    }
+    const { host, runner } = setup(new Broken());
+    await runner.start(job());
+    await runner.settled();
+    const view = await runner.view();
+    assert.equal(view.state, 'failed');
+    assert.equal(view.error, 'disk full');
+    assert.equal(view.restoredOk, true);
+    assert.equal(host.calls.at(-1), 'end restore=true');
+  });
+
+  it('reports a restore that failed', async () => {
+    const { host, runner } = setup();
+    host.endResult = { ok: false, error: 'engine would not start' };
+    await runner.start(job({ targets: [THREE[0]] }));
+    await runner.settled();
+    const view = await runner.view();
+    assert.equal(view.state, 'done');
+    assert.equal(view.restoredOk, false);
+    assert.equal(view.restoreError, 'engine would not start');
+    assert.deepEqual(view.restore, {
+      mode: 'auto',
+      engine: 'fastflowlm',
+      model: 'd3:nano',
+      device: null,
+      family: 'f/nano',
+    });
+  });
+});
+
+describe('BenchmarkRunner: cancel and preempt', () => {
+  it('cancelling mid-target discards it, keeps finished ones and restores', async () => {
+    const { host, store, runner } = setup();
+    const hold = gate();
+    host.engines.set('llama-vulkan:lite-q4', { decide: async (_r, signal) => hold.wait(signal) });
+    await runner.start(job());
+    await hold.entered;
+    const cancelling = runner.cancel('user');
+    assert.equal(cancelling.state, 'cancelling');
+    await runner.settled();
+    const view = await runner.view();
+    assert.equal(view.state, 'cancelled');
+    assert.equal(view.cancelReason, 'user');
+    assert.deepEqual(
+      view.targets.map((t) => t.state),
+      ['done', 'discarded', 'not-run'],
+    );
+    assert.deepEqual(view.targets[1]?.sizes, []);
+    assert.equal(store.records().length, 1);
+    assert.equal(host.calls.at(-1), 'end restore=true');
+    assert.equal(view.restoredOk, true);
+    assert.equal(view.completed, 1);
+  });
+
+  it('a preempted job ends cancelled without restoring', async () => {
+    const { host, store, runner } = setup();
+    const hold = gate();
+    host.engines.set('fastflowlm:d3:lite', { decide: async (_r, signal) => hold.wait(signal) });
+    await runner.start(job());
+    await hold.entered;
+    host.flags.preempted = 'superseded';
+    host.lease.abort('superseded');
+    assert.equal((await runner.view()).state, 'cancelling');
+    await runner.settled();
+    const view = await runner.view();
+    assert.equal(view.state, 'cancelled');
+    assert.equal(view.cancelReason, 'superseded');
+    assert.equal(view.restoredOk, null);
+    assert.deepEqual(
+      view.targets.map((t) => t.state),
+      ['discarded', 'not-run', 'not-run'],
+    );
+    assert.equal(store.records().length, 0);
+    assert.equal(host.calls.at(-1), 'end restore=false');
+  });
+
+  it('a shutdown cancel does not restore', async () => {
+    const { host, runner } = setup();
+    const hold = gate();
+    host.engines.set('fastflowlm:d3:lite', { decide: async (_r, signal) => hold.wait(signal) });
+    await runner.start(job());
+    await hold.entered;
+    runner.cancel('shutdown');
+    await runner.settled();
+    assert.equal(host.calls.at(-1), 'end restore=false');
+    assert.equal((await runner.view()).cancelReason, 'shutdown');
+  });
+
+  it('refuses a second start and a cancel with nothing running', async () => {
+    const { host, runner } = setup();
+    assert.throws(
+      () => runner.cancel('user'),
+      (e: unknown) =>
+        e instanceof BenchmarkError &&
+        e.status === 409 &&
+        /no benchmark is running/.test(e.message),
+    );
+    const hold = gate();
+    host.engines.set('fastflowlm:d3:lite', { decide: async (_r, signal) => hold.wait(signal) });
+    const first = runner.start(job());
+    await assert.rejects(runner.start(job()), /already running/);
+    await first;
+    await hold.entered;
+    await assert.rejects(runner.start(job()), /already running \(bench-1\)/);
+    hold.release();
+    await runner.settled();
+    assert.equal((await runner.view()).state, 'done');
+    const second = await runner.start(job({ targets: [THREE[0]] }));
+    assert.equal(second.id, 'bench-2');
+    await runner.settled();
+  });
+
+  it('does not begin a lease when no target resolves', async () => {
+    const { host, runner } = setup();
+    await assert.rejects(
+      runner.start(job({ targets: [{ engine: 'llama-vulkan', model: 'nope' }] })),
+      /unknown model "nope"/,
+    );
+    assert.deepEqual(host.calls, []);
+    assert.equal((await runner.view()).state, 'idle');
+  });
+});
+
+describe('BenchmarkRunner: view, progress and ETA', () => {
+  it('has an idle view with a preview of an installed run', async () => {
+    const { runner } = setup();
+    const view = await runner.view();
+    assert.equal(view.state, 'idle');
+    assert.equal(view.id, null);
+    assert.equal(view.total, 0);
+    assert.deepEqual(view.preview, { total: 7, etaSeconds: 420, excluded: ['openai-compatible'] });
+    assert.equal(runner.progress(), null);
+  });
+
+  it('shows the live phase, current target and prompt size, with no preview', async () => {
+    const { host, runner } = setup();
+    const box: { seen: BenchmarkView | null } = { seen: null };
+    host.engines.set('fastflowlm:d3:lite', {
+      decide: async () => {
+        box.seen ??= await runner.view();
+        return RESPONSE;
+      },
+    });
+    const started = await runner.start(job({ targets: [THREE[0]] }));
+    assert.equal(started.startedBy, 'cli');
+    assert.deepEqual(started.sizes, [256, 1024]);
+    await runner.settled();
+    const seen = box.seen;
+    assert.equal(seen?.state, 'running');
+    assert.equal(seen?.phase, 'measuring');
+    assert.deepEqual(seen?.current, {
+      engine: 'fastflowlm',
+      model: 'd3:lite',
+      device: null,
+      family: 'f/lite',
+      promptTokens: 256,
+    });
+    assert.equal(seen?.preview, null);
+    assert.deepEqual(
+      seen?.targets.map((t) => t.state),
+      ['measuring'],
+    );
+    const done = await runner.view();
+    assert.equal(done.phase, null);
+    assert.equal(done.current, null);
+    assert.equal(done.etaSeconds, null);
+    assert.ok(done.preview !== null);
+  });
+
+  it('estimates from the last record before a target finishes, then from the mean wall time', async () => {
+    const store = new MemoryBenchmarkStore();
+    const { host, runner } = setup(store);
+    store.append({
+      jobId: 'bench-0',
+      engine: 'fastflowlm',
+      model: 'd3:lite',
+      device: null,
+      family: 'f/lite',
+      quant: null,
+      status: 'ok',
+      error: null,
+      measuredAt: '2026-11-01T00:00:00.000Z',
+      benchVersion: 1,
+      gatewayVersion: GATEWAY_VERSION,
+      runtime: null,
+      modelStamp: null,
+      fingerprint: 'fp1',
+      backend: 'NPU',
+      resolvedDevice: null,
+      runs: 5,
+      loadMs: 4000,
+      sizes: [
+        { targetTokens: 256, inputTokens: 1, p50Ms: 1000, p95Ms: 1, answer: 'done', error: null },
+        { targetTokens: 1024, inputTokens: 1, p50Ms: 2000, p95Ms: 1, answer: 'done', error: null },
+      ],
+    });
+    const etas: (number | null)[] = [];
+    const progress: ({ completed: number; total: number } | null)[] = [];
+    host.swapHook = async () => {
+      etas.push((await runner.view()).etaSeconds);
+      progress.push(runner.progress());
+      host.clock.t += 10_000;
+    };
+    await runner.start(job());
+    await runner.settled();
+    // Target one: 4 s load + (1 s + 2 s) × (1 run + 1 warm-up) = 10 s, plus a minute for each other.
+    assert.equal(etas[0], 130);
+    // Targets two and three remain, each taking the mean of 10 s.
+    assert.equal(etas[1], 20);
+    assert.equal(etas[2], 10);
+    assert.deepEqual(progress, [
+      { completed: 0, total: 3 },
+      { completed: 1, total: 3 },
+      { completed: 2, total: 3 },
+    ]);
   });
 });
