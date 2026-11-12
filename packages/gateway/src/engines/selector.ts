@@ -130,6 +130,13 @@ const LADDER: readonly Rung[] = [
   { engine: 'strands-decider', device: 'cpu', backend: 'CPU', label: 'CPU' },
 ];
 
+/** Where `(engine, device)` sits on the ladder (lower is tried first); engines off it sort last. */
+export function ladderIndex(engine: string, device: string | null): number {
+  const exact = LADDER.findIndex((rung) => rung.engine === engine && rung.device === device);
+  const any = LADDER.findIndex((rung) => rung.engine === engine);
+  return exact >= 0 ? exact : any >= 0 ? any : LADDER.length;
+}
+
 function appleVariant(want: 'mlx' | 'mps'): (c: HostCapabilities) => CapabilityResult {
   return (c) => {
     const confirmed = c.apple.variant === want || (want === 'mps' && c.apple.mps === true);

@@ -14,7 +14,12 @@ import { join } from 'node:path';
 import { describe, it, type TestContext } from 'node:test';
 import { stringify } from 'yaml';
 
-import type { BenchmarkHost, BenchmarkLease } from '../src/benchmark-job.ts';
+import {
+  BenchmarkError,
+  type BenchSelection,
+  type BenchmarkHost,
+  type BenchmarkLease,
+} from '../src/benchmark-job.ts';
 import {
   BENCH_VERSION,
   MemoryBenchmarkStore,
@@ -773,6 +778,152 @@ describe('EngineControl benchmark preemption', () => {
       new AbortController().signal,
     );
     assert.ok(failure.mock.callCount() > 0, 'a failure of that engine is accounted again');
+  });
+});
+
+describe('EngineControl benchmark host', () => {
+  const CAPABILITIES: HostCapabilities = {
+    ...NO_CAPABILITIES,
+    npu: { status: 'available', evidence: 'accel0: host test' },
+    vulkan: { status: 'available', evidence: 'Vulkan0: host test' },
+  };
+
+  function hostSetup(
+    over: Partial<SetupOptions> = {},
+  ): Setup & { benchmarks: MemoryBenchmarkStore; fingerprint: string } {
+    const benchmarks = new MemoryBenchmarkStore();
+    const fingerprint = hardwareFingerprint(
+      { ...LINUX_HOST, totalMemoryBytes: 1e12 },
+      CAPABILITIES,
+    );
+    assert.ok(fingerprint);
+    const made = setup({
+      host: LINUX_HOST,
+      capabilities: () => Promise.resolve(CAPABILITIES),
+      benchmarkStore: benchmarks,
+      llamaServer: true,
+      ...over,
+    });
+    return { ...made, benchmarks, fingerprint };
+  }
+
+  it('describes the machine: engines in ladder order, models, strands devices and the selection', async () => {
+    const { control } = hostSetup({ selection: { mode: 'auto', family: 'vllm-sr/d3-mini' } });
+    const inventory = await control.benchmarkInventory();
+    assert.deepEqual(
+      inventory.engines.map((e) => e.id),
+      ['fastflowlm', 'strands-decider', 'llama-vulkan', 'openai-compatible', 'lmstudio'],
+    );
+    const flm = inventory.engines.find((e) => e.id === 'fastflowlm');
+    assert.deepEqual(flm, {
+      id: 'fastflowlm',
+      selectable: true,
+      available: true,
+      supported: true,
+      installed: true,
+      openaiLike: false,
+    });
+    assert.equal(inventory.engines.find((e) => e.id === 'lmstudio')?.openaiLike, true);
+    assert.equal(inventory.engines.find((e) => e.id === 'llama-vulkan')?.installed, true);
+
+    const mini = inventory.models.find((m) => m.engine === 'fastflowlm' && m.id === 'd3:mini');
+    assert.deepEqual(mini, {
+      engine: 'fastflowlm',
+      id: 'd3:mini',
+      family: 'vllm-sr/d3-mini',
+      downloaded: true,
+      fits: true,
+      recommendedOrder: mini?.recommendedOrder,
+      quant: 'FLM',
+    });
+    const q8 = inventory.models.find((m) => m.id === 'd3-mini-q8_0');
+    const q4 = inventory.models.find((m) => m.id === 'd3-mini-q4_k_m');
+    assert.equal(q8?.family, 'vllm-sr/d3-mini');
+    assert.equal(q8?.quant, 'Q8_0');
+    assert.ok(
+      (q4?.recommendedOrder ?? 99) < (q8?.recommendedOrder ?? 0),
+      'the recommended quant comes first',
+    );
+    const strands = inventory.models.find((m) => m.id === TWOB);
+    assert.equal(strands?.family, `strands-decider:${TWOB}`);
+
+    assert.deepEqual(inventory.strandsDevices, ['cpu']);
+    assert.equal(inventory.current?.engine, 'strands-decider');
+    assert.equal(inventory.preferredFamily, 'vllm-sr/d3-mini');
+    assert.equal(inventory.ladderIndex('fastflowlm', null), 0);
+    assert.equal(inventory.ladderIndex('llama-vulkan', null), 2);
+    assert.equal(inventory.ladderIndex('strands-decider', 'cpu'), 5);
+    assert.equal(inventory.ladderIndex('openai-compatible', null), 6);
+  });
+
+  it('rankable follows the stored records the ranking uses', async () => {
+    const { control, benchmarks, fingerprint } = hostSetup();
+    assert.equal(
+      (await control.benchmarkInventory()).rankable('fastflowlm', 'd3:mini', null),
+      false,
+    );
+    benchmarks.append(measuredRecord('fastflowlm', 'd3:mini', 300, fingerprint));
+    await control.refreshStamps(['fastflowlm|d3:mini'], 5000);
+    const inventory = await control.benchmarkInventory();
+    assert.equal(inventory.rankable('fastflowlm', 'd3:mini', null), true);
+    assert.equal(inventory.rankable('llama-vulkan', 'd3-mini-q4_k_m', null), false);
+    assert.equal(inventory.rankable('fastflowlm', 'd3:mini', 'cuda'), false);
+  });
+
+  it('refuses a benchmark target that cannot run, naming it and why', async () => {
+    const refused = (target: BenchSelection, reason: RegExp) => async (): Promise<void> => {
+      await assert.rejects(
+        hostSetup().control.checkBenchmarkTarget(target),
+        (error: unknown) =>
+          error instanceof BenchmarkError &&
+          error.status === 409 &&
+          error.message.startsWith(`${target.engine} ${target.model}: `) &&
+          reason.test(error.message),
+      );
+    };
+    const { control } = hostSetup();
+    await control.checkBenchmarkTarget({ engine: 'fastflowlm', model: 'd3:mini', device: null });
+    await control.checkBenchmarkTarget({ engine: 'strands-decider', model: TWOB, device: 'cpu' });
+    await refused({ engine: 'nope', model: 'x', device: null }, /not selectable/)();
+    await refused(
+      { engine: 'fastflowlm', model: 'nope', device: null },
+      /unknown fastflowlm model/,
+    )();
+    await refused(
+      { engine: 'strands-decider', model: TWOB, device: 'cuda' },
+      /device cuda is not available/,
+    )();
+    await refused(
+      { engine: 'strands-decider', model: TWOB, device: null },
+      /device auto is not available/,
+    )();
+    const missing = hostSetup({ installed: false });
+    await assert.rejects(
+      missing.control.checkBenchmarkTarget({
+        engine: 'fastflowlm',
+        model: 'd3:nano',
+        device: null,
+      }),
+      (error: unknown) =>
+        error instanceof BenchmarkError &&
+        error.status === 409 &&
+        error.message === 'fastflowlm d3:nano: d3:nano is not downloaded yet',
+    );
+  });
+
+  it('delegates stamps to the cache, and reports the fingerprint and host', async () => {
+    const { control } = hostSetup();
+    assert.equal(control.stampFor('fastflowlm', 'd3:mini'), undefined);
+    assert.equal(control.fingerprint(), undefined, 'not probed yet');
+    assert.equal(control.host.platform, 'linux');
+    assert.equal(control.host.totalMemoryBytes, 1e12);
+    await control.refreshStamps(['fastflowlm|d3:mini'], 5000);
+    assert.ok(control.stampFor('fastflowlm', 'd3:mini'));
+    await control.benchmarkInventory();
+    const fingerprint = control.fingerprint();
+    assert.match(fingerprint ?? '', /^[0-9a-f]{16}$/);
+    await control.benchmarkInventory();
+    assert.equal(control.fingerprint(), fingerprint);
   });
 });
 

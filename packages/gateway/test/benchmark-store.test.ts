@@ -142,6 +142,19 @@ describe('benchmark stores', () => {
     assert.equal(unknown?.view.ok?.provisional, false);
   });
 
+  it('treats a known fingerprint with no stamp read yet as unknown, which does not rank', () => {
+    const prior = { ...record(1), runtime: 'llama.cpp b1', modelStamp: null };
+    const key = 'llama-vulkan|d3-lite-q8_0|';
+    const details = measurementDetailsFor([prior], prior.fingerprint, () => undefined).get(key);
+    assert.equal(details?.view.ok?.freshness, 'unknown');
+    assert.equal(details?.view.ok?.staleReason, null);
+    const fresh = measurementDetailsFor([prior], prior.fingerprint, () => ({
+      runtime: 'llama.cpp b1',
+      model: null,
+    })).get(key);
+    assert.equal(fresh?.view.ok?.freshness, 'fresh');
+  });
+
   it('ignores mismatched fingerprints, unknown bench versions, and unknown catalogue models', () => {
     const accepted = record(1);
     const details = measurementDetailsFor(

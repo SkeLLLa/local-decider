@@ -9,7 +9,15 @@ import { totalmem } from 'node:os';
 import { join } from 'node:path';
 
 import { authoringPrompt } from './authoring.ts';
-import type { BenchEngine, BenchSelection, BenchmarkLease } from './benchmark-job.ts';
+import { buildInventory } from './benchmark-inventory.ts';
+import {
+  BenchmarkError,
+  type BenchEngine,
+  type BenchSelection,
+  type BenchmarkHost,
+  type BenchmarkInventory,
+  type BenchmarkLease,
+} from './benchmark-job.ts';
 import {
   JsonBenchmarkStore,
   measurementDetailsFor,
@@ -469,7 +477,7 @@ function startupKey(config: GatewayConfig): string {
  * and policy modes, variants and rule thresholds. Every change is written to config.yaml, and a changed
  * config.yaml is applied with `applyConfig`.
  */
-export class EngineControl {
+export class EngineControl implements BenchmarkHost {
   readonly switchable: boolean;
   /** False in remote mode (LOCAL_DECIDER_TOKEN set): paths, engine connections, discovery and routing presets stay frozen, so a bearer cannot make the host run binaries or reach new URLs. Loopback writes are guarded by the control token (server.ts). */
   readonly pathsEditable: boolean;
@@ -665,6 +673,88 @@ export class EngineControl {
       lease.finish();
     }
     return { ok: error === null, error };
+  }
+
+  /** What a benchmark job resolves its targets from; probes the host once if needed. */
+  async benchmarkInventory(): Promise<BenchmarkInventory> {
+    const { models, installed, ranking } = await this.#inventorySources();
+    const device = this.#deviceResolution();
+    const memoryDevice = device?.resolved ?? this.#selected?.device;
+    return buildInventory({
+      engines: this.#engines().map((e) => ({
+        id: String(e['id']),
+        available: e['available'] === true,
+        supported: e['supported'] === true,
+        installed: e['installed'] === true,
+        openaiLike: isOpenAILike(String(e['id'])),
+      })),
+      models,
+      installed,
+      fits: (m) => modelFits(m.id, this.#memory, memoryDevice, m.engine as EngineId),
+      candidates: ranking.candidates,
+      current:
+        this.#selected === null
+          ? null
+          : { ...this.#selected, resolvedDevice: device?.resolved ?? null },
+      preferredFamily: this.#config.selection?.family ?? ranking.machine?.family ?? null,
+      measurements: measurementsFor(
+        this.#benchmarkStore.records(),
+        this.#fingerprint(this.#capabilities),
+        (engine, model) => this.#stamps.get(engine, model),
+      ),
+    });
+  }
+
+  /** Throws a 409 `<engine> <model>: <reason>` when the target cannot be benchmarked here. */
+  async checkBenchmarkTarget(target: BenchSelection): Promise<void> {
+    const name = `${target.engine} ${target.model}`;
+    if (!isSelectableEngine(target.engine)) {
+      throw new BenchmarkError(409, `${name}: engine is not selectable`);
+    }
+    const next: EngineSelection = { ...target, engine: target.engine };
+    try {
+      await this.#checkSelectable(next);
+      const { ranking } = await this.#inventorySources();
+      const eligible = ranking.candidates.filter((c) => c.engine === next.engine && c.eligible);
+      if (next.engine === 'strands-decider' && !eligible.some((c) => c.device === next.device)) {
+        throw new EngineSwitchError(409, `device ${next.device ?? 'auto'} is not available here`);
+      }
+    } catch (error) {
+      if (error instanceof EngineSwitchError) {
+        throw new BenchmarkError(409, `${name}: ${error.message}`);
+      }
+      throw error;
+    }
+  }
+
+  refreshStamps(keys: readonly string[], capMs: number): Promise<void> {
+    return this.#stamps.refreshNow(keys, capMs);
+  }
+
+  stampFor(engine: string, model: string): RuntimeStamp | undefined {
+    return this.#stamps.get(engine, model);
+  }
+
+  /** The machine's fingerprint; undefined until the capability probe has finished. */
+  fingerprint(): string | undefined {
+    return this.#fingerprint(this.#capabilities);
+  }
+
+  get host(): HostInfo {
+    return { ...this.#host, totalMemoryBytes: this.#memory };
+  }
+
+  /** The catalogue, what is downloaded and the ranking, after one capability probe. */
+  async #inventorySources(): Promise<{
+    models: ModelDescriptor<EngineId>[];
+    installed: Map<string, boolean>;
+    ranking: Ranking;
+  }> {
+    await this.#ensureCapabilities();
+    const models = this.#catalogModels();
+    const installed = await this.#installed(models);
+    const ranking = this.#rank(this.#capabilities, null, presenceByEngine(models, installed));
+    return { models, installed, ranking };
   }
 
   /** Engine changes that would fight the job for the engine are refused while it runs. */
