@@ -405,6 +405,8 @@ export function parsePathUpdate(body: unknown): { key: PathKey; value: string | 
   return { key: key as PathKey, value };
 }
 
+const PREEMPT_CAP_MS = 10_000;
+
 export interface EngineControlOptions {
   /** Where settings are read and every settings-page change is written (config.yaml). */
   readonly store: ConfigStore;
@@ -425,6 +427,8 @@ export interface EngineControlOptions {
   readonly fallback?: FallbackOptions;
   /** Injected in tests; production reads benchmarks.json once from the data directory. */
   readonly benchmarkStore?: BenchmarkStore;
+  /** Injected in tests: how long a preempting change waits for the benchmark to end. */
+  readonly preemptCapMs?: number;
 }
 
 function lifecycleFrom(config: GatewayConfig): LifecycleOptions {
@@ -437,6 +441,21 @@ function lifecycleFrom(config: GatewayConfig): LifecycleOptions {
 /** The settings a policy reload depends on. */
 function policiesKey(config: GatewayConfig): string {
   return JSON.stringify([config.policies, config.policyDirs]);
+}
+
+function engineSettingsKey(config: GatewayConfig): string {
+  return JSON.stringify([
+    config.selection,
+    config.engine,
+    config.engines,
+    config.tools,
+    config.dirs,
+  ]);
+}
+
+/** Whether an edit touches the engine, its options or the tools it runs on. */
+function engineSettingsChanged(previous: GatewayConfig, config: GatewayConfig): boolean {
+  return engineSettingsKey(previous) !== engineSettingsKey(config);
 }
 
 /** Settings that only take effect when the gateway starts. */
@@ -497,6 +516,7 @@ export class EngineControl {
   #lease: ControlLease | null = null;
   /** Engines built for a benchmark: they never feed fallback accounting. */
   readonly #leasedEngines = new WeakSet<ManagedEngine>();
+  readonly #preemptCapMs: number;
   #leaseGen = 0;
 
   constructor(options: EngineControlOptions) {
@@ -515,6 +535,7 @@ export class EngineControl {
     this.#probeCapabilities =
       options.capabilities ?? ((strandsDecider) => probeHostCapabilities({ strandsDecider }));
     this.#fallbackNow = options.fallback?.now ?? Date.now;
+    this.#preemptCapMs = options.preemptCapMs ?? PREEMPT_CAP_MS;
     this.#fallback = new FallbackPolicy(options.fallback);
     this.pathsEditable = options.pathsEditable ?? true;
     this.#tools = toolchain(config, paths, this.#env);
@@ -653,6 +674,58 @@ export class EngineControl {
     }
   }
 
+  /**
+   * A user change cancels a running benchmark: abort it, wait (capped) for the runner to end the
+   * lease, and drop the lease if it did not, so late benchmark calls become no-ops. Returns the
+   * lease that was preempted, if any. The decider hold stays on until the caller releases it.
+   */
+  async #preemptBenchmark(reason: 'superseded' | 'config-changed'): Promise<ControlLease | null> {
+    const lease = this.#lease;
+    if (lease === null) {
+      return null;
+    }
+    lease.preempted = reason;
+    lease.abort(reason);
+    let timer: NodeJS.Timeout | undefined;
+    const capped = new Promise<void>((resolve) => {
+      timer = setTimeout(resolve, this.#preemptCapMs);
+      timer.unref();
+    });
+    await Promise.race([lease.done, capped]);
+    clearTimeout(timer);
+    if (this.#lease === lease) {
+      this.#lease = null;
+    }
+    return lease;
+  }
+
+  /**
+   * Run a user change that replaces a benchmark's engine. The decider stays held until `mutate`
+   * returns (or throws), so decisions never reach the half-swapped gateway; an engine the change
+   * kept is no longer leased, so its accounting resumes.
+   */
+  async #preempting<T>(
+    reason: 'superseded' | 'config-changed',
+    mutate: (ended: ControlLease | null) => Promise<T>,
+  ): Promise<T> {
+    const ended = await this.#preemptBenchmark(reason);
+    try {
+      return await mutate(ended);
+    } finally {
+      if (ended !== null && this.#lease === null) {
+        this.#leasedEngines.delete(this.#engine);
+        this.#decider?.hold(null);
+      }
+    }
+  }
+
+  /** Install `selection` for good measure, unpersisted, after the running benchmark's swaps. */
+  async #reinstall(selection: EngineSelection): Promise<void> {
+    const run = this.#pending.then(() => this.#apply(selection, false, false));
+    this.#pending = run.catch(() => undefined);
+    await run;
+  }
+
   activeTag(): string {
     return this.#tag(this.#engine.id as EngineId);
   }
@@ -699,6 +772,17 @@ export class EngineControl {
     requestedFamily?: string,
   ): Promise<SelectionModeName> {
     validateSelectionFamily(mode, requestedFamily);
+    this.#requireSwitchable();
+    return this.#preempting('superseded', async (ended) => {
+      // Going manual keeps what the user had running, not the benchmark's last engine.
+      if (ended !== null && mode === 'manual') {
+        await this.#reinstall(ended.snapshot.selection);
+      }
+      return this.#setMode(mode, requestedFamily);
+    });
+  }
+
+  async #setMode(mode: SelectionModeName, requestedFamily?: string): Promise<SelectionModeName> {
     const current = this.#requireSwitchable();
     if (mode === 'auto') {
       const family = requestedFamily ?? familyOf(current.model, current.engine);
@@ -722,7 +806,9 @@ export class EngineControl {
   }
 
   async select(request: EngineRequest): Promise<EngineSelection> {
-    const current = this.#requireSwitchable();
+    this.#requireSwitchable();
+    // Defaults come from what the user had selected, not from a benchmark's swap.
+    const current = this.#lease?.snapshot.selection ?? this.#requireSwitchable();
     const engine = request.engine ?? current.engine;
     const next: EngineSelection = {
       engine,
@@ -730,16 +816,18 @@ export class EngineControl {
       device: engine === 'strands-decider' ? (request.device ?? current.device ?? 'auto') : null,
     };
     await this.#checkSelectable(next);
-    const run = this.#pending.then(() => this.#apply(next, false));
-    this.#pending = run.catch(() => undefined);
-    await run;
-    if (this.#auto) {
-      // Choosing the engine that is already active changes nothing to persist; do it anyway.
-      this.#save([{ path: ['selection'], value: persistedSelection(next) }]);
-      this.#applied = this.#config;
-    }
-    this.#leaveAuto();
-    return next;
+    return this.#preempting('superseded', async () => {
+      const run = this.#pending.then(() => this.#apply(next, false));
+      this.#pending = run.catch(() => undefined);
+      await run;
+      if (this.#auto) {
+        // Choosing the engine that is already active changes nothing to persist; do it anyway.
+        this.#save([{ path: ['selection'], value: persistedSelection(next) }]);
+        this.#applied = this.#config;
+      }
+      this.#leaveAuto();
+      return next;
+    });
   }
 
   // fallow-ignore-next-line unused-class-member -- called through the CONTROL_ROUTES table
@@ -957,6 +1045,17 @@ export class EngineControl {
    * selection take effect now. Returns what needs a restart instead (empty when nothing).
    */
   async applyConfig(): Promise<string[]> {
+    if (this.#lease === null) {
+      return this.#applyConfig(false);
+    }
+    // A policy-only edit leaves a running benchmark alone; anything about the engine ends it.
+    if (!engineSettingsChanged(this.#applied, this.#config)) {
+      return this.#applyConfig(true);
+    }
+    return this.#preempting('config-changed', async () => this.#applyConfig(false));
+  }
+
+  async #applyConfig(keepSelection: boolean): Promise<string[]> {
     const previous = this.#applied;
     const config = this.#config;
     const notes = this.#applyPolicies(previous, config);
@@ -971,7 +1070,9 @@ export class EngineControl {
     if (toolsChanged) {
       this.#retool();
     }
-    await this.#applySelectionConfig(previous, config);
+    if (!keepSelection) {
+      await this.#applySelectionConfig(previous, config);
+    }
     return startupKey(previous) === startupKey(config)
       ? notes
       : [...notes, 'host, port, engine or decisionTimeoutMs changed: restart the gateway to apply'];

@@ -14,7 +14,7 @@ import { join } from 'node:path';
 import { describe, it, type TestContext } from 'node:test';
 import { stringify } from 'yaml';
 
-import type { BenchmarkHost } from '../src/benchmark-job.ts';
+import type { BenchmarkHost, BenchmarkLease } from '../src/benchmark-job.ts';
 import {
   BENCH_VERSION,
   MemoryBenchmarkStore,
@@ -52,14 +52,21 @@ import {
   testConfig,
 } from './helpers.ts';
 
+/** Shared switches of the fake engines: report `failed`, report `ready`, fail on the next decision. */
+interface Flags {
+  on: boolean;
+  ready?: boolean;
+  breakOnDecide?: boolean;
+}
+
 class ModelEngine implements Engine {
   readonly id: string;
   readonly model: string;
   readonly config: EngineConfig;
   started = 0;
   stopped = 0;
-  readonly #failing: { on: boolean; ready?: boolean } | undefined;
-  constructor(config: EngineConfig, failing?: { on: boolean; ready?: boolean }) {
+  readonly #failing: Flags | undefined;
+  constructor(config: EngineConfig, failing?: Flags) {
     this.config = config;
     this.id = config.type;
     this.model = config.model;
@@ -75,6 +82,9 @@ class ModelEngine implements Engine {
     return { state: this.#failing?.ready === true ? 'ready' : 'starting', model: this.model };
   }
   async decide(): Promise<never> {
+    if (this.#failing?.breakOnDecide === true) {
+      this.#failing.on = true;
+    }
     throw new Error('not used');
   }
   async stop(): Promise<void> {
@@ -168,7 +178,8 @@ interface SetupOptions {
   readonly benchmarkStore?: BenchmarkStore;
   readonly llamaServer?: boolean;
   /** While `on`, every engine reports `failed`; with `ready`, `ready` instead of `starting`. */
-  readonly failing?: { on: boolean; ready?: boolean };
+  readonly failing?: Flags;
+  readonly preemptCapMs?: number;
 }
 
 const LINUX_HOST: HostInfo = {
@@ -221,6 +232,7 @@ function setup(options: SetupOptions = {}): Setup {
     totalMemory: options.totalMemory ?? 1e12,
     installed: async (ids) => new Map(ids.map((id) => [id, options.installed ?? true])),
     ...(options.benchmarkStore === undefined ? {} : { benchmarkStore: options.benchmarkStore }),
+    ...(options.preemptCapMs === undefined ? {} : { preemptCapMs: options.preemptCapMs }),
     create: (c) => {
       const next = new ModelEngine(c, options.failing);
       created.push(next);
@@ -439,12 +451,12 @@ describe('EngineControl benchmark lease', () => {
 
 async function automaticControl(t: TestContext): Promise<{
   control: EngineControl;
-  failing: { on: boolean; ready?: boolean };
+  failing: Flags;
   probes: { capabilities: number };
   spies: { success: number; failure: number; retry: number };
   counts: () => { success: number; failure: number; retry: number };
 }> {
-  const failing: { on: boolean; ready?: boolean } = { on: false };
+  const failing: Flags = { on: false };
   const probes = { capabilities: 0 };
   const { control } = setup({
     selection: { mode: 'auto' },
@@ -574,6 +586,193 @@ describe('EngineControl benchmark guards', () => {
     assert.ok((await control.status())['active']);
     control.setPolicyMode('routing', 'shadow');
     await control.endBenchmark(lease, { restore: false });
+  });
+});
+
+const TWOB = 'StrandsAgents/strands-decider-2B-qwen3.5-v1-2610';
+
+/** What the benchmark runner does when its lease is aborted: wait for `gate`, then end it. */
+function endingRunner(
+  control: EngineControl,
+  lease: BenchmarkLease,
+  gate: Promise<void>,
+): Promise<void> {
+  return (async () => {
+    await new Promise<void>((resolve) => {
+      if (lease.signal.aborted) resolve();
+      lease.signal.addEventListener('abort', () => resolve(), { once: true });
+    });
+    await gate;
+    await control.endBenchmark(lease, { restore: false });
+  })();
+}
+
+const isAbort = (error: unknown): boolean =>
+  error instanceof DOMException && error.name === 'AbortError';
+
+async function isHeld(decider: Decider): Promise<boolean> {
+  try {
+    await decider.systemOne({ state: 's', questions: {} }, new AbortController().signal);
+  } catch (error) {
+    return error instanceof EngineBusyError;
+  }
+  return false;
+}
+
+/** Record every hold change with the state of the control at that moment. */
+function watchHolds(
+  t: TestContext,
+  control: EngineControl,
+  decider: Decider,
+  created: readonly unknown[],
+): { reason: string | null; model: string | undefined; engines: number }[] {
+  const holds: { reason: string | null; model: string | undefined; engines: number }[] = [];
+  const hold = decider.hold.bind(decider);
+  t.mock.method(decider, 'hold', (reason: string | null) => {
+    holds.push({ reason, model: control.current()?.model, engines: created.length });
+    hold(reason);
+  });
+  return holds;
+}
+
+/** The hold releases: each must come after the user's engine is installed. */
+function releases<T extends { reason: string | null }>(holds: readonly T[]): T[] {
+  return holds.filter((h) => h.reason === null);
+}
+
+describe('EngineControl benchmark preemption', () => {
+  it('select() aborts the job, waits for it to end, installs its engine, then releases the hold', async (t) => {
+    const { control, decider, created } = setup();
+    const holds = watchHolds(t, control, decider, created);
+    const lease = control.beginBenchmark();
+    await control.benchmarkSwap(lease, { engine: 'strands-decider', model: E2B, device: 'cpu' });
+    const gate = deferred<void>();
+    const runner = endingRunner(control, lease, gate.promise);
+
+    const selecting = control.select({ model: TWOB, device: 'cpu' });
+    await settleEventLoop();
+    assert.equal(lease.signal.aborted, true);
+    assert.equal(lease.preempted, 'superseded');
+    assert.equal(control.current()?.model, E2B, 'the user engine waits for the runner');
+    assert.equal(await isHeld(decider), true);
+    await assert.rejects(
+      control.benchmarkSwap(lease, { engine: 'strands-decider', model: TWOB, device: 'cpu' }),
+      isAbort,
+    );
+
+    gate.resolve();
+    await selecting;
+    await runner;
+    assert.equal(control.current()?.model, TWOB);
+    assert.equal(created.length, 3, 'no benchmark engine is built after the select');
+    assert.deepEqual(releases(holds), [{ reason: null, model: TWOB, engines: 3 }]);
+    assert.equal(await isHeld(decider), false);
+    await assert.rejects(
+      control.benchmarkSwap(lease, { engine: 'strands-decider', model: E2B, device: 'cpu' }),
+      isAbort,
+    );
+    assert.equal(created.length, 3);
+  });
+
+  it('a config.yaml change of the selection preempts the same way', async (t) => {
+    const paths = tempPaths();
+    const { control, decider, created } = setup({ paths, persist: true });
+    const holds = watchHolds(t, control, decider, created);
+    const lease = control.beginBenchmark();
+    await control.benchmarkSwap(lease, { engine: 'strands-decider', model: E2B, device: 'cpu' });
+    const gate = deferred<void>();
+    const runner = endingRunner(control, lease, gate.promise);
+
+    ConfigFile.open(paths).update([
+      { path: ['selection'], value: { engine: 'strands-decider', model: TWOB, device: 'cpu' } },
+    ]);
+    const reloading = control.reloadConfig();
+    await settleEventLoop();
+    assert.equal(lease.preempted, 'config-changed');
+    assert.equal(control.current()?.model, E2B);
+    assert.equal(await isHeld(decider), true);
+
+    gate.resolve();
+    await reloading;
+    await runner;
+    assert.equal(control.current()?.model, TWOB);
+    assert.deepEqual(releases(holds), [{ reason: null, model: TWOB, engines: 3 }]);
+    assert.equal(await isHeld(decider), false);
+  });
+
+  it('a policy-only change leaves the job alone', async () => {
+    const paths = tempPaths();
+    const { control, decider } = setup({ paths, persist: true });
+    const lease = control.beginBenchmark();
+    await control.benchmarkSwap(lease, { engine: 'strands-decider', model: E2B, device: 'cpu' });
+    ConfigFile.open(paths).update([{ path: ['policies', 'routing', 'mode'], value: 'act' }]);
+    await control.reloadConfig();
+    assert.equal(lease.signal.aborted, false);
+    assert.equal(lease.preempted, null);
+    assert.equal(control.current()?.model, E2B);
+    assert.equal(decider.policies.get('routing')?.mode, 'act');
+    assert.equal(await isHeld(decider), true);
+    assert.throws(() => control.beginBenchmark(), /already running/);
+    await control.endBenchmark(lease, { restore: false });
+  });
+
+  it('proceeds past the cap when the runner never ends, and late benchmark calls are inert', async (t) => {
+    const { control, decider, created } = setup({ preemptCapMs: 30 });
+    const holds = watchHolds(t, control, decider, created);
+    const lease = control.beginBenchmark();
+    await control.benchmarkSwap(lease, { engine: 'strands-decider', model: E2B, device: 'cpu' });
+
+    await control.select({ model: TWOB, device: 'cpu' });
+    assert.equal(control.current()?.model, TWOB);
+    assert.deepEqual(releases(holds), [{ reason: null, model: TWOB, engines: 3 }]);
+    assert.equal(await isHeld(decider), false);
+    await assert.rejects(
+      control.benchmarkSwap(lease, { engine: 'strands-decider', model: E2B, device: 'cpu' }),
+      isAbort,
+    );
+    assert.deepEqual(await control.endBenchmark(lease, { restore: false }), {
+      ok: false,
+      error: 'benchmark lease is no longer active',
+    });
+    assert.equal(created.length, 3);
+    assert.equal(control.current()?.model, TWOB);
+  });
+
+  it('keeps accounting when the preempting change keeps the same engine instance', async (t) => {
+    const failing: Flags = { on: false };
+    const { control, decider, created } = setup({ selection: { mode: 'auto' }, failing });
+    await control.reconcileAuto();
+    await control.idle();
+    await settleEventLoop();
+    const selected = control.current();
+    assert.ok(selected);
+    const failure = t.mock.method(FallbackPolicy.prototype, 'recordFailure');
+    const engines = created.length;
+
+    const lease = control.beginBenchmark();
+    await control.benchmarkSwap(lease, selected);
+    const gate = deferred<void>();
+    const runner = endingRunner(control, lease, gate.promise);
+    const switching = control.setSelectionMode('auto');
+    await settleEventLoop();
+    gate.resolve();
+    await switching;
+    await runner;
+    assert.equal(created.length, engines, 'the leased engine is still the installed one');
+    assert.equal(await isHeld(decider), false);
+
+    failing.ready = true;
+    failing.breakOnDecide = true;
+    // A decision on the engine that now fails reports it, as a real failure would.
+    await decider.decide(
+      'permission',
+      {
+        harness: 'cli',
+        input: { project: '/p', tool: 'Bash', request: { command: 'ls' }, history: 'user: ls' },
+      },
+      new AbortController().signal,
+    );
+    assert.ok(failure.mock.callCount() > 0, 'a failure of that engine is accounted again');
   });
 });
 
