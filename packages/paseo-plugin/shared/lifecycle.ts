@@ -10,6 +10,8 @@ export interface EngineStateLike {
   /** Short engine tag, e.g. `NPU`. */
   readonly engineTag: string | null;
   readonly lifecycle?: 'lazy' | 'eager' | null;
+  /** Progress of a running benchmark job. */
+  readonly benchmark?: { readonly completed: number; readonly total: number } | null;
 }
 
 function loadedNote(s: EngineStateLike): string {
@@ -25,9 +27,9 @@ function loadedNote(s: EngineStateLike): string {
 
 /**
  * `Loaded · d3:nano · NPU`, `Unloaded · loads automatically on the next decision`, `Loading…`,
- * `Failed: <detail>`.
+ * `Failed: <detail>`, and `Benchmarking (3 of 6)` while a benchmark runs.
  */
-export function engineStateNote(s: EngineStateLike | undefined): string {
+function stateNote(s: EngineStateLike | undefined): string {
   switch (s?.state ?? null) {
     case 'ready':
       return loadedNote(s as EngineStateLike);
@@ -44,6 +46,11 @@ export function engineStateNote(s: EngineStateLike | undefined): string {
     default:
       return s?.state ?? 'Engine state unknown';
   }
+}
+
+export function engineStateNote(s: EngineStateLike | undefined): string {
+  const b = s?.benchmark;
+  return b == null ? stateNote(s) : `Benchmarking (${String(b.completed)} of ${String(b.total)})`;
 }
 
 /** Why the idle-minutes draft is unusable, or null. */

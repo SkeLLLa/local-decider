@@ -281,14 +281,6 @@ export const USE_AUTO_HINT =
 /** Hint on a specific engine while the gateway is in automatic mode. */
 export const LEAVES_AUTO_HINT = 'Picking an engine turns off automatic selection.';
 
-export type Suggestion =
-  | {
-      readonly kind: 'switch';
-      readonly hint: string;
-      readonly target: { engine: string; model: string; device: string | null };
-    }
-  | { readonly kind: 'install'; readonly hint: string; readonly command: string };
-
 export function installCommand(t: Target, backend: string | null): string {
   if (t.engine === 'fastflowlm') {
     return [
@@ -306,51 +298,6 @@ export function installCommand(t: Target, backend: string | null): string {
 
 /** FastFlowLM is installed by the user; local-decider never downloads it. */
 const FLM_INSTALL_URL = 'https://github.com/FastFlowLM/FastFlowLM';
-
-const LADDER = ['NPU', 'CUDA', 'Vulkan', 'MLX', 'MPS', 'CPU'];
-
-function fasterThan(better: string | null, worse: string | null): boolean {
-  const a = better === null ? -1 : LADDER.indexOf(better);
-  const b = worse === null ? -1 : LADDER.indexOf(worse);
-  return a >= 0 && b >= 0 && a < b;
-}
-
-/**
- * Manual mode only: the engine automatic selection would pick, when it is not the one running.
- * Installed: a switch. Not installed: how to install it. Otherwise nothing to suggest.
- */
-export function suggestionView(
-  active: ActiveInfo | null,
-  rec: Recommendation | null,
-  names: Names,
-): Suggestion | null {
-  const auto = rec?.automatic;
-  if (active?.selectionMode !== 'manual' || auto == null || active.engine === null) {
-    return null;
-  }
-  const candidate = rec?.candidates.find((c) => sameChoice(c, auto));
-  const backend = candidate?.backend ?? backendOf(auto.engine, auto.device);
-  const running = runningBackend(active);
-  if (auto.engine === active.engine && (backend === null || backend === running)) {
-    return null;
-  }
-  const name = shortName(auto.engine, backend, names);
-  if (candidate?.ready !== true) {
-    return {
-      kind: 'install',
-      hint: `${name} is faster here but not installed.`,
-      command: installCommand(auto, backend),
-    };
-  }
-  const than = fasterThan(backend, running)
-    ? ` and faster than ${shortName(active.engine, running, names)}`
-    : '';
-  return {
-    kind: 'switch',
-    hint: `${name} is installed${than}.`,
-    target: { engine: auto.engine, model: auto.model, device: auto.device },
-  };
-}
 
 export function minutes(seconds: number): string {
   if (seconds < 60) {
@@ -379,15 +326,6 @@ export function fallbackLine(
   }
   const seconds = Math.max(0, Math.round((at - now) / 1000));
   return `${who} failed; retrying in ${minutes(seconds)}.`;
-}
-
-function sameChoice(a: Choice, b: Choice): boolean {
-  return a.engine === b.engine && a.device === b.device;
-}
-
-interface Choice {
-  readonly engine: string;
-  readonly device: string | null;
 }
 
 export interface EngineRow {

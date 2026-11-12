@@ -27,6 +27,19 @@ describe('engine state note', () => {
       'Loaded',
     );
   });
+
+  it('shows benchmark progress while a run is active, whatever the engine state', () => {
+    const benchmark = { completed: 3, total: 6 };
+    assert.equal(engineStateNote({ ...base, state: 'ready', benchmark }), 'Benchmarking (3 of 6)');
+    assert.equal(
+      engineStateNote({ ...base, state: 'starting', benchmark }),
+      'Benchmarking (3 of 6)',
+    );
+    assert.equal(
+      engineStateNote({ ...base, state: 'ready', benchmark: null }),
+      'Loaded · d3:nano · NPU',
+    );
+  });
 });
 
 describe('idle minutes input', () => {

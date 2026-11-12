@@ -7,6 +7,7 @@ import { CONNECTABLE_ENGINES, connectionSchema, discoverySchema } from './connec
 import { HOOK_POLICIES, SERVICE_ACTIONS } from './constants.ts';
 import { downloadSchema, engineCatalogSchema, validationSchema } from './engines.ts';
 import { IDLE_MINUTES } from './lifecycle.ts';
+import { progressSchema } from './machine.ts';
 import { PATH_KEY, pathEntrySchema } from './paths.ts';
 import {
   policyPromptSchema,
@@ -30,6 +31,8 @@ export const statusRpc = defineRpc({
     detail: z.string().nullable(),
     model: z.string().nullable(),
     p50Ms: z.number().nullable(),
+    /** Progress of a running benchmark, from `/health`; null otherwise. */
+    benchmark: progressSchema.nullable(),
     gatewayUrl: z.string(),
     /** Consecutive failed checks, for client-side backoff. */
     downStreak: z.number().int(),

@@ -138,6 +138,7 @@ function subtitle(data: Status | undefined, hasService: boolean): string | null 
     detail: data.detail,
     model: data.model,
     engineTag: engineTag(data.engine, data.engineTag),
+    benchmark: data.benchmark,
   });
 }
 

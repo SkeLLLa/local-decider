@@ -3,6 +3,7 @@
  * Permission labels: labels.ts.
  */
 import type { GatewayHealth } from '../shared/decision.ts';
+import { parseProgress } from '../shared/machine.ts';
 import { manualInput } from '../shared/manual.ts';
 import { toRowData, type DecisionRow } from '../shared/row.ts';
 import { parsePolicyStats, type PolicyStats } from '../shared/stats.ts';
@@ -21,6 +22,7 @@ export interface StatusResult {
   detail: string | null;
   model: string | null;
   p50Ms: number | null;
+  benchmark: { completed: number; total: number } | null;
   gatewayUrl: string;
   downStreak: number;
   checkedAt: string;
@@ -28,18 +30,23 @@ export interface StatusResult {
 
 type HealthFields = Pick<
   StatusResult,
-  'status' | 'engine' | 'engineTag' | 'engineState' | 'detail' | 'model' | 'p50Ms'
+  'status' | 'engine' | 'engineTag' | 'engineState' | 'detail' | 'model' | 'p50Ms' | 'benchmark'
 >;
+
+function clip(value: unknown, max: number): string | null {
+  return typeof value === 'string' ? value.slice(0, max) : null;
+}
 
 function healthFields(health: GatewayHealth | null): HealthFields {
   return {
     status: health?.status ?? 'down',
     engine: health?.engine ?? null,
-    engineTag: typeof health?.engineTag === 'string' ? health.engineTag.slice(0, 40) : null,
+    engineTag: clip(health?.engineTag, 40),
     engineState: health?.engineState ?? null,
-    detail: typeof health?.detail === 'string' ? health.detail.slice(0, 300) : null,
+    detail: clip(health?.detail, 300),
     model: health?.model ?? null,
     p50Ms: typeof health?.p50Ms === 'number' ? health.p50Ms : null,
+    benchmark: parseProgress(health?.benchmark),
   };
 }
 
