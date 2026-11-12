@@ -2,13 +2,17 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
 import {
+  cancelBenchmark,
   downloadModel,
   listEngines,
+  readBenchmark,
+  startBenchmark,
   selectEngine,
   setSelectionMode,
   setPath,
   validateEngine,
 } from '../server/engines.ts';
+import { benchmarkStartInput } from '../shared/benchmark.ts';
 import {
   deviceOptions,
   engineOptions,
@@ -689,6 +693,85 @@ describe('engine selection helpers', () => {
       device: 'auto',
     });
     assert.deepEqual(sent, { engine: 'lmstudio', model: 'qwen3', device: 'auto' });
+  });
+});
+
+describe('benchmark RPC handlers', () => {
+  it('reads the job view, and reports an unreachable gateway', async () => {
+    const d = deps(
+      settings(),
+      fakeGateway(() => null),
+    );
+    const res = await readBenchmark(d);
+    assert.equal(res.ok, true);
+    assert.equal(res.benchmark?.state, 'idle');
+    const none = await readBenchmark(deps(settings(), null));
+    assert.equal(none.ok, false);
+    assert.equal(none.benchmark, null);
+    const silent = { ...fakeGateway(() => null), benchmark: async () => null };
+    assert.equal((await readBenchmark(deps(settings(), silent))).ok, false);
+  });
+
+  it('starts with only the given fields, and cancels', async () => {
+    const gw = fakeGateway(() => null);
+    const d = deps(settings(), gw);
+    const started = await startBenchmark(d, {
+      scope: 'family',
+      family: 'f',
+      only: undefined,
+      targets: [{ engine: 'e', model: 'm' }],
+    });
+    assert.equal(started.ok, true);
+    assert.equal(started.benchmark?.state, 'running');
+    assert.equal((await cancelBenchmark(d)).benchmark?.state, 'cancelling');
+    assert.deepEqual(gw.posts, [
+      {
+        name: 'benchmarkStart',
+        input: { scope: 'family', family: 'f', targets: [{ engine: 'e', model: 'm' }] },
+      },
+      { name: 'benchmarkCancel', input: {} },
+    ]);
+  });
+
+  it('maps a gateway refusal to ok: false with its message', async () => {
+    const gw = {
+      ...fakeGateway(() => null),
+      benchmarkStart: async () => ({ ok: false as const, error: 'a benchmark is already running' }),
+      benchmarkCancel: async () => ({ ok: false as const, error: 'no benchmark is running' }),
+    };
+    const d = deps(settings(), gw);
+    assert.deepEqual(await startBenchmark(d, {}), {
+      ok: false,
+      error: 'a benchmark is already running',
+      benchmark: null,
+    });
+    assert.equal((await cancelBenchmark(d)).error, 'no benchmark is running');
+    assert.ok(d.logs.includes('start benchmark: a benchmark is already running'));
+  });
+
+  it('forwards the family with the selection mode', async () => {
+    const gw = fakeGateway(() => null);
+    await setSelectionMode(deps(settings(), gw), { mode: 'auto', family: 'vllm-sr/d3-lite' });
+    assert.deepEqual(gw.posts, [
+      { name: 'setSelectionMode', input: { mode: 'auto', family: 'vllm-sr/d3-lite' } },
+    ]);
+  });
+
+  it('validates the start input and caps targets at 32', () => {
+    const input = benchmarkStartInput;
+    const target = { engine: 'e', model: 'm' };
+    assert.equal(input.safeParse({}).success, true);
+    assert.equal(input.safeParse({ scope: 'active', only: 'missing' }).success, true);
+    assert.equal(input.safeParse({ scope: 'all' }).success, false);
+    assert.equal(input.safeParse({ only: 'all' }).success, false);
+    assert.equal(
+      input.safeParse({ targets: Array.from({ length: 32 }, () => target) }).success,
+      true,
+    );
+    assert.equal(
+      input.safeParse({ targets: Array.from({ length: 33 }, () => target) }).success,
+      false,
+    );
   });
 });
 

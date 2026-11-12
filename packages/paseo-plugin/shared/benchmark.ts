@@ -86,6 +86,19 @@ export const benchmarkSchema = z.object({
     .nullable(),
 });
 
+const id = z.string().min(1).max(300);
+
+/** Input of the start RPC; every field is optional and `targets` is capped at 32. */
+export const benchmarkStartInput = z.object({
+  scope: z.enum(['installed', 'family', 'active']).optional(),
+  family: id.optional(),
+  only: z.literal('missing').optional(),
+  targets: z
+    .array(z.object({ engine: id, model: id, device: id.optional() }))
+    .max(32)
+    .optional(),
+});
+
 export type BenchmarkView = z.output<typeof benchmarkSchema>;
 export type BenchmarkTarget = z.output<typeof targetSchema>;
 export type BenchmarkState = NonNullable<BenchmarkView['state']>;

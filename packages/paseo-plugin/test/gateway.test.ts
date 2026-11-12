@@ -296,9 +296,12 @@ describe('createGateway (fail open)', () => {
       gw?.config(),
       gw?.setRoutingPreset({ harness: 'paseo', preset: 'fast' }),
       gw?.policyPrompt('routing'),
+      gw?.benchmark(),
+      gw?.benchmarkStart({}),
+      gw?.benchmarkCancel(),
     ]);
     const requests = seen.slice(first);
-    assert.equal(requests.length, 23);
+    assert.equal(requests.length, 26);
     assert.ok(requests.every((request) => request.control === 'control-secret'));
   });
 
@@ -406,6 +409,82 @@ describe('createGateway engine calls', () => {
       { url: sent[0]?.url ?? '', body: { mode: 'auto' }, type: 'application/json' },
     ]);
     assert.match(sent[0]?.url ?? '', /\/v1\/engine\/mode$/);
+  });
+
+  it('sends the family with the selection mode only when given', async () => {
+    const { gateway, sent } = recording(200, {});
+    await gateway?.setSelectionMode('auto', 'vllm-sr/d3-lite');
+    await gateway?.setSelectionMode('manual');
+    assert.deepEqual(
+      sent.map((s) => s.body),
+      [{ mode: 'auto', family: 'vllm-sr/d3-lite' }, { mode: 'manual' }],
+    );
+  });
+
+  it('reads, starts and cancels a benchmark with the right paths, methods and timeouts', async () => {
+    const seen: { url: string; method: string | undefined; body: unknown }[] = [];
+    const gateway = createGateway({
+      controlToken: 'control-secret',
+      fetch: (async (url: string, init: RequestInit) => {
+        seen.push({
+          url: new URL(url).pathname,
+          method: init.method,
+          body: init.body === undefined ? undefined : JSON.parse(init.body as string),
+        });
+        return new Response(JSON.stringify({ state: 'running' }), { status: 202 });
+      }) as typeof globalThis.fetch,
+    });
+    assert.deepEqual(await gateway?.benchmark(), { state: 'running' });
+    await gateway?.benchmarkStart({ scope: 'family', family: 'f', client: 'cli' });
+    await gateway?.benchmarkStart({});
+    await gateway?.benchmarkCancel();
+    assert.deepEqual(
+      seen.map((s) => [s.method, s.url, s.body]),
+      [
+        ['GET', '/v1/benchmark', undefined],
+        ['POST', '/v1/benchmark', { scope: 'family', family: 'f', client: 'paseo' }],
+        ['POST', '/v1/benchmark', { client: 'paseo' }],
+        ['POST', '/v1/benchmark/cancel', {}],
+      ],
+    );
+  });
+
+  it('uses 3 s to read a benchmark and 10 s to start or cancel one', async () => {
+    const timeouts: number[] = [];
+    const real = AbortSignal.timeout.bind(AbortSignal);
+    AbortSignal.timeout = (ms: number) => {
+      timeouts.push(ms);
+      return real(ms);
+    };
+    try {
+      const gateway = createGateway({
+        fetch: (async () => Response.json({})) as unknown as typeof globalThis.fetch,
+      });
+      await gateway?.benchmark();
+      await gateway?.benchmarkStart({});
+      await gateway?.benchmarkCancel();
+    } finally {
+      AbortSignal.timeout = real;
+    }
+    assert.deepEqual(timeouts, [3000, 10_000, 10_000]);
+  });
+
+  it('reports a benchmark 409 or 400 as the gateway error message', async () => {
+    const busy = recording(409, { error: 'a benchmark is already running' });
+    assert.deepEqual(await busy.gateway?.benchmarkStart({}), {
+      ok: false,
+      error: 'a benchmark is already running',
+    });
+    const none = recording(409, { error: 'no benchmark is running' });
+    assert.deepEqual(await none.gateway?.benchmarkCancel(), {
+      ok: false,
+      error: 'no benchmark is running',
+    });
+    const bad = recording(400, { error: 'unknown model family "x"' });
+    assert.deepEqual(await bad.gateway?.setSelectionMode('auto', 'x'), {
+      ok: false,
+      error: 'unknown model family "x"',
+    });
   });
 
   it('posts downloads, validation, paths, load and lifecycle to their endpoints', async () => {
