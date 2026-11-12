@@ -1,6 +1,6 @@
 import type { PluginHostProps } from '@getpaseo/plugin/client';
 import { Icon } from '@getpaseo/plugin/client/ui';
-import type { ReactNode } from 'react';
+import { useState, type ReactNode } from 'react';
 import { ActivityIndicator, Platform, Pressable, ScrollView, Text, View } from 'react-native';
 
 export type Theme = PluginHostProps['theme'];
@@ -223,5 +223,48 @@ export function Mono({
     >
       {children}
     </Text>
+  );
+}
+
+/**
+ * A collapsed-by-default section with a toggle row. The content stays mounted while collapsed
+ * (hidden with `display: none`), so form state inside it survives a collapse. Nothing persists.
+ */
+export function Disclosure({
+  theme,
+  title,
+  children,
+}: {
+  theme: Theme;
+  title: string;
+  children: ReactNode;
+}): ReactNode {
+  const [expanded, setExpanded] = useState(false);
+  return (
+    <View style={{ gap: 12 }}>
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel={title}
+        accessibilityState={{ expanded }}
+        onPress={() => setExpanded((open) => !open)}
+        style={({ pressed }) => ({
+          flexDirection: 'row' as const,
+          alignItems: 'center' as const,
+          gap: 8,
+          paddingVertical: 8,
+          paddingHorizontal: 4,
+          borderRadius: 6,
+          backgroundColor: pressed ? theme.colors.surface2 : 'transparent',
+        })}
+      >
+        <Icon
+          name={expanded ? 'ChevronDown' : 'ChevronRight'}
+          size={14}
+          color={theme.colors.foregroundMuted}
+        />
+        <Text style={{ color: theme.colors.foreground, fontSize: 13 }}>{title}</Text>
+      </Pressable>
+      <View style={{ display: expanded ? 'flex' : 'none', gap: 12 }}>{children}</View>
+    </View>
   );
 }
