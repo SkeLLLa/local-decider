@@ -335,17 +335,19 @@ Details and methods: [docs/benchmarks.md](docs/benchmarks.md) and [docs/demos.md
 
 Latency of one 4-option question, measured at the client (p50):
 
-| State tokens (target) | Strands 2B, CPU | Strands 2B, ROCm GPU | d3:lite, NPU | d3-lite Q8_0, Vulkan GPU | d3:mini, NPU | d3-mini Q4_K_M, Vulkan GPU |
-|---:|---:|---:|---:|---:|---:|---:|
-| 256 | 2,426 ms | 596 ms | 208–232 ms | 141–184 ms | 721 ms | 817 ms |
-| 1,024 | 5,468 ms | 1,419 ms | 482–555 ms | 394–529 ms | 1,687 ms | 2,307 ms |
-| 2,048 | 11,127 ms | 2,658 ms | 934 ms | 977 ms | 3,038 ms | 4,316 ms |
-| 3,800 | 19,310 ms | 4,915 ms | 1,509–1,693 ms | 1,550–1,991 ms | 5,322 ms | 8,717 ms |
+| State tokens (target) | Strands 2B, CPU | Strands 2B, ROCm GPU | d3:lite, NPU | d3-lite Q8_0, Vulkan GPU | d3:mini, NPU | d3-mini Q4_K_M, Vulkan GPU | d3-mini Q8_0, Vulkan GPU |
+|---:|---:|---:|---:|---:|---:|---:|---:|
+| 256 | 2,426 ms | 596 ms | 208–232 ms | 141–184 ms | 721 ms | 817 ms | 701 ms |
+| 1,024 | 5,468 ms | 1,419 ms | 482–555 ms | 394–529 ms | 1,687 ms | 2,307 ms | 2,008 ms |
+| 2,048 | 11,127 ms | 2,658 ms | 934 ms | 977 ms | 3,038 ms | 4,316 ms | 3,863 ms |
+| 3,800 | 19,310 ms | 4,915 ms | 1,509–1,693 ms | 1,550–1,991 ms | 5,322 ms | 8,717 ms | 7,745 ms |
 
 - **No backend is fastest for every model.** On this machine the Vulkan GPU is 15–35% faster for
   d3-lite on short states, the two are level from about 2k tokens, and the NPU is faster for
   d3-mini at every size. GPU latency is noisier, because the integrated GPU is shared with the
   desktop.
+- On Vulkan, d3-mini Q8_0 is about 13–14% faster than Q4_K_M at 256 and 1,024 tokens; the NPU
+  d3:mini is still faster from 1,024 tokens up. Its p95 is noisy, up to 10.6 s at 3,800 tokens.
 - Strands 2B on a ROCm GPU is about 4× faster than on the CPU; the engine has no ROCm install
   flavour yet.
 - Through the gateway, a short decision took 250 ms on `d3:nano` and about 600 ms on `d3:mini`.
