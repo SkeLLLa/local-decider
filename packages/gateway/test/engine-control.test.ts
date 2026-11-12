@@ -13,6 +13,12 @@ import { createServer, type Server, type ServerResponse } from 'node:http';
 import { join } from 'node:path';
 import { describe, it } from 'node:test';
 
+import {
+  BENCH_VERSION,
+  MemoryBenchmarkStore,
+  type BenchmarkRecord,
+  type BenchmarkStore,
+} from '../src/benchmark-store.ts';
 import { ConfigFile, MemoryConfigStore } from '../src/config-file.ts';
 import { parseConfig, type EngineConfig } from '../src/config.ts';
 import { Decider } from '../src/decider.ts';
@@ -142,6 +148,7 @@ interface SetupOptions {
   readonly capabilities?: () => Promise<HostCapabilities>;
   readonly persist?: boolean;
   readonly host?: HostInfo;
+  readonly benchmarkStore?: BenchmarkStore;
 }
 
 const LINUX_HOST: HostInfo = {
@@ -189,6 +196,7 @@ function setup(options: SetupOptions = {}): Setup {
     ...(options.host === undefined ? {} : { host: options.host }),
     totalMemory: options.totalMemory ?? 1e12,
     installed: async (ids) => new Map(ids.map((id) => [id, options.installed ?? true])),
+    ...(options.benchmarkStore === undefined ? {} : { benchmarkStore: options.benchmarkStore }),
     create: (c) => {
       const next = new ModelEngine(c);
       created.push(next);
@@ -1237,5 +1245,72 @@ describe('EngineControl recommendation', () => {
     await settleEventLoop();
     assert.equal(calls, 2);
     assert.equal(recommendationOf(await control.status()), 'strands-decider');
+  });
+});
+
+describe('EngineControl benchmark status', () => {
+  it('adds family, format and cached measurements to catalogue models', async () => {
+    const benchmarks = new MemoryBenchmarkStore();
+    const record: BenchmarkRecord = {
+      jobId: 'bench-1',
+      engine: 'llama-vulkan',
+      model: 'd3-mini-q4_k_m',
+      device: null,
+      family: 'vllm-sr/d3-mini',
+      quant: 'Q4_K_M',
+      status: 'ok',
+      error: null,
+      measuredAt: '2026-11-12T10:04:11.000Z',
+      benchVersion: BENCH_VERSION,
+      gatewayVersion: '2.0.0',
+      runtime: null,
+      modelStamp: 'sha256:fixture',
+      fingerprint: '0123456789abcdef',
+      backend: 'Vulkan',
+      resolvedDevice: null,
+      runs: 2,
+      loadMs: 10,
+      sizes: [
+        {
+          targetTokens: 1024,
+          inputTokens: 1000,
+          p50Ms: 460,
+          p95Ms: 529,
+          answer: 'done',
+          error: null,
+        },
+      ],
+    };
+    benchmarks.append(record);
+    const { control } = setup({ benchmarkStore: benchmarks });
+    const status = await control.status();
+    const models = status['models'] as {
+      id: string;
+      engine: string;
+      family: { id: string; label: string } | null;
+      format: { short: string; label: string } | null;
+      measured: { runs: number; provisional: boolean; freshness: string }[];
+    }[];
+    const model = models.find(
+      (entry) => entry.id === record.model && entry.engine === record.engine,
+    );
+    assert.deepEqual(model?.family, { id: record.family, label: 'd3 mini' });
+    assert.deepEqual(model?.format, { short: 'Q4_K_M', label: '4-bit (Q4_K_M)' });
+    assert.deepEqual(model?.measured[0], {
+      device: null,
+      typical: { p50Ms: 460, p95Ms: 529 },
+      long: null,
+      sizes: [{ targetTokens: 1024, inputTokens: 1000, p50Ms: 460, p95Ms: 529 }],
+      runs: 2,
+      provisional: true,
+      measuredAt: record.measuredAt,
+      freshness: 'unknown',
+      staleReason: null,
+      failed: null,
+    });
+    const engines = status['engines'] as { id: string; version: string | null }[];
+    assert.equal('version' in (engines.find((entry) => entry.id === 'llama-vulkan') ?? {}), true);
+    const active = status['active'] as { preferredFamily: string | null };
+    assert.equal(typeof active.preferredFamily, 'string');
   });
 });
