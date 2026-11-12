@@ -1,4 +1,4 @@
-import { existsSync, readdirSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { z } from 'zod';
@@ -91,7 +91,61 @@ export const strandsEngine = defineEngine({
   },
   calibrated: true,
   models: MODELS,
+  runtimeStamp: async (model, ctx) => strandsRuntimeStamp(model.id, ctx),
   modelsPresent: strandsModelsPresent,
   downloadSteps: strandsDownloadSteps,
   create: (config, ctx) => new StrandsDeciderEngine(config, ctx.paths, ctx.tools, ctx.host),
 });
+
+function packageVersion(names: readonly string[], packages: readonly string[]): string | null {
+  for (const name of names) {
+    const lower = name.toLowerCase();
+    for (const pkg of packages) {
+      const prefix = `${pkg}-`;
+      if (lower.startsWith(prefix) && lower.endsWith('.dist-info')) {
+        return name.slice(prefix.length, -'.dist-info'.length);
+      }
+    }
+  }
+  return null;
+}
+
+function strandsRuntimeVersion(ctx: EngineContext): string | null {
+  const venv = join(ctx.paths.venvs, 'strands-decider');
+  try {
+    const pyDirs = readdirSync(join(venv, 'lib')).filter((name) => /^python3\.\d+$/.test(name));
+    for (const version of pyDirs) {
+      const site = join(venv, 'lib', version, 'site-packages');
+      const names = readdirSync(site);
+      const strands = packageVersion(names, ['strands_decider', 'strands-decider']);
+      const torch = packageVersion(names, ['torch']);
+      if (strands !== null && torch !== null) return `strands-decider ${strands}, torch ${torch}`;
+    }
+  } catch {
+    return null;
+  }
+  return null;
+}
+
+function hubCachePath(ctx: EngineContext): string {
+  return (
+    ctx.tools?.env['HF_HUB_CACHE'] ??
+    ctx.env['HF_HUB_CACHE'] ??
+    join(ctx.env['HF_HOME'] ?? join(homedir(), '.cache', 'huggingface'), 'hub')
+  );
+}
+
+export function strandsRuntimeStamp(model: string, ctx: EngineContext): {
+  readonly runtime: string | null;
+  readonly model: string | null;
+} {
+  let revision: string | null = null;
+  try {
+    const ref = join(hubCachePath(ctx), `models--${model.replace('/', '--')}`, 'refs', 'main');
+    const contents = readFileSync(ref, 'utf8').trim();
+    revision = contents.length === 0 ? null : contents.slice(0, 64);
+  } catch {
+    revision = null;
+  }
+  return { runtime: strandsRuntimeVersion(ctx), model: revision };
+}

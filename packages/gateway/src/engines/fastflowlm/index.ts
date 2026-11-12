@@ -1,9 +1,10 @@
 import { z } from 'zod';
 
 import { defineEngine } from '../descriptor.ts';
+import { flmModelStamp } from './model-stamp.ts';
 import { MODELS } from './models.ts';
 import { FastFlowLMEngine } from './server.ts';
-import { flmModelsPresent, validateFlm } from './status.ts';
+import { cachedFlmVersion, flmModelsPresent, validateFlm } from './status.ts';
 
 export const DEFAULT_FLM_MODEL = 'd3:nano';
 const FLM_PMODES = ['powersaver', 'balanced', 'performance', 'turbo'] as const;
@@ -39,6 +40,10 @@ export const fastflowlmEngine = defineEngine({
   devices: () => [],
   calibrated: true,
   models: MODELS,
+  runtimeStamp: async (model, ctx) => ({
+    runtime: cachedFlmVersion(ctx.tools?.flm) ?? null,
+    model: flmModelStamp(model, ctx),
+  }),
   modelsPresent: flmModelsPresent,
   downloadSteps: (model, ctx) => {
     const flm = ctx.tools?.flm;

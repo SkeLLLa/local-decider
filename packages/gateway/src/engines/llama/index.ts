@@ -3,9 +3,10 @@ import { z } from 'zod';
 
 import type { EngineContext, HostInfo } from '../descriptor.ts';
 import { defineEngine } from '../descriptor.ts';
-import { LLAMA_MODEL_IDS, LLAMA_MODELS } from './models.ts';
+import { GGUF, LLAMA_MODEL_IDS, LLAMA_MODELS } from './models.ts';
 import { LlamaVulkanEngine } from './server.ts';
 import { llamaModelsPresent } from './status.ts';
+import { llamaServerVersion } from './version.ts';
 
 export const DEFAULT_LLAMA_MODEL = 'd3-mini-q4_k_m';
 
@@ -100,6 +101,10 @@ export const llamaVulkanEngine = defineEngine({
   devices: () => [],
   calibrated: true,
   models: LLAMA_MODELS,
+  runtimeStamp: async (model, ctx) => ({
+    runtime: await llamaServerVersion(ctx.tools?.llamaServer),
+    model: GGUF[model.id]?.sha256 ?? null,
+  }),
   modelsPresent: llamaModelsPresent,
   downloadSteps: (model, ctx: EngineContext) => {
     if (!supports(ctx.host).ok) throw new Error('llama-vulkan is only available on Linux x86_64');
