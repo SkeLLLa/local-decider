@@ -6,6 +6,7 @@ import type { GatewayConfig } from './config.ts';
 import type { HostInfo } from './engines/descriptor.ts';
 import { FLM_INSTALL_URL } from './engines/fastflowlm/status.ts';
 import { hostInfo } from './engines/host.ts';
+import { LLAMA_INSTALL_URL } from './engines/llama/server.ts';
 import { engineDescriptor, type EngineId } from './engines/registry.ts';
 import { strandsBinary } from './engines/strands/server.ts';
 import type { Paths } from './paths.ts';
@@ -14,6 +15,7 @@ export { probe, stripAnsi } from './toolchain-probe.ts';
 
 export const PATH_KEYS = [
   'tools.flm',
+  'tools.llamaServer',
   'tools.strandsDecider',
   'tools.uv',
   'dirs.flmModels',
@@ -82,6 +84,14 @@ const DEFS: Readonly<Record<PathKey, PathDef>> = {
     installUrl: FLM_INSTALL_URL,
     // Installed by the user (dnf, apt or the upstream installer); the gateway never downloads it.
     auto: (_paths, env) => [['path', onPath('flm', env)]],
+  },
+  'tools.llamaServer': {
+    label: 'llama.cpp server (llama-server)',
+    kind: 'executable',
+    engine: 'llama-vulkan',
+    tool: 'llama-server',
+    installUrl: LLAMA_INSTALL_URL,
+    auto: (_paths, env) => [['path', onPath('llama-server', env)]],
   },
   'tools.strandsDecider': {
     label: 'strands-decider',
@@ -205,6 +215,7 @@ export function resolveAll(
 /** Resolved locations the engines and downloads use. */
 export interface Toolchain {
   readonly flm: string | undefined;
+  readonly llamaServer?: string | undefined;
   readonly strandsDecider: string | undefined;
   readonly uv: string | undefined;
   /** Extra environment for every engine and download child process. */
@@ -220,6 +231,7 @@ export function toolchain(config: GatewayConfig, paths: Paths, env?: NodeJS.Proc
   const hfCache = resolveEntry('dirs.hfCache', config, paths, env);
   return {
     flm: get('tools.flm'),
+    llamaServer: get('tools.llamaServer'),
     strandsDecider: get('tools.strandsDecider'),
     uv: get('tools.uv'),
     env: {

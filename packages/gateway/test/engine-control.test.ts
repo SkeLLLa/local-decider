@@ -156,6 +156,11 @@ const DARWIN_HOST: HostInfo = {
   totalMemoryBytes: 64e9,
 };
 
+const VULKAN_CAPABILITIES: HostCapabilities = {
+  ...NO_CAPABILITIES,
+  vulkan: { status: 'available', evidence: 'Vulkan0: test GPU' },
+};
+
 function setup(options: SetupOptions = {}): Setup {
   const paths = options.paths ?? tempPaths();
   fakeFlm(paths);
@@ -703,7 +708,7 @@ describe('EngineControl state', () => {
     const engines = status['engines'] as { id: string; installed: boolean }[];
     assert.deepEqual(
       engines.map((e) => e.id),
-      ['strands-decider', 'fastflowlm', 'openai-compatible', 'lmstudio'],
+      ['strands-decider', 'fastflowlm', 'llama-vulkan', 'openai-compatible', 'lmstudio'],
     );
     assert.equal(engines.find((e) => e.id === 'fastflowlm')?.installed, true);
     const models = status['models'] as { id: string; recommended: boolean; quality: unknown }[];
@@ -730,6 +735,82 @@ describe('EngineControl state', () => {
     assert.equal(created.length, engines, 'the running strands-decider engine is not restarted');
   });
 
+  it('uses a llama-vulkan binary set only in engine config for availability, ranking and selection', async () => {
+    const paths = tempPaths();
+    const fake = join(paths.data, 'custom', 'my-llama');
+    mkdirSync(join(fake, '..'), { recursive: true });
+    writeFileSync(fake, `#!${process.execPath}\n`);
+    chmodSync(fake, 0o755);
+    const { control, created } = setup({
+      paths,
+      host: LINUX_HOST,
+      capabilities: async () => VULKAN_CAPABILITIES,
+      engines: { 'llama-vulkan': { binary: fake } },
+    });
+    await control.status();
+    await settleEventLoop();
+    const status = await control.status();
+    const row = (
+      status['engines'] as { id: string; installed: boolean; available: boolean; detail: string }[]
+    ).find((engine) => engine.id === 'llama-vulkan');
+    assert.deepEqual([row?.installed, row?.available, row?.detail], [true, true, fake]);
+    assert.equal(recommendationOf(status), 'llama-vulkan');
+    await control.select({ engine: 'llama-vulkan', model: 'd3-lite-q8_0' });
+    assert.equal(created.at(-1)?.config.type, 'llama-vulkan');
+  });
+
+  it('treats a configured llama-vulkan URL as available without a binary or local model', async () => {
+    const url = 'http://127.0.0.1:1234';
+    const { control, created } = setup({
+      host: LINUX_HOST,
+      capabilities: async () => VULKAN_CAPABILITIES,
+      engines: { 'llama-vulkan': { url } },
+    });
+    await control.status();
+    await settleEventLoop();
+    const readyStatus = await control.status();
+    const row = (
+      readyStatus['engines'] as {
+        id: string;
+        installed: boolean;
+        available: boolean;
+        detail: string;
+      }[]
+    ).find((engine) => engine.id === 'llama-vulkan');
+    assert.deepEqual(
+      [row?.installed, row?.available, row?.detail],
+      [true, true, 'Attached via engines.llama-vulkan.url'],
+    );
+    assert.equal(recommendationOf(readyStatus), 'llama-vulkan');
+    await control.select({ engine: 'llama-vulkan', model: 'd3-lite-q8_0' });
+    assert.deepEqual(
+      [created.at(-1)?.config.type, created.at(-1)?.config.url],
+      ['llama-vulkan', url],
+    );
+  });
+
+  it('keeps llama-vulkan unavailable and refuses selection without a binary', async () => {
+    const { control } = setup({ host: LINUX_HOST, capabilities: async () => VULKAN_CAPABILITIES });
+    const status = await control.status();
+    const row = (
+      status['engines'] as {
+        id: string;
+        installed: boolean;
+        available: boolean;
+        installUrl?: string;
+      }[]
+    ).find((engine) => engine.id === 'llama-vulkan');
+    assert.deepEqual(
+      [row?.installed, row?.available, row?.installUrl],
+      [false, false, 'https://github.com/ggml-org/llama.cpp/releases'],
+    );
+    assert.equal(recommendationOf(status), 'strands-decider');
+    await assert.rejects(
+      control.select({ engine: 'llama-vulkan', model: 'd3-lite-q8_0' }),
+      (error: unknown) => error instanceof EngineSwitchError && error.status === 409,
+    );
+  });
+
   it('lists each engine and reports host support from its descriptor', async () => {
     const darwinStatus = await setup({ host: DARWIN_HOST }).control.status();
     const darwinEngines = darwinStatus['engines'] as {
@@ -741,7 +822,7 @@ describe('EngineControl state', () => {
     }[];
     assert.deepEqual(
       darwinEngines.map(({ id }) => id),
-      ['strands-decider', 'fastflowlm', 'openai-compatible', 'lmstudio'],
+      ['strands-decider', 'fastflowlm', 'llama-vulkan', 'openai-compatible', 'lmstudio'],
     );
     const darwinFlm = darwinEngines.find(({ id }) => id === 'fastflowlm');
     assert.ok(darwinFlm);

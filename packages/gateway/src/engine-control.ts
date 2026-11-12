@@ -47,6 +47,7 @@ import {
 import { hostInfo } from './engines/host.ts';
 import { createEngine } from './engines/index.ts';
 import { ManagedEngine, type LifecycleOptions } from './engines/lazy.ts';
+import { effectiveLlamaBinary, LLAMA_INSTALL_URL } from './engines/llama/server.ts';
 import {
   allModels,
   ENGINES,
@@ -84,6 +85,26 @@ function optionalFields(
   return Object.fromEntries(
     keys.flatMap((key) => (entry?.[key] === undefined ? [] : [[key, entry[key]]])),
   );
+}
+
+interface LlamaAvailability {
+  readonly binary: string | undefined;
+  readonly urlConfigured: boolean;
+}
+
+function llamaEngineDetails(llama: LlamaAvailability): Record<string, unknown> {
+  const available = llama.binary !== undefined || llama.urlConfigured;
+  return {
+    id: 'llama-vulkan',
+    installed: available,
+    available,
+    detail:
+      llama.binary ??
+      (llama.urlConfigured
+        ? 'Attached via engines.llama-vulkan.url'
+        : 'llama-server not found on PATH'),
+    ...(available ? {} : { installUrl: LLAMA_INSTALL_URL }),
+  };
 }
 
 export interface EngineSelection {
@@ -752,7 +773,9 @@ export class EngineControl {
     const restart =
       JSON.stringify(next.env) !== JSON.stringify(this.#tools.env) ||
       (engine === 'fastflowlm' && next.flm !== this.#tools.flm) ||
-      (engine === 'strands-decider' && next.strandsDecider !== this.#tools.strandsDecider);
+      (engine === 'strands-decider' && next.strandsDecider !== this.#tools.strandsDecider) ||
+      (engine === 'llama-vulkan' &&
+        this.#llamaAvailability(next).binary !== this.#llamaAvailability().binary);
     this.#retool(next, restart);
   }
 
@@ -883,6 +906,8 @@ export class EngineControl {
     if (this.#tools.flm !== undefined) {
       installed.add('fastflowlm');
     }
+    const llama = this.#llamaAvailability();
+    if (llama.binary !== undefined || llama.urlConfigured) installed.add('llama-vulkan');
     return rankEngines({
       host: { ...this.#host, totalMemoryBytes: this.#memory },
       capabilities,
@@ -943,6 +968,7 @@ export class EngineControl {
     const validation = this.#status.validation ?? null;
     const flmInstalled = this.#tools.flm !== undefined;
     const strandsInstalled = this.#tools.strandsDecider !== undefined;
+    const llama = this.#llamaAvailability();
     const details: Record<string, unknown>[] = [
       {
         id: 'strands-decider',
@@ -964,6 +990,7 @@ export class EngineControl {
         validation,
         ...(flmInstalled ? {} : { installUrl: FLM_INSTALL_URL }),
       },
+      llamaEngineDetails(llama),
       ...OPENAI_LIKE_ENGINES.map((id) => this.#openAIDetails(id)),
     ];
     return ENGINES.filter((engine) => engine.selectable).map((engine) => {
@@ -1126,6 +1153,14 @@ export class EngineControl {
     return engineDefaults(id, undefined, this.#config.engines?.[id]);
   }
 
+  /** The llama-server the engine would spawn: engine `binary` override, else tools.llamaServer. */
+  #llamaAvailability(tools: Toolchain = this.#tools): LlamaAvailability {
+    const config = this.#engineConfigFor('llama-vulkan');
+    return config.type === 'llama-vulkan'
+      ? { binary: effectiveLlamaBinary(config, tools), urlConfigured: config.url !== undefined }
+      : { binary: undefined, urlConfigured: false };
+  }
+
   async #applySelectionConfig(previous: GatewayConfig, config: GatewayConfig): Promise<void> {
     if (this.#auto) {
       await this.reconcileAuto();
@@ -1188,8 +1223,10 @@ export class EngineControl {
     }
     const unchanged = this.#same(next);
     const model = catalogModel(next.model, next.engine);
+    const attached = next.engine === 'llama-vulkan' && this.#llamaAvailability().urlConfigured;
     const installed =
-      model === undefined ? false : ((await this.#installed([model])).get(model.id) ?? false);
+      attached ||
+      (model !== undefined && ((await this.#installed([model])).get(model.id) ?? false));
     if (!unchanged && model !== undefined && !installed) {
       throw new EngineSwitchError(400, `${next.model} is not downloaded yet`);
     }

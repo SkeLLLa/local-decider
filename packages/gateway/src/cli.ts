@@ -39,10 +39,18 @@ import type { HostInfo } from './engines/descriptor.ts';
 import { FLM_INSTALL_URL } from './engines/fastflowlm/status.ts';
 import { probeHostCapabilities } from './engines/host-capabilities.ts';
 import { hostInfo } from './engines/host.ts';
+import { DEFAULT_LLAMA_MODEL } from './engines/llama/index.ts';
+import {
+  effectiveLlamaBinary,
+  llamaEngineConfig,
+  LLAMA_INSTALL_URL,
+} from './engines/llama/server.ts';
+import { hasVulkanDevice } from './engines/llama/status.ts';
 import { ENGINES } from './engines/registry.ts';
 import { rankEngines } from './engines/selector.ts';
 import { strandsBinary } from './engines/strands/server.ts';
 import { parseEvalCases, runPolicyEval } from './eval.ts';
+import { installLlamaModel } from './llama-install.ts';
 import { serveMcpStdio, type McpBackend } from './mcp.ts';
 import { resolvePaths, type Paths } from './paths.ts';
 import { loadPolicies, policyDirs } from './policies.ts';
@@ -57,7 +65,7 @@ import {
 } from './service.ts';
 import { parseDays, runStatsFromFile } from './stats-job.ts';
 import { formatStats } from './stats.ts';
-import { toolchain } from './toolchain.ts';
+import { probe, toolchain } from './toolchain.ts';
 
 const USAGE = `local-decider — local decision models for coding-agent harnesses
 
@@ -66,6 +74,7 @@ Usage:
   local-decider gateway start|restart|stop|status|uninstall  user service (start is a no-op if running)
   local-decider engine install [--flavor cpu|mlx|cuda] [--model ID] [--no-download]
   local-decider engine install --engine fastflowlm [--model d3:nano]  AMD NPU (Linux): uses your flm
+  local-decider engine install --engine llama-vulkan [--model d3-mini-q4_k_m]  Linux GPU (Vulkan): downloads a pinned d3 GGUF
   local-decider engine list                         list engines and models
   local-decider engine configure <openai-compatible|lmstudio> --url URL --model ID [--token-env NAME]
   local-decider engine use <engine> <model> [--device D]  select an engine and model
@@ -322,11 +331,19 @@ async function autoInstallInput(ctx: Context, host: HostInfo): Promise<AutoInsta
     return undefined;
   }
   const capabilities = await probeHostCapabilities({ strandsDecider: strandsBinary(ctx.paths) });
+  const llama = llamaEngineConfig(ctx.config);
+  const installed = new Set<string>();
+  if (
+    llama.url !== undefined ||
+    effectiveLlamaBinary(llama, toolchain(ctx.config, ctx.paths)) !== undefined
+  ) {
+    installed.add('llama-vulkan');
+  }
   const ranking = rankEngines({
     host,
     capabilities,
     engines: ENGINES,
-    installed: new Set(),
+    installed,
     explicit: null,
   });
   return { ranking };
@@ -343,8 +360,60 @@ async function installEngine(ctx: Context, args: readonly string[]): Promise<voi
     installFastFlowLM(ctx, plan.model, plan.noDownload);
     return;
   }
+  if (plan.engine === 'llama-vulkan') {
+    await installLlamaVulkan(ctx, plan.model, plan.noDownload);
+    return;
+  }
   installStrandsEngine(ctx.paths, plan.flavor, plan.model);
   console.log(`strands-decider engine installed (${plan.flavor}) under ${ctx.paths.venvs}`);
+}
+
+function llamaBinaryHint(config: GatewayConfig, binary: string | undefined): string {
+  if (binary !== undefined) return `Using llama-server at ${binary}`;
+  const engineConfig = llamaEngineConfig(config);
+  if (engineConfig.binary !== undefined) {
+    return `Configured engines.llama-vulkan.binary is not executable; install llama.cpp with Vulkan support (${LLAMA_INSTALL_URL}) or correct the path`;
+  }
+  return `llama-server not found; install llama.cpp with Vulkan support (${LLAMA_INSTALL_URL}) or set engines.llama-vulkan.binary`;
+}
+
+async function installLlamaVulkan(
+  ctx: Context,
+  model: string | undefined,
+  noDownload: boolean,
+): Promise<void> {
+  const tools = toolchain(ctx.config, ctx.paths);
+  const binary = effectiveLlamaBinary(llamaEngineConfig(ctx.config), tools);
+  console.log(llamaBinaryHint(ctx.config, binary));
+  let vulkan = false;
+  if (binary !== undefined) {
+    try {
+      const devices = await probe(binary, ['--list-devices'], tools.env);
+      vulkan = hasVulkanDevice(devices);
+      if (!vulkan) console.warn(`${binary} lists no Vulkan device; a Vulkan build is required`);
+    } catch (error) {
+      console.warn(
+        `${binary} could not list devices: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+  }
+  const id = model ?? DEFAULT_LLAMA_MODEL;
+  if (!noDownload) {
+    const path = await installLlamaModel(ctx.paths, id, (fraction) => {
+      process.stderr.write(`\r${(fraction * 100).toFixed(0)}%`);
+    });
+    process.stderr.write('\n');
+    console.log(`Installed ${id} at ${path}`);
+  }
+  if (binary === undefined) {
+    console.log(
+      `Install a Vulkan-enabled llama-server from ${LLAMA_INSTALL_URL}, set its path, then select llama-vulkan.`,
+    );
+  } else if (vulkan) {
+    console.log('Select llama-vulkan in Settings → Local decider when the model is ready.');
+  } else {
+    console.log('Install a Vulkan-enabled llama-server, set its path, then select llama-vulkan.');
+  }
 }
 
 async function engine(ctx: Context): Promise<void> {

@@ -32,4 +32,15 @@ export interface Engine {
 
 export class EngineError extends Error {
   override readonly name = 'EngineError';
+  readonly httpFailure:
+    | { readonly status: number; readonly path: string; readonly body: string }
+    | undefined;
+
+  constructor(
+    message: string,
+    httpFailure?: { readonly status: number; readonly path: string; readonly body: string },
+  ) {
+    super(message);
+    this.httpFailure = httpFailure;
+  }
 }

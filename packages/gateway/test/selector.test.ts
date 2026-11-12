@@ -80,7 +80,12 @@ describe('engine ranking', () => {
     const r = rank(MAC, caps({ apple: YES('mlx') }));
     const flm = r.candidates.find((c) => c.engine === 'fastflowlm');
     assert.equal(flm?.supported, false);
-    assert.ok(r.candidates.filter((c) => c.engine !== 'fastflowlm').every((c) => c.supported));
+    assert.ok(
+      r.candidates
+        .filter((c) => !['fastflowlm', 'llama-vulkan'].includes(c.engine))
+        .every((c) => c.supported),
+    );
+    assert.equal(r.candidates.find((c) => c.engine === 'llama-vulkan')?.supported, false);
   });
 
   it('gives each candidate a stable code', () => {
@@ -110,10 +115,53 @@ describe('engine ranking', () => {
     assert.deepEqual(ladder(r), ['strands-decider:MPS', 'strands-decider:CPU']);
   });
 
-  it('never ranks Vulkan, and never recommends uncalibrated engines', () => {
+  it('Linux with a hardware Vulkan GPU: llama Vulkan, then CPU', () => {
+    const r = rank(LINUX, caps({ vulkan: YES() }), { installed: new Set(['llama-vulkan']) });
+    assert.deepEqual(ladder(r), ['llama-vulkan:Vulkan', 'strands-decider:CPU']);
+    assert.equal(r.automatic?.model, 'd3-mini-q4_k_m');
+  });
+
+  it('does not auto-pick llama Vulkan when no server binary or URL is available', () => {
     const r = rank(LINUX, caps({ vulkan: YES() }));
-    assert.deepEqual(ladder(r), ['strands-decider:CPU']);
-    assert.ok(r.candidates.every((c) => c.engine !== 'vulkan'));
+    const llama = r.candidates.find((candidate) => candidate.engine === 'llama-vulkan');
+    assert.equal(llama?.ready, false);
+    assert.equal(llama?.eligible, false);
+    assert.equal(llama?.code, 'not-installed');
+    assert.equal(r.automatic?.engine, 'strands-decider');
+  });
+
+  it('NPU and Vulkan keeps FLM first', () => {
+    assert.deepEqual(
+      ladder(
+        rank(LINUX, caps({ npu: YES(), vulkan: YES() }), {
+          installed: new Set(['llama-vulkan']),
+        }),
+      ),
+      ['fastflowlm:NPU', 'llama-vulkan:Vulkan', 'strands-decider:CPU'],
+    );
+  });
+
+  it('NVIDIA and Vulkan keeps CUDA before Vulkan', () => {
+    assert.deepEqual(
+      ladder(
+        rank(LINUX, caps({ nvidia: YES(), vulkan: YES() }), {
+          installed: new Set(['llama-vulkan']),
+        }),
+      ),
+      ['strands-decider:CUDA', 'llama-vulkan:Vulkan', 'strands-decider:CPU'],
+    );
+  });
+
+  it('Vulkan unknown is not eligible', () => {
+    const candidate = rank(LINUX, caps({ vulkan: MAYBE }), {
+      installed: new Set(['llama-vulkan']),
+    }).candidates.find((c) => c.engine === 'llama-vulkan');
+    assert.equal(candidate?.eligible, false);
+    assert.equal(candidate?.code, 'not-confirmed');
+  });
+
+  it('never recommends uncalibrated engines', () => {
+    const r = rank(LINUX, caps({ vulkan: YES() }));
     for (const id of ['lmstudio', 'openai-compatible']) {
       const c = r.candidates.find((x) => x.engine === id);
       assert.equal(c?.eligible, false);

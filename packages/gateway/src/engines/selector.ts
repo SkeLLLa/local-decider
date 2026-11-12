@@ -3,7 +3,7 @@ import type { Device, EngineDescriptor, HostInfo, ModelDescriptor } from './desc
 import type { CapabilityResult, HostCapabilities } from './host-capabilities.ts';
 import type { EngineId } from './registry.ts';
 
-export type Backend = 'NPU' | 'CUDA' | 'MLX' | 'MPS' | 'CPU';
+export type Backend = 'NPU' | 'CUDA' | 'Vulkan' | 'MLX' | 'MPS' | 'CPU';
 
 /** The slice of an engine descriptor the selector reads. */
 export type SelectorEngine = Pick<
@@ -18,6 +18,7 @@ export type CandidateCode =
   | 'not-confirmed'
   | 'unsupported-platform'
   | 'no-memory'
+  | 'not-installed'
   | 'uncalibrated';
 
 export interface Candidate {
@@ -83,6 +84,13 @@ const LADDER: readonly Rung[] = [
     backend: 'CUDA',
     needs: (c) => c.nvidia,
     label: 'NVIDIA GPU',
+  },
+  {
+    engine: 'llama-vulkan',
+    device: null,
+    backend: 'Vulkan',
+    needs: (c) => c.vulkan,
+    label: 'Vulkan GPU',
   },
   {
     engine: 'strands-decider',
@@ -174,6 +182,15 @@ function rungCandidate(
       supported: true,
       reason: `${model.id} does not fit in memory`,
       code: 'no-memory',
+    };
+  }
+  if (rung.engine === 'llama-vulkan' && !base.ready) {
+    return {
+      ...base,
+      eligible: false,
+      supported: true,
+      reason: 'llama-server binary or URL is not available',
+      code: 'not-installed',
     };
   }
   const { ok, reason, code } = verdict(rung, input.capabilities);

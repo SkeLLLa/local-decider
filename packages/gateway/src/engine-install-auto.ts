@@ -10,7 +10,7 @@ export interface AutoInstall {
 }
 
 export interface AutoTarget {
-  readonly engine: 'strands-decider' | 'fastflowlm';
+  readonly engine: 'strands-decider' | 'fastflowlm' | 'llama-vulkan';
   readonly flavor: InstallFlavor;
   readonly model: string;
   readonly reason: string;
@@ -19,6 +19,7 @@ export interface AutoTarget {
 const FLAVOR: Readonly<Record<Backend, InstallFlavor>> = {
   NPU: 'cpu',
   CUDA: 'cuda',
+  Vulkan: 'cpu',
   MLX: 'mlx',
   // Torch wheels on macOS include MPS.
   MPS: 'cpu',
@@ -26,7 +27,7 @@ const FLAVOR: Readonly<Record<Backend, InstallFlavor>> = {
 };
 
 const isInstallable = (c: Candidate): boolean =>
-  c.engine === 'strands-decider' || c.engine === 'fastflowlm';
+  c.engine === 'strands-decider' || c.engine === 'fastflowlm' || c.engine === 'llama-vulkan';
 
 function appleSiliconDefault(host: HostInfo, chosen: Candidate): boolean {
   return host.platform === 'darwin' && host.arch === 'arm64' && chosen.backend === 'CPU';

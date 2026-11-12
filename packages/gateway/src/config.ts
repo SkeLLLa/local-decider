@@ -202,6 +202,7 @@ export const configSchema = z
     tools: z
       .strictObject({
         flm: z.string().min(1).optional(),
+        llamaServer: z.string().min(1).optional(),
         strandsDecider: z.string().min(1).optional(),
         uv: z.string().min(1).optional(),
       })
