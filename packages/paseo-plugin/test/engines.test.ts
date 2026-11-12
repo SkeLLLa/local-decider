@@ -199,6 +199,7 @@ describe('GET /v1/engines parsing', () => {
       unsupportedReason: null,
       connectable: false,
       connection: null,
+      installUrl: null,
     });
     assert.equal(catalog.engines[1]?.available, true);
     assert.deepEqual(catalog.models[0], {
@@ -392,6 +393,21 @@ describe('engine selection helpers', () => {
     assert.equal(engineTag('other'), 'other');
     assert.equal(engineTag('other', ''), 'other');
     assert.equal(engineTag(null, 'NPU'), null);
+  });
+
+  it('keeps only an https install link for a missing engine', () => {
+    const { engines } = parseEngineCatalog({
+      engines: [
+        { id: 'fastflowlm', installUrl: 'https://github.com/FastFlowLM/FastFlowLM' },
+        { id: 'b', installUrl: 'javascript:alert(1)' },
+        { id: 'c', installUrl: 'http://example.com' },
+        { id: 'd' },
+      ],
+    });
+    assert.deepEqual(
+      engines.map((e) => e.installUrl),
+      ['https://github.com/FastFlowLM/FastFlowLM', null, null, null],
+    );
   });
 
   it('reads the new engine fields and defaults them for an old gateway', () => {

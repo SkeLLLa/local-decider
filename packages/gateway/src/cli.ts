@@ -32,13 +32,13 @@ import { DEFAULT_FLM_MODEL, DEFAULT_PORT, loadConfig, type GatewayConfig } from 
 import type { AutoInstall } from './engine-install-auto.ts';
 import { installStrandsEngine } from './engine-install.ts';
 import type { HostInfo } from './engines/descriptor.ts';
+import { FLM_INSTALL_URL } from './engines/fastflowlm/status.ts';
 import { probeHostCapabilities } from './engines/host-capabilities.ts';
 import { hostInfo } from './engines/host.ts';
 import { ENGINES } from './engines/registry.ts';
 import { rankEngines } from './engines/selector.ts';
 import { strandsBinary } from './engines/strands/server.ts';
 import { parseEvalCases, runPolicyEval } from './eval.ts';
-import { FLM_VERSION, installFlm } from './flm-install.ts';
 import { serveMcpStdio, type McpBackend } from './mcp.ts';
 import { resolvePaths, type Paths } from './paths.ts';
 import { loadPolicies, policyDirs } from './policies.ts';
@@ -53,6 +53,7 @@ import {
 import type { LogStore } from './shadow.ts';
 import { openLogStore } from './sqlite-log.ts';
 import { computeStats, formatStats } from './stats.ts';
+import { toolchain } from './toolchain.ts';
 
 const USAGE = `local-decider — local decision models for coding-agent harnesses
 
@@ -60,7 +61,7 @@ Usage:
   local-decider gateway run [--host H] [--port N]   run in the foreground
   local-decider gateway start|restart|stop|status|uninstall  user service (start is a no-op if running)
   local-decider engine install [--flavor cpu|mlx|cuda] [--model ID] [--no-download]
-  local-decider engine install --engine fastflowlm [--model d3:nano]  AMD NPU (Linux)
+  local-decider engine install --engine fastflowlm [--model d3:nano]  AMD NPU (Linux): uses your flm
   local-decider engine list                         list engines and models
   local-decider engine configure <openai-compatible|lmstudio> --url URL --model ID [--token-env NAME]
   local-decider engine use <engine> <model> [--device D]  select an engine and model
@@ -153,9 +154,21 @@ async function gatewayService(ctx: Context, action: string): Promise<void> {
   }
 }
 
-async function installFastFlowLM(model: string | undefined, noDownload: boolean): Promise<void> {
-  const flm = await installFlm(resolvePaths());
-  console.log(`FastFlowLM ${FLM_VERSION} installed: ${flm}`);
+/**
+ * FastFlowLM is installed by the user (dnf, apt or the upstream installer), never downloaded by
+ * local-decider: find their `flm`, check the NPU and pull the decision model.
+ */
+function installFastFlowLM(ctx: Context, model: string | undefined, noDownload: boolean): void {
+  const flm = toolchain(ctx.config, ctx.paths).flm;
+  if (flm === undefined) {
+    console.error(
+      `FastFlowLM not found on PATH. Install it with your package manager or from ${FLM_INSTALL_URL},\n` +
+        'or set tools.flm in config.yaml, then run this again.',
+    );
+    process.exitCode = 1;
+    return;
+  }
+  console.log(`Using FastFlowLM at ${flm}`);
   execFileSync(flm, ['validate'], { stdio: 'inherit' });
   if (!noDownload) {
     execFileSync(flm, ['pull', model ?? DEFAULT_FLM_MODEL], { stdio: 'inherit' });
@@ -268,7 +281,8 @@ async function installEngine(ctx: Context, args: readonly string[]): Promise<voi
     console.log(plan.reason);
   }
   if (plan.engine === 'fastflowlm') {
-    return installFastFlowLM(plan.model, plan.noDownload);
+    installFastFlowLM(ctx, plan.model, plan.noDownload);
+    return;
   }
   installStrandsEngine(ctx.paths, plan.flavor, plan.model);
   console.log(`strands-decider engine installed (${plan.flavor}) under ${ctx.paths.venvs}`);

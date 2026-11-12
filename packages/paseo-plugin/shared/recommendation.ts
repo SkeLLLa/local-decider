@@ -299,12 +299,18 @@ export type Suggestion =
 
 function installCommand(t: Target, backend: string | null): string {
   if (t.engine === 'fastflowlm') {
-    return `local-decider engine install --engine fastflowlm --model ${t.model}`;
+    return [
+      `Install FastFlowLM with your package manager or from ${FLM_INSTALL_URL}, then:`,
+      `local-decider engine install --engine fastflowlm --model ${t.model}`,
+    ].join('\n');
   }
   const flavor =
     backend === 'MLX' || backend === 'CUDA' ? ` --flavor ${backend.toLowerCase()}` : '';
   return `local-decider engine install${flavor}`;
 }
+
+/** FastFlowLM is installed by the user; local-decider never downloads it. */
+const FLM_INSTALL_URL = 'https://github.com/FastFlowLM/FastFlowLM';
 
 const LADDER = ['NPU', 'CUDA', 'MLX', 'MPS', 'CPU'];
 

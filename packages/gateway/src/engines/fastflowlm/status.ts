@@ -1,6 +1,9 @@
 import { probe } from '../../toolchain-probe.ts';
 import type { EngineContext, Validation } from '../descriptor.ts';
 
+/** Where users install FastFlowLM (distribution packages or the upstream installer). */
+export const FLM_INSTALL_URL = 'https://github.com/FastFlowLM/FastFlowLM';
+
 /** Tags `flm list` marks downloaded (`  - d3:nano ✅`). */
 export function parseFlmList(output: string): Set<string> {
   const out = new Set<string>();

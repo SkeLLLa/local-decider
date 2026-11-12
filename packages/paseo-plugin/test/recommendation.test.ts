@@ -257,7 +257,8 @@ describe('suggestion', () => {
     assert.equal(
       suggestionView(active(), flm, NAMES)?.kind === 'install' &&
         (suggestionView(active(), flm, NAMES) as { command: string }).command,
-      'local-decider engine install --engine fastflowlm --model d3:mini',
+      'Install FastFlowLM with your package manager or from https://github.com/FastFlowLM/FastFlowLM, then:\n' +
+        'local-decider engine install --engine fastflowlm --model d3:mini',
     );
   });
 

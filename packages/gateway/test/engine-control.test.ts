@@ -76,9 +76,14 @@ function deferred<T>(): { promise: Promise<T>; resolve: (value: T) => void } {
   return { promise, resolve };
 }
 
-/** A fake `flm` on disk, so the FastFlowLM engine counts as installed. */
+/** The test PATH: where the fake system tools live. */
+function binDir(paths: Paths): string {
+  return join(paths.data, 'bin');
+}
+
+/** A fake `flm` on the test PATH, so the FastFlowLM engine counts as installed. */
 function fakeFlm(paths: Paths): string {
-  const dir = join(paths.engines, 'fastflowlm', '1.0.12', 'dist');
+  const dir = binDir(paths);
   mkdirSync(dir, { recursive: true });
   const file = join(dir, 'flm');
   writeFileSync(file, `#!${process.execPath}\nconsole.log('FLM v1.0.12')\n`);
@@ -167,7 +172,7 @@ function setup(options: SetupOptions = {}): Setup {
   const control = new EngineControl({
     store,
     paths,
-    env: { PATH: '' },
+    env: { PATH: binDir(paths) },
     capabilities: options.capabilities ?? stubCapabilities,
     ...(options.host === undefined ? {} : { host: options.host }),
     totalMemory: options.totalMemory ?? 1e12,
@@ -700,6 +705,24 @@ describe('EngineControl state', () => {
     assert.equal((status['active'] as { lifecycle: string }).lifecycle, 'lazy');
   });
 
+  it('finds an flm installed after start, with an install link until then', async () => {
+    const { control, created, paths } = setup();
+    rmSync(join(binDir(paths), 'flm'));
+    type Row = { id: string; installed: boolean; installUrl?: string };
+    const flmRow = async (): Promise<Row | undefined> =>
+      ((await control.status())['engines'] as Row[]).find((e) => e.id === 'fastflowlm');
+    const before = await flmRow();
+    assert.equal(before?.installed, false);
+    assert.equal(before?.installUrl, 'https://github.com/FastFlowLM/FastFlowLM');
+    const engines = created.length;
+    fakeFlm(paths);
+    const after = await flmRow();
+    assert.equal(after?.installed, true);
+    assert.equal(after?.installUrl, undefined);
+    await settleEventLoop();
+    assert.equal(created.length, engines, 'the running strands-decider engine is not restarted');
+  });
+
   it('lists each engine and reports host support from its descriptor', async () => {
     const darwinStatus = await setup({ host: DARWIN_HOST }).control.status();
     const darwinEngines = darwinStatus['engines'] as {
@@ -795,7 +818,7 @@ describe('EngineControl state', () => {
     const entry = await control.setPath('tools.flm', flm);
     assert.equal(entry.source, 'config');
     assert.equal(entry.ok, true);
-    assert.equal((await control.setPath('tools.flm', null)).source, 'managed');
+    assert.equal((await control.setPath('tools.flm', null)).source, 'path');
     const remote = new EngineControl({
       store: new MemoryConfigStore(parseConfig({})),
       paths,

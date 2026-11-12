@@ -60,17 +60,20 @@ never switches the running engine.
 - **strands-decider** syncs a pinned uv project into
   `~/.local/share/local-decider/venvs/strands-decider` and downloads the weights into the Hugging
   Face cache. Flags: `--flavor cpu|mlx|cuda`, `--model <id>`, `--no-download`.
-- **FastFlowLM** downloads the pinned portable build (1.0.12) into
-  `~/.local/share/local-decider/engines/fastflowlm/`, checks it against a SHA-256 pinned in the
-  gateway, runs `flm validate` and pulls the model. Then select it in **Settings → Local
-  decider**, or run:
+- **FastFlowLM** is installed by you, never downloaded by local-decider. Install it with your
+  distribution's package (which also brings the NPU driver) or the upstream installer: see
+  [FastFlowLM](https://github.com/FastFlowLM/FastFlowLM). `engine install --engine fastflowlm`
+  then finds your `flm`, runs `flm validate` and pulls the model; models can also be downloaded
+  from **Settings → Local decider**. Select it there, or run:
 
   ```sh
   curl -s -H 'content-type: application/json' -d '{"engine":"fastflowlm","model":"d3:mini"}' http://127.0.0.1:8765/v1/engine
   ```
 
-  An `flm` already on `PATH` is found automatically. Tool paths and model directories can be set
-  under `tools:` and `dirs:` in `config.yaml` or in the settings page.
+  The gateway looks for `flm` on `PATH` (and `strands-decider` on `PATH` before its own venv) each
+  time the settings page asks, so a tool installed while the gateway runs is picked up without a
+  restart. A missing engine shows an **Install guide** link in settings. Tool paths and model
+  directories can be set under `tools:` and `dirs:` in `config.yaml` or in the settings page.
 
 ### Automatic selection
 
@@ -85,7 +88,7 @@ in the settings page or with `engine use` is manual and is never replaced. See
 the gateway then serves on MLX (about 66 ms warm for the 2B model on an M5 Pro). To force
 another device, set `engine.device: mps` (about 180 ms; works with the `mlx` or `cpu` flavour) or
 `cpu` (about 1.1 s). A 48 GB Mac fits models up to 12B in bf16 but not 26B-A4B. FastFlowLM is
-Linux-only, and `engine install --engine fastflowlm` refuses on macOS.
+Linux-only.
 
 `local-decider gateway start` installs a LaunchAgent that has `PATH`, `HOME` and the data-directory
 variables set. Put a remote-mode `LOCAL_DECIDER_TOKEN` in `~/.config/local-decider/env`, which the

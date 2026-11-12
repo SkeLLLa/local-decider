@@ -2,7 +2,7 @@
  * Settings: pick an engine, then a model for it. Rows download models, switch the gateway to one
  * (the gateway persists it) and show an engine's validation result when it has one.
  */
-import { useRpc } from '@getpaseo/plugin/client';
+import { openExternalUrl, useRpc } from '@getpaseo/plugin/client';
 import {
   SettingsAction,
   SettingsCard,
@@ -401,6 +401,22 @@ function UseAutomatic({ theme }: { theme: Theme }): ReactNode {
   );
 }
 
+/** A missing engine the user installs themselves: a link to its install page, nothing run here. */
+function InstallRow({ engine }: { engine: EngineInfo | null }): ReactNode {
+  if (engine === null || engine.installed || !engine.supported || engine.installUrl === null) {
+    return null;
+  }
+  const url = engine.installUrl;
+  return (
+    <SettingsAction
+      label={`Install ${engine.label}`}
+      hint={engine.detail ?? 'Not installed on the gateway machine.'}
+      actionLabel="Install guide"
+      onPress={() => void openExternalUrl(url)}
+    />
+  );
+}
+
 function EngineCard({
   theme,
   catalog,
@@ -430,6 +446,7 @@ function EngineCard({
         disabled={catalog.engines.length === 0}
         onValueChange={onEngine}
       />
+      <InstallRow engine={engine} />
       {id === AUTO_ENGINE && active?.selectionMode === 'manual' ? (
         <UseAutomatic theme={theme} />
       ) : null}
