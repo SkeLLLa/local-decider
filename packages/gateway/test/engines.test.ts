@@ -7,6 +7,7 @@ import { after, before, describe, it } from 'node:test';
 import { setTimeout as sleep } from 'node:timers/promises';
 
 import { parseConfig, type StrandsEngineConfig } from '../src/config.ts';
+import { displayUrl } from '../src/engines/http.ts';
 import {
   createEngine,
   serveArgs,
@@ -85,6 +86,31 @@ describe('SystemOneRemoteEngine', () => {
     await engine.start();
     assert.equal(engine.health().state, 'failed');
     await assert.rejects(engine.decide(REQUEST, AbortSignal.timeout(500)), /unreachable/);
+  });
+
+  it('hides URL credentials and query values from failed health details', async () => {
+    const engine = new SystemOneRemoteEngine({
+      type: 'systemone-remote',
+      url: 'https://user:SECRETPW@127.0.0.1:1/v1?key=SECRETQ',
+      model: 'm',
+    });
+    await engine.start();
+    const detail = engine.health().detail ?? '';
+    assert.match(detail, /https:\/\/127\.0\.0\.1:1\/v1/);
+    assert.equal(detail.includes('SECRETPW'), false);
+    assert.equal(detail.includes('SECRETQ'), false);
+  });
+});
+
+describe('displayUrl', () => {
+  it('keeps the safe URL path and drops root slash, credentials, query and fragment', () => {
+    assert.equal(
+      displayUrl('https://user:pw@example.test/v1?key=secret#x'),
+      'https://example.test/v1',
+    );
+    assert.equal(displayUrl('https://example.test/'), 'https://example.test');
+    assert.equal(displayUrl('invalid'), 'an invalid URL');
+    assert.equal(displayUrl('https://[2001:db8::1]:8443/v1'), 'https://[2001:db8::1]:8443/v1');
   });
 });
 

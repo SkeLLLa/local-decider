@@ -33,6 +33,7 @@ import { defaultPolicyDir, loadPolicies, policyDirs } from '../src/policies.ts';
 import { startGateway } from '../src/runtime.ts';
 import {
   FakeEngine,
+  controlHeaders,
   NO_CAPABILITIES,
   stubCapabilities,
   tempLog,
@@ -891,13 +892,37 @@ describe('request parsing', () => {
 });
 
 describe('control routes', () => {
+  it('accepts the bearer in token mode and still requires it for control routes', async () => {
+    const { control, paths } = setup();
+    const bearer = 'remote-bearer';
+    const gw = await startGateway({
+      config: testConfig(),
+      paths,
+      engineControl: control,
+      env: { LOCAL_DECIDER_TOKEN: bearer },
+    });
+    try {
+      assert.equal(
+        (await fetch(`${gw.url}/v1/config`, { headers: { authorization: `Bearer ${bearer}` } }))
+          .status,
+        200,
+      );
+      assert.equal(
+        (await fetch(`${gw.url}/v1/config`, { headers: controlHeaders(paths) })).status,
+        401,
+      );
+    } finally {
+      await gw.close();
+    }
+  });
+
   it('serve config.yaml, preset mapping, resolved routes and the authoring prompt', async () => {
     const { control, paths } = setup();
     const gw = await startGateway({ config: testConfig(), paths, engineControl: control, env: {} });
     const post = (path: string, body: unknown): Promise<Response> =>
       fetch(`${gw.url}${path}`, {
         method: 'POST',
-        headers: { 'content-type': 'application/json' },
+        headers: { 'content-type': 'application/json', ...controlHeaders(paths) },
         body: JSON.stringify(body),
       });
     try {
@@ -935,7 +960,9 @@ describe('control routes', () => {
         ).status,
         400,
       );
-      const described = (await (await fetch(`${gw.url}/v1/config`)).json()) as {
+      const described = (await (
+        await fetch(`${gw.url}/v1/config`, { headers: controlHeaders(paths) })
+      ).json()) as {
         policyDir: string;
         config: { routing: { presets: Record<string, unknown> } };
       };
@@ -946,26 +973,34 @@ describe('control routes', () => {
       await post('/v1/routing/presets', { harness: 'claude-code', preset: 'deep', model: null });
       assert.deepEqual(control.settings.routing.presets, {});
 
-      const prompt = (await (await fetch(`${gw.url}/v1/policies/routing/prompt`)).json()) as {
+      const prompt = (await (
+        await fetch(`${gw.url}/v1/policies/routing/prompt`, { headers: controlHeaders(paths) })
+      ).json()) as {
         prompt: string;
         cwd: string;
       };
       assert.equal(prompt.cwd, paths.config);
       assert.match(prompt.prompt, /variantOf: routing/);
-      assert.equal((await fetch(`${gw.url}/v1/policies/permission/prompt`)).status, 400);
+      assert.equal(
+        (await fetch(`${gw.url}/v1/policies/permission/prompt`, { headers: controlHeaders(paths) }))
+          .status,
+        400,
+      );
       assert.deepEqual(await (await post('/v1/config/reload', {})).json(), {
         changed: false,
         notes: [],
       });
+      assert.equal((await post('/v1/policies/reload', {})).status, 200);
     } finally {
       await gw.close();
     }
   });
 
   it('answer 409 when the engine cannot switch', async () => {
+    const paths = tempPaths();
     const gw = await startGateway({
       config: testConfig(),
-      paths: tempPaths(),
+      paths,
       engine: new FakeEngine(),
       env: {},
     });
@@ -973,7 +1008,7 @@ describe('control routes', () => {
       for (const path of ['/v1/engine', '/v1/engine/load', '/v1/policies/permission/mode']) {
         const res = await fetch(`${gw.url}${path}`, {
           method: 'POST',
-          headers: { 'content-type': 'application/json' },
+          headers: { 'content-type': 'application/json', ...controlHeaders(paths) },
           body: JSON.stringify({ model: E2B, mode: 'act' }),
         });
         assert.equal(res.status, 409, path);
@@ -989,14 +1024,13 @@ describe('control routes', () => {
     const post = (path: string, body: unknown): Promise<Response> =>
       fetch(`${gw.url}${path}`, {
         method: 'POST',
-        headers: { 'content-type': 'application/json' },
+        headers: { 'content-type': 'application/json', ...controlHeaders(paths) },
         body: JSON.stringify(body),
       });
     try {
-      const status = (await (await fetch(`${gw.url}/v1/engines`)).json()) as Record<
-        string,
-        unknown
-      >;
+      const status = (await (
+        await fetch(`${gw.url}/v1/engines`, { headers: controlHeaders(paths) })
+      ).json()) as Record<string, unknown>;
       assert.ok(Array.isArray(status['models']));
       assert.equal(
         (await post('/v1/engine', { engine: 'fastflowlm', model: 'd3:nano' })).status,

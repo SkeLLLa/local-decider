@@ -10,7 +10,7 @@ import type { Engine } from './engines/types.ts';
 import type { LogStore } from './log-store.ts';
 import type { Paths } from './paths.ts';
 import { loadPolicies, policyDirs, type LoadedPolicy } from './policies.ts';
-import { ensureReportToken } from './report-token.ts';
+import { ensureControlToken, ensureReportToken } from './report-token.ts';
 import { writeSchemas } from './schemas.ts';
 import { createGatewayServer, type ServerOptions } from './server.ts';
 import { openLogStore } from './sqlite-log.ts';
@@ -96,6 +96,7 @@ export async function startGateway(options: StartOptions): Promise<Gateway> {
     log,
     token: hasToken ? token : undefined,
     reportToken,
+    controlToken: ensureControlToken(paths),
     engineControl,
     pricing: config.pricing,
     stats,

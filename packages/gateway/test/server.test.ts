@@ -1,15 +1,22 @@
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { request } from 'node:http';
 import { connect } from 'node:net';
 import { join } from 'node:path';
 import { after, before, describe, it } from 'node:test';
 
 import { startGateway, type Gateway } from '../src/runtime.ts';
-import { FakeEngine, readLog, tempPaths, testConfig } from './helpers.ts';
+import { controlHeaders, FakeEngine, readLog, tempPaths, testConfig } from './helpers.ts';
 
 async function json(res: Response): Promise<Record<string, unknown>> {
   return (await res.json()) as Record<string, unknown>;
+}
+
+function directorySnapshot(directory: string): readonly (readonly [string, string])[] | undefined {
+  if (!existsSync(directory)) return undefined;
+  return readdirSync(directory)
+    .toSorted()
+    .map((name) => [name, readFileSync(join(directory, name), 'base64')] as const);
 }
 
 describe('routing presets per harness', () => {
@@ -198,7 +205,7 @@ describe('gateway HTTP', () => {
   ): Promise<Response> =>
     fetch(`${gw.url}${path}`, {
       method: 'POST',
-      headers: { 'content-type': 'application/json', ...headers },
+      headers: { 'content-type': 'application/json', ...controlHeaders(logPaths), ...headers },
       body: typeof body === 'string' ? body : JSON.stringify(body),
     });
 
@@ -456,6 +463,127 @@ describe('gateway browser guard', () => {
   });
 });
 
+describe('control token', () => {
+  let gw: Gateway;
+  const paths = tempPaths();
+  const engine = new FakeEngine();
+
+  before(async () => {
+    gw = await startGateway({ config: testConfig(), paths, engine, env: {} });
+  });
+  after(async () => gw.close());
+
+  it('guards every control route before reading the request or causing effects', async () => {
+    const routes = [
+      ['GET', '/v1/engines'],
+      ['POST', '/v1/engine'],
+      ['POST', '/v1/engine/mode'],
+      ['POST', '/v1/engine/load'],
+      ['POST', '/v1/engine/unload'],
+      ['POST', '/v1/engine/lifecycle'],
+      ['POST', '/v1/models/download'],
+      ['POST', '/v1/engines/validate'],
+      ['POST', '/v1/engines/discover'],
+      ['POST', '/v1/paths'],
+      ['POST', '/v1/policies/reload'],
+      ['POST', '/v1/policies/permission/mode'],
+      ['POST', '/v1/policies/permission/variant'],
+      ['POST', '/v1/policies/permission/thresholds'],
+      ['GET', '/v1/config'],
+      ['POST', '/v1/config/reload'],
+      ['POST', '/v1/config/engine'],
+      ['POST', '/v1/routing/presets'],
+      ['GET', '/v1/policies/routing/prompt'],
+    ] as const;
+    const valid = controlHeaders(paths)['x-local-decider-control'] ?? '';
+    const wrong = 'w'.repeat(valid.length);
+    const stateBefore = engine.state;
+    const configFile = join(paths.config, 'config.yaml');
+    const configBefore = existsSync(configFile) ? readFileSync(configFile) : undefined;
+    const policiesDirectory = join(paths.config, 'policies');
+    const policiesBefore = directorySnapshot(policiesDirectory);
+    for (const [method, path] of routes) {
+      for (const headers of [
+        {},
+        { 'x-local-decider-control': wrong },
+        { 'x-local-decider-control': '' },
+      ]) {
+        const res = await fetch(`${gw.url}${path}`, {
+          method,
+          headers: {
+            ...(method === 'POST' ? { 'content-type': 'application/json' } : {}),
+            ...headers,
+          },
+          ...(method === 'POST' ? { body: '{}' } : {}),
+        });
+        assert.equal(res.status, 401, `${method} ${path}`);
+        assert.equal((await res.text()).includes(valid), false);
+      }
+    }
+    assert.equal(engine.state, stateBefore);
+    assert.equal(engine.requests.length, 0);
+    assert.equal(existsSync(policiesDirectory), false);
+    assert.deepEqual(directorySnapshot(policiesDirectory), policiesBefore);
+    assert.equal(
+      existsSync(configFile) ? readFileSync(configFile).toString() : undefined,
+      configBefore?.toString(),
+    );
+  });
+
+  it('leaves open routes available without a control token', async () => {
+    for (const path of ['/health', '/ping', '/v1/policies']) {
+      assert.notEqual((await fetch(`${gw.url}${path}`)).status, 401, path);
+    }
+    assert.equal(
+      (
+        await fetch(`${gw.url}/v1/decide/turn-outcome`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ harness: 'cli', input: {} }),
+        })
+      ).status,
+      200,
+    );
+    assert.equal((await fetch(`${gw.url}/v1/calls/missing`)).status, 404);
+    const mcp = await fetch(`${gw.url}/mcp`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        'accept': 'application/json, text/event-stream',
+      },
+      body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'initialize', params: {} }),
+    });
+    assert.notEqual(mcp.status, 401);
+  });
+
+  it('accepts a mixed-case control header name and rejects a duplicate header', async () => {
+    const token = controlHeaders(paths)['x-local-decider-control'] ?? '';
+    assert.equal(
+      (await fetch(`${gw.url}/v1/engines`, { headers: { 'X-Local-Decider-Control': token } }))
+        .status,
+      409,
+      'authentication passes before the injected engine 409',
+    );
+    const duplicate = await new Promise<number>((resolve, reject) => {
+      const req = request(
+        {
+          host: '127.0.0.1',
+          port: Number(new URL(gw.url).port),
+          path: '/v1/engines',
+          headers: { 'x-local-decider-control': [token, token] },
+        },
+        (res) => {
+          res.resume();
+          resolve(res.statusCode ?? 0);
+        },
+      );
+      req.on('error', reject);
+      req.end();
+    });
+    assert.equal(duplicate, 401);
+  });
+});
+
 describe('gateway auth', () => {
   it('refuses a non-loopback bind without a token', async () => {
     await assert.rejects(
@@ -487,6 +615,28 @@ describe('gateway auth', () => {
         (await fetch(`${gw.url}/health`, { headers: { authorization: `Bearer ${token}` } })).status,
         200,
       );
+    } finally {
+      await gw.close();
+    }
+  });
+
+  it('uses the bearer token, not the control header, on control routes in token mode', async () => {
+    const token = 'a-very-long-test-token';
+    const paths = tempPaths();
+    const gw = await startGateway({
+      config: testConfig(),
+      paths,
+      engine: new FakeEngine(),
+      env: { LOCAL_DECIDER_TOKEN: token },
+    });
+    try {
+      const route = `${gw.url}/v1/engines`;
+      const bearerOnly = await fetch(route, {
+        headers: { authorization: `Bearer ${token}` },
+      });
+      assert.notEqual(bearerOnly.status, 401);
+      const controlOnly = await fetch(route, { headers: controlHeaders(paths) });
+      assert.equal(controlOnly.status, 401);
     } finally {
       await gw.close();
     }

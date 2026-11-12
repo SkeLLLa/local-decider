@@ -11,6 +11,7 @@ import { parseConfig, type GatewayConfig } from '../src/config.ts';
 import type { HostCapabilities } from '../src/engines/host-capabilities.ts';
 import type { Engine, EngineHealth, EngineState } from '../src/engines/types.ts';
 import type { Paths } from '../src/paths.ts';
+import { ensureControlToken } from '../src/report-token.ts';
 import { openLogStore, SqliteLog } from '../src/sqlite-log.ts';
 
 export function tempPaths(): Paths {
@@ -23,6 +24,10 @@ export function tempPaths(): Paths {
     engines: join(data, 'engines'),
     run: join(data, 'run'),
   };
+}
+
+export function controlHeaders(paths: Paths): Record<string, string> {
+  return { 'x-local-decider-control': ensureControlToken(paths) };
 }
 
 export function testConfig(overrides: Record<string, unknown> = {}): GatewayConfig {
