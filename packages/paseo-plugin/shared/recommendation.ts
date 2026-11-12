@@ -301,7 +301,7 @@ export type Suggestion =
     }
   | { readonly kind: 'install'; readonly hint: string; readonly command: string };
 
-function installCommand(t: Target, backend: string | null): string {
+export function installCommand(t: Target, backend: string | null): string {
   if (t.engine === 'fastflowlm') {
     return [
       `Install FastFlowLM with your package manager or from ${FLM_INSTALL_URL}, then:`,
