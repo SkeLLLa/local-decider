@@ -13,6 +13,7 @@ import {
 import { useState, type ReactNode } from 'react';
 import { View } from 'react-native';
 
+import type { BenchmarkView } from '../shared/benchmark.ts';
 import type { DiscoveredServer, Seed } from '../shared/connection.ts';
 import {
   deviceOptions,
@@ -45,6 +46,7 @@ import {
 import { ConnectionForm } from './connection-form.tsx';
 import { type Outcome, outcomeOf, useAction, useBenchmark, useEngines } from './hooks.ts';
 import { InstallRow } from './install.tsx';
+import { BenchmarkCard } from './settings-benchmark.tsx';
 import { RecommendedCard } from './settings-recommended.tsx';
 import { Badge, Disclosure, InlineMessage, Mono, Progress, type Theme, Value } from './ui.tsx';
 
@@ -358,18 +360,40 @@ function EngineCard({
   );
 }
 
-function EnginePicker({ theme, catalog }: { theme: Theme; catalog: EngineCatalog }): ReactNode {
+function EnginePicker({
+  theme,
+  catalog,
+  view,
+}: {
+  theme: Theme;
+  catalog: EngineCatalog;
+  view: BenchmarkView | null | undefined;
+}): ReactNode {
   const action = useAction();
   const [picked, setPicked] = useState<string | null>(null);
   const [device, setDevice] = useState('auto');
   const [seed, setSeed] = useState<Seed | null>(null);
   const [advanced, setAdvanced] = useState(false);
+  const [resultsOpen, setResultsOpen] = useState<boolean | null>(null);
   const id = picked ?? initialEngine(catalog);
   const engines = enginesView(catalog.recommendation, namesOf(catalog));
   const engine = catalog.engines.find((e) => e.id === id) ?? null;
   return (
     <>
-      <RecommendedCard theme={theme} catalog={catalog} onOpenAdvanced={() => setAdvanced(true)} />
+      <RecommendedCard
+        theme={theme}
+        catalog={catalog}
+        onOpenAdvanced={() => setAdvanced(true)}
+        // The host gives no way to scroll to card 2, so the link opens its results instead.
+        onGoToBenchmark={view == null ? undefined : () => setResultsOpen(true)}
+      />
+      <BenchmarkCard
+        theme={theme}
+        catalog={catalog}
+        view={view}
+        resultsOpen={resultsOpen}
+        onResultsOpen={setResultsOpen}
+      />
       <Disclosure
         theme={theme}
         title="Advanced: engine, device and model"
@@ -426,7 +450,7 @@ export function EngineSection({
   gatewayUrl: string;
 }): ReactNode {
   const { data, isFetching, refetch } = useEngines(gatewayUrl);
-  useBenchmark(gatewayUrl, data?.active?.benchmark != null);
+  const benchmark = useBenchmark(gatewayUrl, data?.active?.benchmark != null);
   const reachable = data?.reachable === true;
   return (
     <SettingsSection
@@ -434,7 +458,7 @@ export function EngineSection({
       info="Automatic picks the fastest engine this computer supports and switches to the next one if it fails. Manual keeps the engine you choose and never changes it on its own."
     >
       {reachable ? (
-        <EnginePicker theme={theme} catalog={data} />
+        <EnginePicker theme={theme} catalog={data} view={benchmark.data} />
       ) : (
         <SettingsCard>
           <SettingsAction
