@@ -89,8 +89,9 @@ See [docs/architecture.md](docs/architecture.md) for the full pipeline.
   request in the same project, and no deny, a lower threshold (p ≥ 0.6) applies. Any deny vetoes
   it.
 - **Supervised subagents in Paseo.** An orchestrator agent can answer its child's escalated
-  permission request, and that answer counts as precedent. See
-  [docs/supervised-subagents.md](docs/supervised-subagents.md).
+  permission request, and that answer counts as precedent. Paseo notifies the orchestrator
+  before the decider has answered, so the orchestrator should wait and answer only what is still
+  pending. See [docs/supervised-subagents.md](docs/supervised-subagents.md).
 - **Policies are data.** Change questions, thresholds and actions in YAML, without code.
 
 ## Drawbacks and limits
