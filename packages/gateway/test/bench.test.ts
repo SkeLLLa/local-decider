@@ -1,9 +1,8 @@
+import type { SystemOneRequest, SystemOneResponse } from '@ziptie-soft/local-decider-core';
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { after, before, describe, it } from 'node:test';
-
-import type { SystemOneRequest, SystemOneResponse } from '@ziptie-soft/local-decider-core';
 
 import { bench, benchRequest, measureSize, syntheticState } from '../src/bench.ts';
 
@@ -21,7 +20,10 @@ describe('benchmark core', () => {
 
   it('excludes warm-up, keeps run suffixes and reports nearest-rank percentiles', async () => {
     const states: string[] = [];
-    const call = async (request: SystemOneRequest, signal: AbortSignal): Promise<SystemOneResponse> => {
+    const call = async (
+      request: SystemOneRequest,
+      signal: AbortSignal,
+    ): Promise<SystemOneResponse> => {
       signal.throwIfAborted();
       assert.equal(typeof request.state, 'string');
       if (typeof request.state === 'string') states.push(request.state);
@@ -49,7 +51,10 @@ describe('benchmark core', () => {
   it('stops before a timed request when the signal is aborted', async () => {
     const controller = new AbortController();
     let calls = 0;
-    const call = async (_request: SystemOneRequest, _signal: AbortSignal): Promise<SystemOneResponse> => {
+    const call = async (
+      _request: SystemOneRequest,
+      _signal: AbortSignal,
+    ): Promise<SystemOneResponse> => {
       calls++;
       controller.abort();
       return RESPONSE;

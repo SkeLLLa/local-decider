@@ -16,11 +16,7 @@ import {
 
 const FAMILY = 'vllm-sr/d3-mini';
 
-function measured(
-  p50Ms: number,
-  p95Ms = p50Ms,
-  extra: Partial<Measured> = {},
-): Measured {
+function measured(p50Ms: number, p95Ms = p50Ms, extra: Partial<Measured> = {}): Measured {
   return {
     typical: { p50Ms, p95Ms },
     long: null,
@@ -70,18 +66,24 @@ describe('machine ranking', () => {
       reason: 'fastest-measured',
     });
     assert.deepEqual(
-      beats(option({ backend: 'Vulkan', measured: measured(100, 200) }),
-        option({ backend: 'NPU', measured: measured(105, 205) })),
+      beats(
+        option({ backend: 'Vulkan', measured: measured(100, 200) }),
+        option({ backend: 'NPU', measured: measured(105, 205) }),
+      ),
       { wins: false, reason: 'tie-dedicated' },
     );
     assert.deepEqual(
-      beats(option({ backend: 'CPU', measured: measured(100, 100) }),
-        option({ backend: 'CPU', measured: measured(100, 200) })),
+      beats(
+        option({ backend: 'CPU', measured: measured(100, 100) }),
+        option({ backend: 'CPU', measured: measured(100, 200) }),
+      ),
       { wins: true, reason: 'tie-steadier' },
     );
     assert.deepEqual(
-      beats(option({ backend: 'CPU', measured: measured(100) }),
-        option({ backend: 'CPU', measured: measured(100) })),
+      beats(
+        option({ backend: 'CPU', measured: measured(100) }),
+        option({ backend: 'CPU', measured: measured(100) }),
+      ),
       { wins: false, reason: 'tie-ladder' },
     );
     assert.equal(CLOSE_CALL, 0.1);
@@ -91,16 +93,21 @@ describe('machine ranking', () => {
     const ladder = [
       option({ engine: 'fastflowlm', measured: measured(70, 80, { freshness: 'stale' }) }),
       option({ engine: 'llama-vulkan', backend: 'Vulkan', measured: measured(120) }),
-      option({ engine: 'strands-decider', backend: 'CPU', measured: measured(10, 10, { provisional: true }) }),
+      option({
+        engine: 'strands-decider',
+        backend: 'CPU',
+        measured: measured(10, 10, { provisional: true }),
+      }),
     ];
     const groups = groupRuntimes(ladder);
-    assert.deepEqual(familyOrder(ladder).ranked.map(({ engine }) => engine), [
-      'fastflowlm',
-      'llama-vulkan',
-      'strands-decider',
-    ]);
     assert.deepEqual(
-      tournament(groups.filter((group) => rankable(group.pick.measured))).map(({ engine }) => engine),
+      familyOrder(ladder).ranked.map(({ engine }) => engine),
+      ['fastflowlm', 'llama-vulkan', 'strands-decider'],
+    );
+    assert.deepEqual(
+      tournament(groups.filter((group) => rankable(group.pick.measured))).map(
+        ({ engine }) => engine,
+      ),
       ['llama-vulkan'],
     );
   });
@@ -110,14 +117,33 @@ describe('machine ranking', () => {
       option({ engine: 'fastflowlm', failed: { error: 'load failed', at: 'then' } }),
       option({ engine: 'llama-vulkan', backend: 'Vulkan', measured: measured(100) }),
     ];
-    assert.deepEqual(familyOrder(options).ranked.map(({ engine }) => engine), ['llama-vulkan']);
-    assert.deepEqual(familyOrder(options).failed.map(({ engine }) => engine), ['fastflowlm']);
+    assert.deepEqual(
+      familyOrder(options).ranked.map(({ engine }) => engine),
+      ['llama-vulkan'],
+    );
+    assert.deepEqual(
+      familyOrder(options).failed.map(({ engine }) => engine),
+      ['fastflowlm'],
+    );
   });
 
   it('chooses the faster quant inside one runtime and reports only-option', () => {
     const variants = [
-      option({ model: 'd3-mini-q4_k_m', engine: 'llama-vulkan', backend: 'Vulkan', quant: 'Q4_K_M', recommended: true, measured: measured(140) }),
-      option({ model: 'd3-mini-q8_0', engine: 'llama-vulkan', backend: 'Vulkan', quant: 'Q8_0', measured: measured(100) }),
+      option({
+        model: 'd3-mini-q4_k_m',
+        engine: 'llama-vulkan',
+        backend: 'Vulkan',
+        quant: 'Q4_K_M',
+        recommended: true,
+        measured: measured(140),
+      }),
+      option({
+        model: 'd3-mini-q8_0',
+        engine: 'llama-vulkan',
+        backend: 'Vulkan',
+        quant: 'Q8_0',
+        measured: measured(100),
+      }),
     ];
     assert.equal(pickVariant(variants).model, 'd3-mini-q8_0');
     const view = machineView(FAMILY, 'default', variants);
@@ -135,10 +161,7 @@ describe('machine ranking', () => {
       option({ engine: 'fastflowlm', measured: null, ready: true }),
       option({ engine: 'llama-vulkan', backend: 'Vulkan', measured: measured(100), ready: false }),
     ];
-    const estimated = machineView(FAMILY, 'preferred', [
-      { ...two[0]!, active: true },
-      two[1]!,
-    ]);
+    const estimated = machineView(FAMILY, 'preferred', [{ ...two[0]!, active: true }, two[1]!]);
     assert.equal(estimated.reason, 'estimated');
     assert.equal(estimated.action, 'none');
     const onlyMeasured = machineView(FAMILY, 'preferred', [
@@ -156,10 +179,12 @@ describe('machine ranking', () => {
     assert.equal(inactive.action, 'use');
 
     const fasterFamily = option({ family: 'other-family', measured: measured(50) });
-    const compared = machineView(FAMILY, 'default', [option({ measured: measured(100) })], [
-      option({ measured: measured(100) }),
-      fasterFamily,
-    ]);
+    const compared = machineView(
+      FAMILY,
+      'default',
+      [option({ measured: measured(100) })],
+      [option({ measured: measured(100) }), fasterFamily],
+    );
     assert.equal(compared.fasterFamily?.family, 'other-family');
     assert.equal(compared.fasterFamily?.ratio, 2);
   });

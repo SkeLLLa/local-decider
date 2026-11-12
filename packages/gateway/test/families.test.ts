@@ -1,7 +1,13 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
-import { formatOf, familyId, familyLabel, familyOf, isKnownFamily } from '../src/engines/families.ts';
+import {
+  formatOf,
+  familyId,
+  familyLabel,
+  familyOf,
+  isKnownFamily,
+} from '../src/engines/families.ts';
 import { ENGINES, allModels } from '../src/engines/registry.ts';
 
 const VERIFIED = new Map<string, string>([

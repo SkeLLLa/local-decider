@@ -3,8 +3,8 @@ import { describe, it } from 'node:test';
 
 import type { HostInfo } from '../src/engines/descriptor.ts';
 import type { CapabilityResult, HostCapabilities } from '../src/engines/host-capabilities.ts';
-import { ENGINES } from '../src/engines/registry.ts';
 import type { Measured } from '../src/engines/ranking.ts';
+import { ENGINES } from '../src/engines/registry.ts';
 import { rankEngines, type Ranking } from '../src/engines/selector.ts';
 
 const NO: CapabilityResult = { status: 'unavailable', evidence: 'none' };
@@ -39,9 +39,7 @@ function rank(
 
 function ladder(r: Ranking): string[] {
   return [
-    ...new Set(
-      r.candidates.filter((c) => c.eligible).map((c) => `${c.engine}:${c.backend}`),
-    ),
+    ...new Set(r.candidates.filter((c) => c.eligible).map((c) => `${c.engine}:${c.backend}`)),
   ];
 }
 

@@ -90,7 +90,11 @@ export interface EngineDescriptor<
   readonly calibrated: boolean;
   readonly models: readonly ModelDescriptor<C['type']>[];
   /** Cheap local identity for a runtime and its model files; absent means both are unknown. */
-  runtimeStamp?(this: void, model: ModelDescriptor<C['type']>, ctx: EngineContext): Promise<RuntimeStamp>;
+  runtimeStamp?(
+    this: void,
+    model: ModelDescriptor<C['type']>,
+    ctx: EngineContext,
+  ): Promise<RuntimeStamp>;
   /** Absent means all catalogue models are present. */
   modelsPresent?(
     this: void,

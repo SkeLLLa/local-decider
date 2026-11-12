@@ -27,10 +27,13 @@ describe('StampCache', () => {
   it('bounds refreshNow and refreshes entries older than 60 seconds', async () => {
     let now = 0;
     let calls = 0;
-    const cache = new StampCache(async () => {
-      calls++;
-      return { runtime: String(calls), model: null };
-    }, () => now);
+    const cache = new StampCache(
+      async () => {
+        calls++;
+        return { runtime: String(calls), model: null };
+      },
+      () => now,
+    );
     await cache.refreshNow(['fastflowlm|d3:mini'], 100);
     assert.equal(cache.get('fastflowlm', 'd3:mini')?.runtime, '1');
     now += STAMP_TTL_MS - 1;
