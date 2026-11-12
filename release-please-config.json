@@ -19,7 +19,7 @@
       "extra-files": [
         {
           "type": "generic",
-          "path": "src/mcp.ts"
+          "path": "src/version.ts"
         }
       ]
     },

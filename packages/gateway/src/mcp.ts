@@ -6,6 +6,7 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 import { z } from 'zod';
 
 import type { Decider } from './decider.ts';
+import { GATEWAY_VERSION } from './version.ts';
 
 /** What the MCP tools need: the in-process decider, or a client of a running gateway. */
 export interface McpBackend {
@@ -26,15 +27,13 @@ export function deciderBackend(decider: Decider): McpBackend {
   };
 }
 
-const VERSION = '2.0.0'; // x-release-please-version
-
 function toolResult(value: unknown): { content: { type: 'text'; text: string }[] } {
   return { content: [{ type: 'text', text: JSON.stringify(value, null, 2) }] };
 }
 
 /** One MCP server exposing `decide` (run a policy) and `policies` (list them). */
 export function createMcpServer(backend: McpBackend): McpServer {
-  const server = new McpServer({ name: 'local-decider', version: VERSION });
+  const server = new McpServer({ name: 'local-decider', version: GATEWAY_VERSION });
   server.registerTool(
     'decide',
     {
