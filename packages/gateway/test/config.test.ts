@@ -20,6 +20,18 @@ describe('config', () => {
     assert.equal(config.engines, undefined);
   });
 
+  it('accepts an optional preferred automatic model family', () => {
+    assert.equal(
+      parseConfig({ selection: { mode: 'auto', family: 'vllm-sr/d3-mini' } }).selection?.family,
+      'vllm-sr/d3-mini',
+    );
+    assert.throws(() => parseConfig({ selection: { mode: 'auto', family: '' } }), /invalid config/);
+    assert.throws(
+      () => parseConfig({ selection: { mode: 'auto', family: 'x'.repeat(401) } }),
+      /invalid config/,
+    );
+  });
+
   it('parses per-engine options with descriptor defaults', () => {
     const config = parseConfig({
       engines: { 'openai-compatible': { url: 'http://127.0.0.1:1234/v1', model: 'local-model' } },

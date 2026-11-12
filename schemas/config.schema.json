@@ -710,6 +710,12 @@
         "device": {
           "type": "string",
           "enum": ["auto", "cpu", "mlx", "mps", "cuda"]
+        },
+        "family": {
+          "description": "Preferred model family for automatic selection.",
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 400
         }
       },
       "additionalProperties": false

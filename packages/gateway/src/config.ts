@@ -165,6 +165,12 @@ export const configSchema = z
         engine: z.enum(SELECTABLE_IDS).optional(),
         model: z.string().min(1).max(300).optional(),
         device: z.enum(DEVICES).optional(),
+        family: z
+          .string()
+          .min(1)
+          .max(400)
+          .optional()
+          .describe('Preferred model family for automatic selection.'),
       })
       .refine((s) => s.mode === 'auto' || (s.engine !== undefined && s.model !== undefined), {
         message: 'a manual selection needs `engine` and `model`',
