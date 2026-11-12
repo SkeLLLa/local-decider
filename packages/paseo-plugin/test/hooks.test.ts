@@ -657,19 +657,19 @@ const open = (purpose: 'interactive' | 'history'): { request: PluginSessionOpenR
 describe('agent.open.before', () => {
   it('injects the gateway MCP server only when enabled', async () => {
     const gw = fakeGateway(() => null);
-    const on = createOpenHandler(deps(settings({ injectMcp: true }), gw), () => undefined);
+    const on = createOpenHandler(deps(settings({ injectMcp: true }), gw));
     const out = await on(open('interactive'));
     assert.deepEqual(out?.mcpServers, {
       'local-decider': { type: 'http', url: 'http://127.0.0.1:8765/mcp' },
     });
     assert.equal(await on(open('history')), undefined);
-    const off = await createOpenHandler(deps(settings(), gw), () => undefined)(open('interactive'));
+    const off = await createOpenHandler(deps(settings(), gw))(open('interactive'));
     assert.deepEqual(off?.mcpServers, {});
   });
 
   it('tells the harness hooks which policies Paseo runs', async () => {
     const gw = fakeGateway(() => null);
-    const out = await createOpenHandler(deps(settings(), gw), () => undefined)(open('interactive'));
+    const out = await createOpenHandler(deps(settings(), gw))(open('interactive'));
     assert.equal(out?.env['LOCAL_DECIDER_HOST_POLICIES'], 'turn-outcome,permission,routing');
   });
 
@@ -682,22 +682,30 @@ describe('agent.open.before', () => {
     );
   });
 
-  it('adds a bearer header only when a token is set and the URL is https or loopback', () => {
-    assert.deepEqual(mcpServerConfig('https://h', 't'), {
-      type: 'http',
-      url: 'https://h/mcp',
-      headers: { authorization: 'Bearer t' },
-    });
-    assert.deepEqual(mcpServerConfig('http://127.0.0.1:8765', 't'), {
+  it('never puts tokens in an agent MCP config', () => {
+    assert.deepEqual(mcpServerConfig('http://127.0.0.1:8765'), {
       type: 'http',
       url: 'http://127.0.0.1:8765/mcp',
-      headers: { authorization: 'Bearer t' },
     });
-    assert.equal(
-      'headers' in mcpServerConfig('http://h', 't'),
-      false,
-      'never in clear text to another host',
-    );
+    assert.equal('headers' in mcpServerConfig('https://h'), false);
+  });
+
+  it('skips MCP injection when it is remote or needs a bearer token', async () => {
+    const local = fakeGateway(() => null);
+    const localDeps = deps(settings({ injectMcp: true }), local);
+    assert.deepEqual((await createOpenHandler(localDeps)(open('interactive')))?.mcpServers, {
+      'local-decider': { type: 'http', url: 'http://127.0.0.1:8765/mcp' },
+    });
+
+    const remote = { ...local, baseUrl: 'https://gw.example:8443' };
+    const remoteDeps = deps(settings({ injectMcp: true }), remote);
+    assert.deepEqual((await createOpenHandler(remoteDeps)(open('interactive')))?.mcpServers, {});
+    assert.match(remoteDeps.logs[0] ?? '', /https:\/\/gw\.example:8443 is not loopback/);
+
+    const bearerGateway = { ...local, bearer: true };
+    const bearerDeps = deps(settings({ injectMcp: true }), bearerGateway);
+    assert.deepEqual((await createOpenHandler(bearerDeps)(open('interactive')))?.mcpServers, {});
+    assert.match(bearerDeps.logs[0] ?? '', /needs a bearer token/);
   });
 });
 

@@ -1,9 +1,16 @@
 import type { AgentTimelineItem } from '@getpaseo/protocol/agent-types';
+import { mkdtempSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 import type { AgentRefLike, AppendItem, HookDeps, PaseoLike } from '../server/deps.ts';
 import type { DecideResponse, UsageReport } from '../shared/decision.ts';
 import type { Gateway } from '../shared/gateway.ts';
 import type { DeciderSettings } from '../shared/settings.ts';
+
+export function tempDir(prefix: string): string {
+  return mkdtempSync(join(tmpdir(), `ld-${prefix}-`));
+}
 
 export function settings(overrides: Partial<DeciderSettings> = {}): DeciderSettings {
   return {
@@ -73,6 +80,7 @@ export function fakeGateway(
     };
   return {
     baseUrl: 'http://127.0.0.1:8765',
+    bearer: false,
     calls,
     outcomes,
     usage,

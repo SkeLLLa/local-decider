@@ -1,6 +1,12 @@
 /** Plain values shared by the daemon and app bundles. */
 
 export const DEFAULT_GATEWAY_URL = 'http://127.0.0.1:8765';
+/** Daemon env: bearer for a remote gateway. Never in settings, never logged. */
+export const TOKEN_ENV = 'LOCAL_DECIDER_TOKEN';
+/** Daemon env: the only non-loopback origin (https) that may receive TOKEN_ENV. */
+export const TOKEN_ORIGIN_ENV = 'LOCAL_DECIDER_TOKEN_ORIGIN';
+export const REPORT_HEADER = 'x-local-decider-report';
+export const CONTROL_HEADER = 'x-local-decider-control';
 /** Name of the injected MCP server and prefix of every timeline row id. */
 export const MCP_SERVER_NAME = 'local-decider';
 

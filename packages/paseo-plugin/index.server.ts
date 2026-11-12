@@ -1,7 +1,7 @@
 import type { PluginServerContext, PluginSettingsState } from '@getpaseo/plugin/server';
 
 import { Background } from './server/background.ts';
-import { readReportToken, type HookDeps } from './server/deps.ts';
+import type { HookDeps } from './server/deps.ts';
 import {
   downloadModel,
   engineLoad,
@@ -23,6 +23,7 @@ import {
   setPath,
   validateEngine,
 } from './server/engines.ts';
+import { gatewaySource } from './server/gateway-source.ts';
 import { LabelRegistry, recordPermissionLabel } from './server/labels.ts';
 import { createOpenHandler } from './server/open.ts';
 import { createPermissionHandlers } from './server/permission.ts';
@@ -32,7 +33,6 @@ import { createStatusHandler, manualDecide, recordFeedback, statsText } from './
 import { defaultServiceEnv, runService, serviceInfo } from './server/service.ts';
 import { createTurnHandler } from './server/turn.ts';
 import { UsageLinks } from './server/usage.ts';
-import { createGateway, type Gateway } from './shared/gateway.ts';
 import {
   decideRpc,
   downloadModelRpc,
@@ -63,16 +63,8 @@ import {
 } from './shared/rpc.ts';
 import { deciderSettings, type DeciderSettings } from './shared/settings.ts';
 
-const TOKEN_ENV = 'LOCAL_DECIDER_TOKEN';
-
 function log(message: string): void {
   console.log(`[local-decider] ${message}`);
-}
-
-/** Bearer token for a remote gateway: daemon environment only, never settings, never logged. */
-function token(): string | undefined {
-  const value = process.env[TOKEN_ENV];
-  return value === undefined || value === '' ? undefined : value;
 }
 
 /** A failed check is trusted for this long; afterwards hooks try the gateway again. */
@@ -84,10 +76,9 @@ function createDeps(server: PluginServerContext): {
   cleanup: () => void;
 } {
   const handle = server.registerSettings(deciderSettings);
-  const reportToken = readReportToken();
+  const gatewayFor = gatewaySource({ log });
   const defaults: DeciderSettings = deciderSettings.schema.parse({});
   let current = defaults;
-  let cached: { url: string; gateway: Gateway | null } | null = null;
   let lastDownAt: number | null = null;
 
   const apply = (state: PluginSettingsState<typeof deciderSettings.schema>): void => {
@@ -111,17 +102,7 @@ function createDeps(server: PluginServerContext): {
     },
     async gateway() {
       await loaded;
-      if (cached?.url !== current.gatewayUrl) {
-        cached = {
-          url: current.gatewayUrl,
-          gateway: createGateway({
-            baseUrl: current.gatewayUrl,
-            token: token(),
-            reportToken,
-          }),
-        };
-      }
-      return cached.gateway;
+      return gatewayFor(current.gatewayUrl);
     },
     log,
     gatewayKnownDown: () => lastDownAt !== null && Date.now() - lastDownAt < DOWN_TTL_MS,
@@ -150,7 +131,7 @@ export default function contribute(server: PluginServerContext): () => void {
   const permission = createPermissionHandlers(deps, background, { labels });
   const usage = new UsageLinks();
   const onCreate = createRoutingHandler(deps, undefined, usage);
-  const onOpen = createOpenHandler(deps, token);
+  const onOpen = createOpenHandler(deps);
 
   server.addHook('agent.turn.after', async (event, ctx) => {
     void usage.turnEnded(deps, event, ctx.paseo);

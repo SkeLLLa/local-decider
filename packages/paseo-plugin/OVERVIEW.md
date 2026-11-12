@@ -31,8 +31,9 @@ exact-match precedent. See the [supervised child agent guide](../../docs/supervi
 Install the gateway on the daemon machine and run `local-decider gateway start`, which installs
 it as a user service (systemd on Linux, launchd on macOS). The sidebar then shows whether it is
 up, which model and engine it serves, and its median latency. A remote gateway needs
-`LOCAL_DECIDER_TOKEN` in the daemon's environment; it is never stored in plugin settings, which
-every connected client can read.
+`LOCAL_DECIDER_TOKEN` and `LOCAL_DECIDER_TOKEN_ORIGIN` in the daemon's environment; the bearer is
+never stored in plugin settings, which every connected client can read. The daemon reads the
+control and report tokens from the gateway's config directory and re-reads them after a 401.
 
 ## With the Claude Code or Codex plugin installed too
 

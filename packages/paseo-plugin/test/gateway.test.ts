@@ -1,15 +1,31 @@
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, writeFileSync } from 'node:fs';
+import { mkdirSync, writeFileSync } from 'node:fs';
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
-import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { after, before, describe, it } from 'node:test';
 
-import { readReportToken } from '../server/deps.ts';
+import { readControlToken, readReportToken } from '../server/deps.ts';
 import { createGateway } from '../shared/gateway.ts';
-import { normaliseBaseUrl } from '../shared/url.ts';
-import { response } from './fakes.ts';
+import { bearerAllowed, loopbackUrl, normaliseBaseUrl, originOf } from '../shared/url.ts';
+import { response, tempDir } from './fakes.ts';
+
+function gatewayWithPin(tokenOrigin: string | undefined): {
+  gateway: ReturnType<typeof createGateway>;
+  headers: () => Headers;
+} {
+  let headers = new Headers();
+  const gateway = createGateway({
+    baseUrl: 'https://gw.example/path',
+    token: 'bearer-secret',
+    tokenOrigin,
+    fetch: async (_input, init) => {
+      headers = new Headers(init?.headers);
+      return Response.json({ status: 'ok' });
+    },
+  });
+  return { gateway, headers: () => headers };
+}
 
 describe('normaliseBaseUrl', () => {
   it('accepts http(s) URLs and strips trailing slashes', () => {
@@ -27,19 +43,32 @@ describe('normaliseBaseUrl', () => {
   });
 
   it('reads the report token with gateway config path precedence', () => {
-    const root = mkdtempSync(join(tmpdir(), 'ld-paseo-token-'));
+    const root = tempDir('paseo-token');
     const explicit = join(root, 'explicit');
     const xdg = join(root, 'xdg', 'local-decider');
     mkdirSync(explicit, { recursive: true });
     mkdirSync(xdg, { recursive: true });
-    writeFileSync(join(explicit, 'report-token'), 'explicit-token');
-    writeFileSync(join(xdg, 'report-token'), 'xdg-token');
+    const explicitToken = 'E'.repeat(43);
+    const xdgToken = 'X'.repeat(43);
+    writeFileSync(join(explicit, 'report-token'), explicitToken);
+    writeFileSync(join(xdg, 'report-token'), xdgToken);
+    writeFileSync(join(explicit, 'control-token'), 'C'.repeat(43));
     assert.equal(
       readReportToken({ LOCAL_DECIDER_CONFIG_DIR: explicit, XDG_CONFIG_HOME: join(root, 'xdg') }),
-      'explicit-token',
+      explicitToken,
     );
-    assert.equal(readReportToken({ XDG_CONFIG_HOME: join(root, 'xdg') }), 'xdg-token');
+    assert.equal(readReportToken({ XDG_CONFIG_HOME: join(root, 'xdg') }), xdgToken);
     assert.equal(readReportToken({ LOCAL_DECIDER_CONFIG_DIR: join(root, 'missing') }), undefined);
+    assert.equal(
+      readControlToken({ LOCAL_DECIDER_CONFIG_DIR: explicit, XDG_CONFIG_HOME: join(root, 'xdg') }),
+      'C'.repeat(43),
+    );
+    writeFileSync(join(explicit, 'control-token'), 'truncated');
+    assert.equal(readControlToken({ LOCAL_DECIDER_CONFIG_DIR: explicit }), undefined);
+    for (const invalid of ['', 'truncated', `${'P'.repeat(43)}=`]) {
+      writeFileSync(join(explicit, 'control-token'), invalid);
+      assert.equal(readControlToken({ LOCAL_DECIDER_CONFIG_DIR: explicit }), undefined);
+    }
   });
 
   it('rejects other schemes, credentials, queries and bad ports', () => {
@@ -59,15 +88,25 @@ describe('normaliseBaseUrl', () => {
 
 describe('createGateway (fail open)', () => {
   let server: Server;
+  let redirectServer: Server;
   let url = '';
+  let redirectUrl = '';
+  let redirected = 0;
   const seen: {
     path: string;
     auth: string | undefined;
     report: string | string[] | undefined;
+    control: string | string[] | undefined;
     body: string;
   }[] = [];
 
   before(async () => {
+    redirectServer = createServer((_req, res) => {
+      redirected += 1;
+      res.end('{}');
+    });
+    await new Promise<void>((resolve) => redirectServer.listen(0, '127.0.0.1', resolve));
+    redirectUrl = `http://127.0.0.1:${(redirectServer.address() as AddressInfo).port}`;
     server = createServer((req, res) => {
       let body = '';
       req.on('data', (c: Buffer) => (body += c.toString()));
@@ -76,6 +115,7 @@ describe('createGateway (fail open)', () => {
           path: req.url ?? '',
           auth: req.headers.authorization,
           report: req.headers['x-local-decider-report'],
+          control: req.headers['x-local-decider-control'],
           body,
         });
         const routes: Record<string, () => void> = {
@@ -83,6 +123,15 @@ describe('createGateway (fail open)', () => {
           '/v1/decide/garbage': () => res.end('{not json'),
           '/v1/decide/wrong-shape': () => res.end('{"hello":1}'),
           '/v1/decide/slow': () => {},
+          '/v1/decide/redirect': () => {
+            res.statusCode = 302;
+            res.setHeader('location', `${redirectUrl}/hit`);
+            res.end();
+          },
+          '/v1/decide/unauthorised': () => {
+            res.statusCode = 401;
+            res.end('{}');
+          },
           '/health': () => res.end('{"status":"ok","model":"m","p50Ms":90}'),
           '/v1/outcomes': () => res.end('{}'),
         };
@@ -102,6 +151,8 @@ describe('createGateway (fail open)', () => {
   after(() => {
     server.closeAllConnections();
     server.close();
+    redirectServer.closeAllConnections();
+    redirectServer.close();
   });
 
   it('returns the decision and sends the request body', async () => {
@@ -144,16 +195,56 @@ describe('createGateway (fail open)', () => {
     assert.equal(res, null);
   });
 
+  it('refuses redirects and notifies the gateway source after a 401', async () => {
+    const req = { harness: 'paseo' as const, input: {} };
+    const gw = createGateway({ baseUrl: url });
+    redirected = 0;
+    assert.equal(await gw?.decide('redirect', req), null);
+    assert.equal(redirected, 0);
+    let unauthorised = 0;
+    const protectedGateway = createGateway({
+      baseUrl: url,
+      onUnauthorised: () => {
+        unauthorised += 1;
+      },
+    });
+    assert.equal(await protectedGateway?.decide('unauthorised', req), null);
+    assert.equal(unauthorised, 1);
+  });
+
+  it('sets redirect:error on injected fetches', async () => {
+    let redirect: RequestInit['redirect'];
+    const gw = createGateway({
+      baseUrl: url,
+      fetch: async (_input, init) => {
+        redirect = init?.redirect;
+        return Response.json({ status: 'ok' });
+      },
+    });
+    await gw?.health();
+    assert.equal(redirect, 'error');
+  });
+
   it('returns null when nothing listens', async () => {
     const gw = createGateway({ baseUrl: 'http://127.0.0.1:1', timeoutMs: 500 });
     assert.equal(await gw?.health(), null);
     assert.equal(await gw?.reportOutcome('d', 'allow', 'user'), false);
   });
 
-  it('sends the bearer token when set', async () => {
+  it('sends the bearer token to loopback and local tokens to every loopback call', async () => {
     const gw = createGateway({ baseUrl: url, token: 'sekrit', reportToken: 'report-secret' });
+    const withControl = createGateway({
+      baseUrl: url,
+      token: 'sekrit',
+      reportToken: 'report-secret',
+      controlToken: 'control-secret',
+    });
     assert.deepEqual(await gw?.health(), { status: 'ok', model: 'm', p50Ms: 90 });
+    assert.equal(gw?.bearer, true);
     assert.equal(seen.at(-1)?.auth, 'Bearer sekrit');
+    assert.equal(seen.at(-1)?.control, undefined);
+    await withControl?.health();
+    assert.equal(seen.at(-1)?.control, 'control-secret');
     assert.equal(await gw?.reportOutcome('d-1', 'allow', 'user'), true);
     assert.deepEqual(JSON.parse(seen.at(-1)?.body ?? ''), {
       decisionId: 'd-1',
@@ -169,11 +260,56 @@ describe('createGateway (fail open)', () => {
     });
   });
 
-  it('does not send the report token to a remote plain HTTP gateway', async () => {
+  it('sends the control token on every gateway method to loopback', async () => {
+    const gw = createGateway({
+      baseUrl: url,
+      controlToken: 'control-secret',
+      reportToken: 'report-secret',
+    });
+    const first = seen.length;
+    await Promise.all([
+      gw?.decide('turn-outcome', { harness: 'paseo', input: {} }),
+      gw?.reportOutcome('d', 'allow', 'user'),
+      gw?.reportUsage({
+        decisionId: 'd',
+        inputTokens: 1,
+        cachedInputTokens: 0,
+        outputTokens: 1,
+      }),
+      gw?.health(),
+      gw?.engines(),
+      gw?.stats(),
+      gw?.selectEngine({ model: 'm' }),
+      gw?.setSelectionMode('auto'),
+      gw?.downloadModel({ engine: 'e', model: 'm' }),
+      gw?.validateEngine('e'),
+      gw?.saveEngineConnection({}),
+      gw?.discoverServers({}),
+      gw?.setPath('tools.flm', null),
+      gw?.engineLoad('load'),
+      gw?.setLifecycle({ lifecycle: 'lazy' }),
+      gw?.setPolicyMode('permission', 'shadow'),
+      gw?.policies(),
+      gw?.setPolicyVariant('permission', 'base'),
+      gw?.setPolicyThresholds('permission', {}),
+      gw?.reloadPolicies(),
+      gw?.config(),
+      gw?.setRoutingPreset({ harness: 'paseo', preset: 'fast' }),
+      gw?.policyPrompt('routing'),
+    ]);
+    const requests = seen.slice(first);
+    assert.equal(requests.length, 23);
+    assert.ok(requests.every((request) => request.control === 'control-secret'));
+  });
+
+  it('sends no local tokens to an https gateway, even when its origin is pinned', async () => {
     let sentHeaders = new Headers();
     const gw = createGateway({
-      baseUrl: 'http://gateway.example',
+      baseUrl: 'https://gateway.example',
       reportToken: 'private-report-token',
+      controlToken: 'private-control-token',
+      token: 'bearer-secret',
+      tokenOrigin: 'https://gateway.example',
       fetch: async (_input, init) => {
         sentHeaders = new Headers(init?.headers);
         return Response.json({ ok: true });
@@ -181,6 +317,40 @@ describe('createGateway (fail open)', () => {
     });
     assert.equal(await gw?.reportOutcome('d', 'allow', 'user'), true);
     assert.equal(sentHeaders.get('x-local-decider-report'), null);
+    assert.equal(sentHeaders.get('x-local-decider-control'), null);
+    assert.equal(sentHeaders.get('authorization'), 'Bearer bearer-secret');
+    assert.equal(gw?.bearer, true);
+  });
+
+  it('does not send local tokens to a plain HTTP remote gateway', async () => {
+    let sentHeaders = new Headers();
+    const gw = createGateway({
+      baseUrl: 'http://gateway.example',
+      reportToken: 'private-report-token',
+      controlToken: 'private-control-token',
+      token: 'bearer-secret',
+      tokenOrigin: 'https://gateway.example',
+      fetch: async (_input, init) => {
+        sentHeaders = new Headers(init?.headers);
+        return Response.json({ ok: true });
+      },
+    });
+    await gw?.reportOutcome('d', 'allow', 'user');
+    assert.equal(sentHeaders.get('x-local-decider-report'), null);
+    assert.equal(sentHeaders.get('x-local-decider-control'), null);
+    assert.equal(sentHeaders.get('authorization'), null);
+    assert.equal(gw?.bearer, false);
+  });
+
+  it('pins the bearer to an exact https origin and reports whether it is sent', async () => {
+    const unpinned = gatewayWithPin(undefined);
+    await unpinned.gateway?.health();
+    assert.equal(unpinned.gateway?.bearer, false);
+    assert.equal(unpinned.headers().get('authorization'), null);
+    const pinned = gatewayWithPin('https://GW.example/path/');
+    await pinned.gateway?.health();
+    assert.equal(pinned.gateway?.bearer, true);
+    assert.equal(pinned.headers().get('authorization'), 'Bearer bearer-secret');
   });
 
   it('is null for an unusable URL', () => {
@@ -286,12 +456,45 @@ describe('createGateway engine calls', () => {
   });
 });
 
-describe('tokenAllowed (plugin)', () => {
-  it('allows https and loopback, refuses plain http to other hosts', async () => {
-    const { tokenAllowed } = await import('../shared/url.ts');
-    assert.equal(tokenAllowed('https://gw.example:8765'), true);
-    assert.equal(tokenAllowed('http://127.0.0.1:8765'), true);
-    assert.equal(tokenAllowed('http://localhost:8765'), true);
-    assert.equal(tokenAllowed('http://10.0.0.5:8765'), false);
+describe('token URL scoping (plugin)', () => {
+  it('classifies loopback hosts', () => {
+    for (const yes of [
+      'http://127.0.0.1:1',
+      'http://127.9.9.9',
+      'http://localhost',
+      'http://[::1]:8765',
+    ]) {
+      assert.equal(loopbackUrl(yes), true, yes);
+    }
+    for (const no of [
+      'http://127.0.0.1.evil.test',
+      'http://localhost.evil.test',
+      'https://example.com',
+      'not a url',
+    ]) {
+      assert.equal(loopbackUrl(no), false, no);
+    }
+  });
+
+  it('derives validated origins without defaulting or normalising false negatives', () => {
+    assert.equal(originOf(''), null);
+    assert.equal(originOf('   '), null);
+    for (const bad of ['https://u:p@h', 'https://h\\x', 'https://h:99999', 'https://h\n/path']) {
+      assert.equal(originOf(bad), null, bad);
+    }
+    assert.equal(originOf('HTTPS://GW.Example:8443/x/'), 'https://gw.example:8443');
+    assert.equal(originOf('  HTTPS://GW.Example:8443/x/\n '), 'https://gw.example:8443');
+    assert.equal(originOf('https://[2001:db8::1]:8443'), 'https://[2001:db8::1]:8443');
+    assert.equal(bearerAllowed('http://127.0.0.1:1', undefined), true);
+    assert.equal(bearerAllowed('https://gw.example', undefined), false);
+    assert.equal(bearerAllowed('https://gw.example/path', 'https://gw.example'), true);
+    assert.equal(bearerAllowed('https://gw.example', 'HTTPS://GW.EXAMPLE/'), true);
+    assert.equal(bearerAllowed('https://gw.example', 'https://elsewhere'), false);
+    assert.equal(bearerAllowed('http://gw.example', 'http://gw.example'), false);
+    assert.equal(bearerAllowed('https://[2001:db8::1]:8443', 'https://[2001:db8::1]:8443'), true);
+    assert.equal(bearerAllowed('https://gw.example.', 'https://gw.example'), false);
+    assert.equal(bearerAllowed('https://h', 'https://h:443'), false);
+    assert.equal(bearerAllowed('invalid', 'invalid'), false);
+    assert.equal(bearerAllowed('https://h', ''), false);
   });
 });

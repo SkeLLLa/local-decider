@@ -59,7 +59,10 @@ answers can become exact-match precedent: see
   `http://127.0.0.1:8765`). The gateway redacts secrets before the model sees them and logs
   hashes, never text.
 - A bearer token (`LOCAL_DECIDER_TOKEN` in the daemon's environment, never stored in settings)
-  is sent only over https or to loopback.
+  is sent to loopback or to the HTTPS origin pinned by `LOCAL_DECIDER_TOKEN_ORIGIN` in that
+  environment. The daemon reads the gateway's control and report token files from its config
+  directory and re-reads them after a 401; agents never receive those tokens.
+- MCP injection is available only for loopback gateways that do not need a bearer token.
 - The only processes the plugin starts are the gateway service commands behind the Start, Stop
   and Restart buttons. See [OVERVIEW.md](OVERVIEW.md#what-this-plugin-runs).
 
