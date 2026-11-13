@@ -137,7 +137,7 @@ describe('bench output', () => {
 
   it('prints load, per-size lines and the restore result', () => {
     assert.deepEqual(formatFinal(NOW_DONE), [
-      'fastflowlm d3:mini',
+      'fastflowlm d3:mini (NPU)',
       '  load 4.2 s',
       '  256 tok (engine 301): p50 721 ms, p95 790 ms, answer=done',
       ' 3800 tok (engine 3700): p50 5300 ms, p95 5600 ms, answer=done',
@@ -164,11 +164,11 @@ describe('bench output', () => {
       ],
     });
     assert.deepEqual(lines, [
-      'llama-vulkan m',
+      'llama-vulkan m (Vulkan)',
       '  failed: out of memory',
-      'strands-decider s (cuda)',
+      'strands-decider s (CUDA)',
       '  not measured (cancelled)',
-      'fastflowlm d3:nano',
+      'fastflowlm d3:nano (NPU)',
       '  not run',
       'restore failed: engine would not start',
       'cancelled (user)',
