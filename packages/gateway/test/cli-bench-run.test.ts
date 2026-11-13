@@ -54,27 +54,36 @@ interface Stub {
   close(): Promise<void>;
 }
 
-/** A gateway stand-in: `start` answers the POST, `views` are returned by successive GETs. */
+/**
+ * A gateway stand-in: `start` answers the POST, `views` are returned by successive GETs. Once a
+ * cancel arrives, GETs return `afterCancel` (when given), so the job cannot end before Ctrl-C.
+ */
 async function stub(
   start: { status: number; body: unknown },
   views: readonly unknown[],
+  afterCancel?: unknown,
 ): Promise<Stub> {
   const calls: Stub['calls'] = [];
   let next = 0;
+  let cancelled = false;
+  const route = (method: string, path: string): readonly [number, unknown] => {
+    if (method === 'POST' && path === '/v1/benchmark') return [start.status, start.body];
+    if (method === 'POST' && path === '/v1/benchmark/cancel') {
+      cancelled = true;
+      return [202, {}];
+    }
+    if (cancelled && afterCancel !== undefined) return [200, afterCancel];
+    return [200, views[Math.min(next++, views.length - 1)]];
+  };
   const server: Server = createServer((req: IncomingMessage, res) => {
     const chunks: Buffer[] = [];
     req.on('data', (c: Buffer) => chunks.push(c));
     req.on('end', () => {
       const raw = Buffer.concat(chunks).toString('utf8');
-      calls.push({
-        method: req.method ?? '',
-        path: req.url ?? '',
-        body: raw === '' ? null : JSON.parse(raw),
-      });
-      const [status, body] =
-        req.method === 'POST' && req.url === '/v1/benchmark'
-          ? [start.status, start.body]
-          : [200, views[Math.min(next++, views.length - 1)]];
+      const method = req.method ?? '';
+      const path = req.url ?? '';
+      calls.push({ method, path, body: raw === '' ? null : JSON.parse(raw) });
+      const [status, body] = route(method, path);
       res.writeHead(status, { 'content-type': 'application/json' });
       res.end(JSON.stringify(body));
     });
@@ -90,6 +99,16 @@ async function stub(
       return new Promise<void>((resolve) => server.close(() => resolve()));
     },
   };
+}
+
+/**
+ * Resolves once the CLI has polled the job after `from` calls. Its Ctrl-C handler is installed
+ * before the first poll, so an interrupt sent after this is never lost on a slow runner.
+ */
+async function polled(gw: Stub, from: number): Promise<void> {
+  while (!gw.calls.slice(from).some((c) => c.method === 'GET' && c.path === '/v1/benchmark')) {
+    await new Promise((resolve) => setTimeout(resolve, 2));
+  }
 }
 
 const noop = (): void => undefined;
@@ -264,10 +283,10 @@ describe('runBench', () => {
   it('cancels on the first Ctrl-C, waits for the end and exits 130, removing its handler', async () => {
     const running = { ...done('running'), targets: TARGETS };
     const cancelled = { ...done('cancelled'), cancelReason: 'user' };
-    const gw = await stub({ status: 202, body: running }, [running, running, cancelled]);
+    const gw = await stub({ status: 202, body: running }, [running], cancelled);
     try {
       const { result, out, interrupt } = run(gw, ['--installed']);
-      await new Promise((resolve) => setTimeout(resolve, 20));
+      await polled(gw, 0);
       interrupt();
       assert.equal(await result, 130);
       assert.ok(gw.calls.some((c) => c.method === 'POST' && c.path === '/v1/benchmark/cancel'));
@@ -282,13 +301,14 @@ describe('runBench', () => {
     const gw = await stub({ status: 202, body: running }, [running]);
     try {
       const twice = run(gw, ['--installed']);
-      await new Promise((resolve) => setTimeout(resolve, 15));
+      await polled(gw, 0);
       twice.interrupt();
       twice.interrupt();
       assert.equal(await twice.result, 130);
       assert.deepEqual(twice.exits, [130]);
+      const mark = gw.calls.length;
       const slow = run(gw, ['--installed'], { cancelWaitMs: 30 });
-      await new Promise((resolve) => setTimeout(resolve, 15));
+      await polled(gw, mark);
       slow.interrupt();
       assert.equal(await slow.result, 130);
     } finally {
