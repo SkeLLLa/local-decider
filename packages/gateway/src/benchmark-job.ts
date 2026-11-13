@@ -5,7 +5,12 @@
 import type { SystemOneRequest, SystemOneResponse } from '@ziptie-soft/local-decider-core';
 
 import { measureSize, type BenchCall } from './bench.ts';
-import { BENCH_VERSION, type BenchmarkSizeRecord, type BenchmarkStore } from './benchmark-store.ts';
+import {
+  BENCH_VERSION,
+  type BenchmarkRecord,
+  type BenchmarkSizeRecord,
+  type BenchmarkStore,
+} from './benchmark-store.ts';
 import { DEVICES, type Device, type HostInfo, type RuntimeStamp } from './engines/descriptor.ts';
 import { SELECTABLE_IDS } from './engines/registry.ts';
 import type { Backend } from './engines/selector.ts';
@@ -898,8 +903,19 @@ export class BenchmarkRunner {
     if (job.lease.signal.aborted) {
       return;
     }
+    const record = this.#record(job, t, engine);
+    try {
+      this.#store.append(record);
+    } catch (error) {
+      // The run goes on; this target's result is not kept, so it cannot rank.
+      t.state = 'failed';
+      t.error = `could not save the result: ${errorText(error)}`;
+    }
+  }
+
+  #record(job: Job, t: JobTarget, engine: BenchEngine | null): BenchmarkRecord {
     const stamp = this.#host.stampFor(t.engine, t.model);
-    this.#store.append({
+    return {
       jobId: job.id,
       engine: t.engine,
       model: t.model,
@@ -919,7 +935,7 @@ export class BenchmarkRunner {
       runs: job.request.runs,
       loadMs: t.loadMs,
       sizes: t.stored,
-    });
+    };
   }
 
   async #finish(job: Job, unexpected: unknown): Promise<void> {

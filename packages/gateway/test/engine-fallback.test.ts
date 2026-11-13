@@ -477,13 +477,24 @@ describe('selection mode switch', () => {
 
   it('keeps the preferred family and chooses its fastest measured runtime', async () => {
     const benchmarks = new MemoryBenchmarkStore();
-    benchmarks.append(measuredRecord('fastflowlm', 'd3:mini', 300));
-    benchmarks.append(measuredRecord('llama-vulkan', 'd3-mini-q4_k_m', 100));
     const { control, store } = setup(
       { selection: { engine: 'fastflowlm', model: 'd3:nano' } },
       1000,
       { capabilities: NPU_AND_VULKAN, benchmarkStore: benchmarks, llamaServer: true },
     );
+    // Stored the way the benchmark runner stores them: with the stamps read at the time.
+    for (const [engine, model, p50Ms] of [
+      ['fastflowlm', 'd3:mini', 300],
+      ['llama-vulkan', 'd3-mini-q4_k_m', 100],
+    ] as const) {
+      await control.refreshStamps([`${engine}|${model}`], 5000);
+      const stamp = control.stampFor(engine, model);
+      benchmarks.append({
+        ...measuredRecord(engine, model, p50Ms),
+        runtime: stamp?.runtime ?? null,
+        modelStamp: stamp?.model ?? null,
+      });
+    }
     await control.setSelectionMode('auto', 'vllm-sr/d3-mini');
     await settle(control);
     assert.deepEqual(store.current.selection, { mode: 'auto', family: 'vllm-sr/d3-mini' });

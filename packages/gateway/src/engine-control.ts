@@ -511,6 +511,8 @@ export class EngineControl implements BenchmarkHost {
     readonly key: string;
     readonly retryAt: number | undefined;
   } | null = null;
+  /** Why the last automatic reconcile left the engine as it was; null when it found a candidate. */
+  #reconcileProblem: string | null = null;
   #retryTimer: NodeJS.Timeout | undefined;
   readonly #downloads = new Downloads();
   readonly #status: CatalogStatus;
@@ -649,6 +651,11 @@ export class EngineControl implements BenchmarkHost {
     return run;
   }
 
+  /**
+   * End `lease`. With `restore`, put the user's selection (or automatic mode's best pick) back and
+   * release the decider hold; without it the hold stays on, for a caller that replaces the engine
+   * itself (a preempting change) or is shutting down.
+   */
   async endBenchmark(
     lease: BenchmarkLease,
     options: { readonly restore: boolean },
@@ -661,6 +668,7 @@ export class EngineControl implements BenchmarkHost {
       if (options.restore && lease.snapshot.mode === 'auto') {
         this.#lease = null;
         await this.reconcileAuto();
+        error = this.#reconcileProblem;
       } else if (options.restore) {
         const run = this.#pending.then(() => this.#apply(lease.snapshot.selection, false, false));
         this.#pending = run.catch(() => undefined);
@@ -910,12 +918,13 @@ export class EngineControl implements BenchmarkHost {
       device: engine === 'strands-decider' ? (request.device ?? current.device ?? 'auto') : null,
     };
     await this.#checkSelectable(next);
-    return this.#preempting('superseded', async () => {
+    return this.#preempting('superseded', async (ended) => {
       const run = this.#pending.then(() => this.#apply(next, false));
       this.#pending = run.catch(() => undefined);
       await run;
-      if (this.#auto) {
-        // Choosing the engine that is already active changes nothing to persist; do it anyway.
+      if (this.#auto || ended !== null) {
+        // Choosing the engine that is already active (in automatic mode, or the one a benchmark
+        // swapped to unpersisted) changes nothing #apply would persist; save it anyway.
         this.#save([{ path: ['selection'], value: persistedSelection(next) }]);
         this.#applied = this.#config;
       }
@@ -1871,10 +1880,13 @@ export class EngineControl implements BenchmarkHost {
       this.#leaveAuto();
       return;
     }
+    this.#reconcileProblem = null;
     try {
       await this.#moveToBest();
     } catch (error) {
       this.#recordSwitchFailure(error);
+      this.#reconcileProblem =
+        this.#fallbackNote?.reason ?? (error instanceof Error ? error.message : String(error));
     } finally {
       this.#armRetry();
     }
@@ -1891,6 +1903,7 @@ export class EngineControl implements BenchmarkHost {
     const here = (c: { readonly model: string }): boolean => present.get(c.model) ?? false;
     const wanted = this.#fallback.pick(ranking.candidates, here);
     if (wanted === undefined) {
+      this.#reconcileProblem = 'no installed engine is ready to switch to';
       return;
     }
     this.#attempting = candidateKey(wanted);

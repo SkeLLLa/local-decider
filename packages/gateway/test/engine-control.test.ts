@@ -325,6 +325,13 @@ function measuredRecord(
   };
 }
 
+/** `record` with the stamps the control reads for it now, as the benchmark runner stores it. */
+async function stamped(control: EngineControl, record: BenchmarkRecord): Promise<BenchmarkRecord> {
+  await control.refreshStamps([`${record.engine}|${record.model}`], 5000);
+  const stamp = control.stampFor(record.engine, record.model);
+  return { ...record, runtime: stamp?.runtime ?? null, modelStamp: stamp?.model ?? null };
+}
+
 /** Compile-time check: the control implements the lease methods of the runner's host. */
 const hostSeam = (
   control: EngineControl,
@@ -441,8 +448,6 @@ describe('EngineControl benchmark lease', () => {
     );
     assert.ok(fingerprint);
     const benchmarks = new MemoryBenchmarkStore();
-    benchmarks.append(measuredRecord('fastflowlm', 'd3:mini', 300, fingerprint));
-    benchmarks.append(measuredRecord('llama-vulkan', 'd3-mini-q4_k_m', 500, fingerprint));
     const { control } = setup({
       selection: { mode: 'auto', family },
       host: LINUX_HOST,
@@ -450,6 +455,14 @@ describe('EngineControl benchmark lease', () => {
       benchmarkStore: benchmarks,
       llamaServer: true,
     });
+    const record = (
+      engine: 'fastflowlm' | 'llama-vulkan',
+      model: string,
+      p50Ms: number,
+    ): Promise<BenchmarkRecord> =>
+      stamped(control, measuredRecord(engine, model, p50Ms, fingerprint));
+    benchmarks.append(await record('fastflowlm', 'd3:mini', 300));
+    benchmarks.append(await record('llama-vulkan', 'd3-mini-q4_k_m', 500));
     await control.reconcileAuto();
     assert.equal(control.current()?.engine, 'fastflowlm');
     const configBefore = stringify(control.settings);
@@ -460,7 +473,7 @@ describe('EngineControl benchmark lease', () => {
       model: E2B,
       device: 'cpu',
     });
-    benchmarks.append(measuredRecord('llama-vulkan', 'd3-mini-q4_k_m', 100, fingerprint));
+    benchmarks.append(await record('llama-vulkan', 'd3-mini-q4_k_m', 100));
     assert.deepEqual(await control.endBenchmark(lease, { restore: true }), {
       ok: true,
       error: null,
@@ -725,6 +738,30 @@ describe('EngineControl benchmark preemption', () => {
     assert.equal(await isHeld(decider), false);
   });
 
+  it('saves a manual select() of the engine the benchmark last swapped to', async () => {
+    const paths = tempPaths();
+    const { control } = setup({ paths, persist: true, preemptCapMs: 30 });
+    await control.select({ engine: 'strands-decider', model: E2B, device: 'cpu' });
+    const lease = control.beginBenchmark();
+    await control.benchmarkSwap(lease, { engine: 'strands-decider', model: TWOB, device: 'cpu' });
+    assert.equal(ConfigFile.open(paths).current.selection?.model, E2B, 'swaps are unpersisted');
+
+    await control.select({ engine: 'strands-decider', model: TWOB, device: 'cpu' });
+    assert.equal(control.current()?.model, TWOB);
+    assert.equal(ConfigFile.open(paths).current.selection?.model, TWOB);
+  });
+
+  it('reports an automatic restore that found nothing to switch back to', async () => {
+    const { control, decider } = setup({ selection: { mode: 'auto' }, installed: false });
+    const lease = control.beginBenchmark();
+    await control.benchmarkSwap(lease, { engine: 'strands-decider', model: E2B, device: 'cpu' });
+    assert.deepEqual(await control.endBenchmark(lease, { restore: true }), {
+      ok: false,
+      error: 'no installed engine is ready to switch to',
+    });
+    assert.equal(await isHeld(decider), false);
+  });
+
   it('a policy-only change leaves the job alone', async () => {
     const paths = tempPaths();
     const { control, decider } = setup({ paths, persist: true });
@@ -882,8 +919,9 @@ describe('EngineControl benchmark host', () => {
       (await control.benchmarkInventory()).rankable('fastflowlm', 'd3:mini', null),
       false,
     );
-    benchmarks.append(measuredRecord('fastflowlm', 'd3:mini', 300, fingerprint));
-    await control.refreshStamps(['fastflowlm|d3:mini'], 5000);
+    benchmarks.append(
+      await stamped(control, measuredRecord('fastflowlm', 'd3:mini', 300, fingerprint)),
+    );
     const inventory = await control.benchmarkInventory();
     assert.equal(inventory.rankable('fastflowlm', 'd3:mini', null), true);
     assert.equal(inventory.rankable('llama-vulkan', 'd3-mini-q4_k_m', null), false);

@@ -155,6 +155,36 @@ describe('benchmark stores', () => {
     assert.equal(fresh?.view.ok?.freshness, 'fresh');
   });
 
+  it('treats a record saved without a stamp the host now reads as unknown', () => {
+    const key = 'llama-vulkan|d3-lite-q8_0|';
+    const unstamped = record(1);
+    const now = { runtime: 'llama.cpp b2', model: 'sha256:new' };
+    const details = measurementDetailsFor([unstamped], unstamped.fingerprint, () => now).get(key);
+    assert.equal(details?.view.ok?.freshness, 'unknown');
+    const noModel = { ...unstamped, runtime: 'llama.cpp b2' };
+    const partly = measurementDetailsFor([noModel], noModel.fingerprint, () => now).get(key);
+    assert.equal(partly?.view.ok?.freshness, 'unknown');
+  });
+
+  it('drops malformed records on their own and keeps the file', () => {
+    const file = join(tempPaths().data, 'benchmarks.json');
+    const good = record(1);
+    const bad = [
+      { ...record(2), sizes: [null] },
+      { ...record(3), sizes: [{ targetTokens: 1024, p50Ms: 'fast', p95Ms: 1 }] },
+      { ...record(4), runs: '3' },
+    ];
+    writeFileSync(file, JSON.stringify({ version: BENCH_VERSION, records: [good, ...bad] }));
+    const warnings: string[] = [];
+    const store = new JsonBenchmarkStore(file, (message) => warnings.push(message));
+    assert.deepEqual(
+      store.records().map(({ jobId }) => jobId),
+      ['bench-1'],
+    );
+    assert.equal(warnings.length, 0);
+    assert.ok(existsSync(file));
+  });
+
   it('ignores mismatched fingerprints, unknown bench versions, and unknown catalogue models', () => {
     const accepted = record(1);
     const details = measurementDetailsFor(
