@@ -1,4 +1,12 @@
-import { chmodSync, mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from 'node:fs';
+import {
+  chmodSync,
+  closeSync,
+  mkdirSync,
+  openSync,
+  readSync,
+  renameSync,
+  writeFileSync,
+} from 'node:fs';
 import { dirname } from 'node:path';
 
 import type { Device } from './engines/descriptor.ts';
@@ -198,14 +206,33 @@ function staleReason(
 
 function readRecords(file: string, warn: (message: string) => void): BenchmarkRecord[] {
   try {
-    if (statSync(file).size > MAX_FILE_BYTES) return corrupt(file, warn);
-    const parsed: unknown = JSON.parse(readFileSync(file, 'utf8'));
+    const text = readBounded(file);
+    if (text === undefined) return corrupt(file, warn);
+    const parsed: unknown = JSON.parse(text);
     if (!isStoreFile(parsed)) return corrupt(file, warn);
     // A malformed record (a hand edit) is dropped on its own rather than the whole file.
     return parsed.records.filter(isBenchmarkRecord).slice(-MAX_BENCH_RECORDS);
   } catch (error) {
     if (isMissing(error)) return [];
     return corrupt(file, warn);
+  }
+}
+
+/** The file's text, or undefined past the size cap. Reads at most cap + 1 bytes from one descriptor. */
+function readBounded(file: string): string | undefined {
+  const fd = openSync(file, 'r');
+  try {
+    const buffer = Buffer.alloc(MAX_FILE_BYTES + 1);
+    let length = 0;
+    for (;;) {
+      const read = readSync(fd, buffer, length, buffer.length - length, null);
+      if (read === 0) break;
+      length += read;
+      if (length > MAX_FILE_BYTES) return undefined;
+    }
+    return buffer.toString('utf8', 0, length);
+  } finally {
+    closeSync(fd);
   }
 }
 
