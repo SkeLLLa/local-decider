@@ -42,22 +42,29 @@ local-decider bench --installed --missing --sizes 256,1024,3800 --runs 5 --json
 
 Use at most one of `--installed`, `--family` and `--engines`; mixing them is a usage error.
 
-The command prints a header (`bench <url> targets=<n> sizes=<...> runs=<n>`), one line per target,
-then for each finished target its load time and one line per size
+The command prints a header (`bench <url> targets=<n> sizes=<...> runs=<n>`) and one line per
+target (`fastflowlm d3:lite (NPU)`). Then, as each target finishes, it prints that target's name
+again with its load time and one line per size
 (`1024 tok (engine 978): p50 532 ms, p95 541 ms, answer=done`, with `provisional` added when
-the run count is under 3), `failed: <error>` for a target that did not work, and at the end
-`restored <engine> <model>` or `restore failed: <error>`, and `cancelled (<reason>)` when it was
-cancelled.
+the run count is under 3), or `failed: <error>` for a target that did not work. A target that was
+interrupted reads `not measured (cancelled)` and one the job never reached reads `not run`. At the
+end it prints `restored <engine> <model>` or `restore failed: <error>`, then `cancelled (<reason>)`
+or `benchmark failed: <error>` when the job ended that way. With `--json` nothing is printed until
+the job ends, then only the final job.
+
+A run calls the engine directly, past the decision cache, queue and shadow log, so its numbers can
+be a little lower than the older figures below, which went through `/v1/systemone`.
 
 | Exit code | When |
 |---:|---|
 | 0 | The job finished and at least one target succeeded. |
-| 1 | Every target failed, the job failed, someone else cancelled it or a selection change preempted it, a benchmark was already running, or the gateway was not reachable. |
+| 1 | Every target failed, the job failed, someone else cancelled it or a selection change preempted it, a benchmark was already running or the request was refused (409 or 401), or the gateway was not reachable. |
 | 2 | Usage error. |
 | 130 | Ctrl-C. |
 
-**Ctrl-C** cancels the job on the gateway, waits up to 30 s for it to end and exit with 130; what
-finished is kept. A second Ctrl-C exits at once and leaves the gateway to finish the cancel.
+**Ctrl-C** cancels the job on the gateway and waits up to 30 s for it to end, then exits with
+130 either way; what finished is kept. A second Ctrl-C exits at once and leaves the gateway to
+finish the cancel.
 
 **While it runs**, decisions fail open (`engine benchmark running`), so hooks and agents carry on
 without an answer, and the previous engine is restored afterwards. A run takes minutes, longer on

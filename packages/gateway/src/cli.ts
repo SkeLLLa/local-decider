@@ -15,7 +15,7 @@ import { join } from 'node:path';
 import { parseArgs } from 'node:util';
 
 import { authoringPrompt } from './authoring.ts';
-import { bench } from './bench.ts';
+import { runBench } from './cli-bench-run.ts';
 import {
   configIsExplicit,
   EngineInstallUsageError,
@@ -94,7 +94,8 @@ Usage:
 
 Settings live in config.yaml (\`local-decider config path\`); the gateway applies edits to it and
 to policy files as they happen.
-  local-decider bench [--sizes 256,1024,4096] [--runs N]
+  local-decider bench [--installed | --family ID | --engines ENGINE:MODEL[@DEVICE],...] [--missing] [--sizes 256,1024,3800] [--runs N] [--json]
+                                                    time models on this machine (the running one by default)
   local-decider mcp                                 MCP over stdio (proxies to the gateway)
 
 Environment: LOCAL_DECIDER_URL (default http://127.0.0.1:${String(DEFAULT_PORT)}), LOCAL_DECIDER_TOKEN
@@ -581,19 +582,19 @@ async function policies(ctx: Context): Promise<void> {
 }
 
 async function benchCmd(ctx: Context): Promise<void> {
-  const { values } = parseArgs({
-    args: [...ctx.args],
-    options: { sizes: { type: 'string' }, runs: { type: 'string' } },
+  process.exitCode = await runBench({
+    args: ctx.args,
+    url: gatewayUrl(ctx.config),
+    request: (path, init) => gatewayFetch(ctx, path, init),
+    refused: `local-decider: ${refusedMessage(ctx)}`,
+    out: (line) => console.log(line),
+    err: (line) => console.error(line),
+    onInterrupt: (handler) => {
+      process.on('SIGINT', handler);
+      return () => process.off('SIGINT', handler);
+    },
+    exit: (code) => process.exit(code),
   });
-  const sizes = (values.sizes ?? '256,1024,4096').split(',').map((s) => Number.parseInt(s, 10));
-  const runs = Number.parseInt(values.runs ?? '10', 10);
-  const url = gatewayUrl(ctx.config);
-  console.log(`bench ${url} model=${ctx.config.engine.model} runs=${String(runs)}`);
-  for (const r of await bench(url, sizes, runs)) {
-    console.log(
-      `${String(r.targetTokens).padStart(5)} tok (engine ${String(r.inputTokens ?? '?')}): p50 ${r.p50Ms.toFixed(0)} ms, p95 ${r.p95Ms.toFixed(0)} ms, answer=${r.answer}`,
-    );
-  }
 }
 
 async function mcp(ctx: Context): Promise<void> {

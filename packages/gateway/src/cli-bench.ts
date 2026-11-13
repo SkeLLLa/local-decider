@@ -217,10 +217,29 @@ export interface BenchView {
 /** `fastflowlm d3:mini (NPU)`; without a backend word, just the engine and model. */
 export function formatTarget(
   t: { readonly engine: string; readonly model: string },
-  backendWord: string | null,
+  backend: string | null,
 ): string {
   const base = `${t.engine} ${t.model}`;
-  return backendWord === null || backendWord === '' ? base : `${base} (${backendWord})`;
+  return backend === null || backend === '' ? base : `${base} (${backend})`;
+}
+
+const ENGINE_BACKENDS: Readonly<Record<string, string>> = {
+  'fastflowlm': 'NPU',
+  'llama-vulkan': 'Vulkan',
+};
+const DEVICE_BACKENDS: Readonly<Record<string, string>> = {
+  cpu: 'CPU',
+  mlx: 'MLX',
+  mps: 'MPS',
+  cuda: 'CUDA',
+};
+
+/** The hardware an engine runs on: its own, else its strands device; null when unknown. */
+export function backendWord(t: {
+  readonly engine: string;
+  readonly device?: string | null;
+}): string | null {
+  return ENGINE_BACKENDS[t.engine] ?? DEVICE_BACKENDS[t.device ?? ''] ?? null;
 }
 
 function seconds(ms: number): string {
@@ -241,8 +260,8 @@ const TARGET_NOTES: Readonly<Record<string, string>> = {
   'not-run': '  not run',
 };
 
-function targetLines(t: BenchViewTarget, provisional: boolean): string[] {
-  const lines = [formatTarget(t, t.device ?? null)];
+export function formatTargetLines(t: BenchViewTarget, provisional: boolean): string[] {
+  const lines = [formatTarget(t, backendWord(t))];
   const note = TARGET_NOTES[t.state ?? ''];
   if (note !== undefined) {
     return [...lines, note];
@@ -257,7 +276,8 @@ function targetLines(t: BenchViewTarget, provisional: boolean): string[] {
   return lines;
 }
 
-function endLines(view: BenchView): string[] {
+/** How the run ended: the restore result, a cancellation, a failed job. */
+export function formatEndLines(view: BenchView): string[] {
   const lines: string[] = [];
   const r = view.restore;
   if (view.restoredOk === true && r?.engine != null) {
@@ -278,7 +298,10 @@ function endLines(view: BenchView): string[] {
 /** The text of a finished run: each target, then the restore result and how it ended. */
 export function formatFinal(view: BenchView): string[] {
   const provisional = view.runs != null && view.runs < 3;
-  return [...(view.targets ?? []).flatMap((t) => targetLines(t, provisional)), ...endLines(view)];
+  return [
+    ...(view.targets ?? []).flatMap((t) => formatTargetLines(t, provisional)),
+    ...formatEndLines(view),
+  ];
 }
 
 /**
