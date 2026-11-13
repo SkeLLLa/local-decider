@@ -63,17 +63,16 @@ describe('benchmark stores', () => {
     const file = join(data, 'nested', 'benchmarks.json');
     const store = new JsonBenchmarkStore(file);
     store.append(record(1));
+    assert.deepEqual(JSON.parse(readFileSync(file, 'utf8')), {
+      version: BENCH_VERSION,
+      records: [record(1)],
+    });
     assert.equal(statSync(file).mode & 0o777, 0o600);
     assert.equal(statSync(join(data, 'nested')).mode & 0o777, 0o700);
     assert.equal(
       readdirSync(join(data, 'nested')).includes(`benchmarks.json.${String(process.pid)}.tmp`),
       false,
     );
-    assert.ok(existsSync(file));
-    assert.deepEqual(JSON.parse(readFileSync(file, 'utf8')), {
-      version: BENCH_VERSION,
-      records: [record(1)],
-    });
   });
 
   it('renames an unparsable file and warns once', () => {
