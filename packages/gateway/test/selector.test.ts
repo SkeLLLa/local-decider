@@ -43,6 +43,17 @@ function ladder(r: Ranking): string[] {
   ];
 }
 
+/** A fresh, ranked measurement with the given typical p50. */
+const timing = (p50Ms: number): Measured => ({
+  typical: { p50Ms, p95Ms: p50Ms + 10 },
+  long: null,
+  runs: 5,
+  measuredAt: '2026-11-12T00:00:00.000Z',
+  freshness: 'fresh',
+  staleReason: null,
+  provisional: false,
+});
+
 describe('engine ranking', () => {
   it('Linux with an NPU: FLM NPU first, CPU last', () => {
     const r = rank(LINUX, caps({ npu: YES() }));
@@ -237,15 +248,6 @@ describe('engine ranking', () => {
   });
 
   it('uses fresh measurements and downloaded status to select the best runtime', () => {
-    const timing = (p50Ms: number): Measured => ({
-      typical: { p50Ms, p95Ms: p50Ms + 10 },
-      long: null,
-      runs: 5,
-      measuredAt: '2026-11-12T00:00:00.000Z',
-      freshness: 'fresh',
-      staleReason: null,
-      provisional: false,
-    });
     const result = rank(LINUX, caps({ npu: YES(), vulkan: YES() }), {
       installed: new Set(['llama-vulkan']),
       preferredFamily: 'vllm-sr/d3-lite',
