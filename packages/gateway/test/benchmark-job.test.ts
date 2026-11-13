@@ -17,7 +17,11 @@ import {
   type InventoryEngine,
   type InventoryModel,
 } from '../src/benchmark-job.ts';
-import { MemoryBenchmarkStore, type BenchmarkStore } from '../src/benchmark-store.ts';
+import {
+  MemoryBenchmarkStore,
+  type BenchmarkRecord,
+  type BenchmarkStore,
+} from '../src/benchmark-store.ts';
 import type { RuntimeStamp } from '../src/engines/descriptor.ts';
 import { GATEWAY_VERSION } from '../src/version.ts';
 
@@ -723,18 +727,41 @@ describe('BenchmarkRunner: a run', () => {
     assert.equal(store.records()[0]?.loadMs, null);
   });
 
-  it('ends failed, and restores, when something unexpected throws', async () => {
-    class Broken extends MemoryBenchmarkStore {
-      override append(): void {
-        throw new Error('disk full');
+  it('fails only the target whose result cannot be saved, and goes on', async () => {
+    class Full extends MemoryBenchmarkStore {
+      calls = 0;
+      override append(record: BenchmarkRecord): void {
+        this.calls += 1;
+        if (this.calls === 1) throw new Error('disk full');
+        super.append(record);
       }
     }
-    const { host, runner } = setup(new Broken());
+    const { runner, store } = setup(new Full());
+    await runner.start(job());
+    await runner.settled();
+    const view = await runner.view();
+    assert.equal(view.state, 'done');
+    assert.deepEqual(
+      view.targets.map((t) => [t.state, t.error]),
+      [
+        ['failed', 'could not save the result: disk full'],
+        ['done', null],
+        ['done', null],
+      ],
+    );
+    assert.equal(store.records().length, 2);
+  });
+
+  it('ends failed, and restores, when something unexpected throws', async () => {
+    const { host, runner } = setup();
+    host.stampFor = () => {
+      throw new Error('stamp cache broke');
+    };
     await runner.start(job());
     await runner.settled();
     const view = await runner.view();
     assert.equal(view.state, 'failed');
-    assert.equal(view.error, 'disk full');
+    assert.equal(view.error, 'stamp cache broke');
     assert.equal(view.restoredOk, true);
     assert.equal(host.calls.at(-1), 'end restore=true');
   });

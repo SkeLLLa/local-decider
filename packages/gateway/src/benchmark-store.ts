@@ -180,6 +180,13 @@ function staleReason(
   fingerprintUnknown: boolean,
 ): string | undefined {
   if (fingerprintUnknown || stamp === undefined) return 'unknown';
+  // A record saved without a stamp the host can read now cannot be checked against it.
+  if (
+    (record.runtime === null && stamp.runtime !== null) ||
+    (record.modelStamp === null && stamp.model !== null)
+  ) {
+    return 'unknown';
+  }
   if (record.runtime !== null && stamp.runtime !== null && record.runtime !== stamp.runtime) {
     return `${record.runtime} → ${stamp.runtime}`;
   }
@@ -194,7 +201,8 @@ function readRecords(file: string, warn: (message: string) => void): BenchmarkRe
     if (statSync(file).size > MAX_FILE_BYTES) return corrupt(file, warn);
     const parsed: unknown = JSON.parse(readFileSync(file, 'utf8'));
     if (!isStoreFile(parsed)) return corrupt(file, warn);
-    return parsed.records.slice(-MAX_BENCH_RECORDS);
+    // A malformed record (a hand edit) is dropped on its own rather than the whole file.
+    return parsed.records.filter(isBenchmarkRecord).slice(-MAX_BENCH_RECORDS);
   } catch (error) {
     if (isMissing(error)) return [];
     return corrupt(file, warn);
@@ -205,7 +213,7 @@ function isMissing(error: unknown): boolean {
   return typeof error === 'object' && error !== null && 'code' in error && error.code === 'ENOENT';
 }
 
-function isStoreFile(value: unknown): value is { version: number; records: BenchmarkRecord[] } {
+function isStoreFile(value: unknown): value is { version: number; records: unknown[] } {
   if (
     typeof value !== 'object' ||
     value === null ||
@@ -214,28 +222,33 @@ function isStoreFile(value: unknown): value is { version: number; records: Bench
   ) {
     return false;
   }
-  return (
-    value.version === BENCH_VERSION &&
-    Array.isArray(value.records) &&
-    value.records.every(isBenchmarkRecord)
-  );
+  return value.version === BENCH_VERSION && Array.isArray(value.records);
+}
+
+const RECORD_FIELDS = {
+  jobId: 'string',
+  engine: 'string',
+  model: 'string',
+  fingerprint: 'string',
+  measuredAt: 'string',
+  runs: 'number',
+} as const;
+const SIZE_FIELDS = { targetTokens: 'number', p50Ms: 'number', p95Ms: 'number' } as const;
+
+/** `value` is an object whose `fields` each have the given `typeof`. */
+function hasFields(value: unknown, fields: Readonly<Record<string, string>>): value is object {
+  if (typeof value !== 'object' || value === null) return false;
+  const entries = value as Readonly<Record<string, unknown>>;
+  return Object.entries(fields).every(([key, type]) => typeof entries[key] === type);
 }
 
 function isBenchmarkRecord(value: unknown): value is BenchmarkRecord {
-  if (typeof value !== 'object' || value === null) return false;
+  if (!hasFields(value, RECORD_FIELDS)) return false;
+  const { status, sizes } = value as { status?: unknown; sizes?: unknown };
   return (
-    'jobId' in value &&
-    typeof value.jobId === 'string' &&
-    'engine' in value &&
-    typeof value.engine === 'string' &&
-    'model' in value &&
-    typeof value.model === 'string' &&
-    'status' in value &&
-    (value.status === 'ok' || value.status === 'failed') &&
-    'fingerprint' in value &&
-    typeof value.fingerprint === 'string' &&
-    'sizes' in value &&
-    Array.isArray(value.sizes)
+    (status === 'ok' || status === 'failed') &&
+    Array.isArray(sizes) &&
+    sizes.every((size) => hasFields(size, SIZE_FIELDS))
   );
 }
 
