@@ -1,5 +1,13 @@
 import assert from 'node:assert/strict';
-import { mkdirSync, statSync, utimesSync, writeFileSync } from 'node:fs';
+import {
+  closeSync,
+  fstatSync,
+  ftruncateSync,
+  futimesSync,
+  mkdirSync,
+  openSync,
+  writeSync,
+} from 'node:fs';
 import { join } from 'node:path';
 import { describe, it } from 'node:test';
 
@@ -14,8 +22,9 @@ describe('FastFlowLM model stamp', () => {
     const root = join(paths.data, 'flm-models');
     const modelDir = join(root, 'D3-Lite-NPU2');
     mkdirSync(modelDir, { recursive: true });
-    const modelFile = join(modelDir, 'model.q4nx');
-    writeFileSync(modelFile, 'weights');
+    // One descriptor for every write and stat, so each check sees the file it then changes.
+    const fd = openSync(join(modelDir, 'model.q4nx'), 'w+');
+    writeSync(fd, 'weights');
     const model = catalogModel('d3:lite', 'fastflowlm');
     assert.ok(model);
     const ctx = {
@@ -30,15 +39,19 @@ describe('FastFlowLM model stamp', () => {
         env: { FLM_MODEL_PATH: root },
       },
     } as EngineContext;
-    const original = flmModelStamp(model, ctx);
-    assert.equal(original, `7:${String(statSync(modelFile).mtimeMs)}`);
-    writeFileSync(modelFile, 'changed weights');
-    const changedSize = flmModelStamp(model, ctx);
-    assert.notEqual(changedSize, original);
-    writeFileSync(modelFile, 'changed weigher');
-    const stat = statSync(modelFile);
-    utimesSync(modelFile, new Date(), new Date(stat.mtimeMs + 2000));
-    assert.notEqual(flmModelStamp(model, ctx), changedSize);
+    try {
+      const original = flmModelStamp(model, ctx);
+      assert.equal(original, `7:${String(fstatSync(fd).mtimeMs)}`);
+      ftruncateSync(fd, 0);
+      writeSync(fd, 'changed weights', 0);
+      const changedSize = flmModelStamp(model, ctx);
+      assert.notEqual(changedSize, original);
+      writeSync(fd, 'changed weigher', 0);
+      futimesSync(fd, new Date(), new Date(fstatSync(fd).mtimeMs + 2000));
+      assert.notEqual(flmModelStamp(model, ctx), changedSize);
+    } finally {
+      closeSync(fd);
+    }
   });
 
   it('returns null when model files are absent', () => {
