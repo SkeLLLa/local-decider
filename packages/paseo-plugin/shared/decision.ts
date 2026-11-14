@@ -25,6 +25,7 @@ export interface DecideRequest {
   readonly harness: 'paseo';
   readonly sessionId?: string;
   readonly input: Readonly<Record<string, unknown>>;
+  readonly workspace?: { readonly cwd: string };
   readonly models?: DecisionModels;
 }
 

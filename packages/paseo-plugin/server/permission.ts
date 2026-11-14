@@ -287,7 +287,12 @@ async function decidePermission(
   const input = buildPermissionInput(event.agent.cwd, context.history, context.task, event.request);
   return gateway.decide(
     PERMISSION_POLICY,
-    { harness: 'paseo', sessionId: event.agent.id, input: { ...input } },
+    {
+      harness: 'paseo',
+      sessionId: event.agent.id,
+      workspace: { cwd: event.agent.cwd },
+      input: { ...input },
+    },
     { timeoutMs: DECIDE_TIMEOUT_MS, signal },
   );
 }

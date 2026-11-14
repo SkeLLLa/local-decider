@@ -8,7 +8,7 @@ import type {
   AgentTimelineItem,
   ToolCallDetail,
 } from '@getpaseo/protocol/agent-types';
-import { asRecord, firstString, subjectLine } from '@ziptie-soft/local-decider-core';
+import { asRecord, canonicalSubject } from '@ziptie-soft/local-decider-core';
 
 export const LIMITS = {
   line: 600,
@@ -228,24 +228,29 @@ export interface PermissionInput {
   readonly task: string;
   readonly tool: string;
   readonly request: string;
-  readonly subject: string;
+  readonly subject?: string;
 }
 
-function permissionSubject(cwd: string, request: AgentPermissionRequest): string {
-  const fields = asRecord(request.input);
+function detailInput(request: AgentPermissionRequest): unknown {
   const detail = request.detail;
-  const detailPath =
-    detail?.type === 'read' || detail?.type === 'edit' || detail?.type === 'write'
-      ? detail.filePath
-      : undefined;
-  return subjectLine({
-    tool: request.name,
-    cwd,
-    input: request.input,
-    command: detail?.type === 'shell' ? detail.command : firstString(fields, ['command']),
-    path: detailPath ?? firstString(fields, ['file_path', 'filePath', 'path']),
-    url: detail?.type === 'fetch' ? detail.url : firstString(fields, ['url']),
-  });
+  if (detail?.type === 'shell') return { command: detail.command };
+  if (detail?.type === 'read' || detail?.type === 'edit' || detail?.type === 'write') {
+    return { filePath: detail.filePath };
+  }
+  if (detail?.type === 'fetch') return { url: detail.url };
+  return undefined;
+}
+
+function subjectInput(request: AgentPermissionRequest): unknown {
+  const input = request.input ?? detailInput(request);
+  if (!['Bash', 'shell', 'exec_command'].includes(request.name)) return input;
+  const fields = asRecord(input);
+  if (fields === undefined) {
+    return typeof input === 'string' || Array.isArray(input) ? { command: input } : input;
+  }
+  if (fields['command'] !== undefined) return input;
+  const argv = fields['argv'];
+  return typeof argv === 'string' || Array.isArray(argv) ? { ...fields, command: argv } : input;
 }
 
 export function buildPermissionInput(
@@ -255,6 +260,7 @@ export function buildPermissionInput(
   request: AgentPermissionRequest,
 ): PermissionInput {
   const tool = [request.name, request.kind, request.title].filter(Boolean).join(' · ');
+  const subject = canonicalSubject(request.name, subjectInput(request), cwd);
   const body = {
     ...(request.title === undefined ? {} : { title: request.title }),
     ...(request.description === undefined ? {} : { description: request.description }),
@@ -267,7 +273,7 @@ export function buildPermissionInput(
     task: head(task, LIMITS.task),
     tool: head(tool, 500),
     request: safeJson(body, LIMITS.request),
-    subject: permissionSubject(cwd, request),
+    ...(subject === undefined ? {} : { subject }),
   };
 }
 

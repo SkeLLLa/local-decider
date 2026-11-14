@@ -70,9 +70,9 @@ export {
 export {
   asRecord,
   commandOf,
+  canonicalSubject,
   firstString,
   isShellTool,
-  permissionSubject,
   resolveSegments,
   str,
   subjectLine,

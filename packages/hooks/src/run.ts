@@ -109,6 +109,7 @@ async function decideAndTranslate(ctx: Context): Promise<string> {
     harness: ctx.harness === 'claude' ? 'claude-code' : 'codex',
     ...(sessionId === undefined ? {} : { sessionId }),
     ...(toolCall === undefined ? {} : { call: toolCall }),
+    ...(call.workspace === undefined ? {} : { workspace: call.workspace }),
     input: call.input,
   };
   const decide = ctx.deps.decide ?? clientFromEnv(ctx.env);

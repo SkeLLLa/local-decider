@@ -127,20 +127,21 @@ describe('event → policy mapping', () => {
       mapEvent('PermissionRequest', HOOKS.PermissionRequest, () => permissionSlice),
       {
         policy: 'permission',
+        workspace: { cwd: '/work/my-app' },
         input: {
           project: 'my-app (/work/my-app)',
           history: 'User: Narrow the change\nAssistant: Working',
           task: 'First request: First task\nLatest request: Narrow the change',
           tool: 'Bash',
           request: { command: 'npm test' },
-          subject: 'Bash: npm test',
+          subject: 'shell: npm test',
         },
       },
     );
   });
 
   it('normalizes permission subjects by command, relative path, URL, or stable input', () => {
-    assert.equal(subjectOf('Bash', { command: 'cd /work/my-app && npm test' }), 'Bash: npm test');
+    assert.equal(subjectOf('Bash', { command: 'cd /work/my-app && npm test' }), 'shell: npm test');
     assert.equal(subjectOf('Read', { file_path: '/work/my-app/src/a.ts' }), 'Read: src/a.ts');
     assert.equal(
       subjectOf('Fetch', { url: 'https://example.test/x' }),
@@ -148,7 +149,7 @@ describe('event → policy mapping', () => {
     );
     assert.equal(
       subjectOf('mcp__x__y', { z: 1, description: 'ignored', a: { b: 2 } }),
-      'mcp__x__y: {"a":{"b":2},"z":1}',
+      'mcp:x:y: {"a":{"b":2},"z":1}',
     );
   });
 
@@ -187,6 +188,13 @@ describe('event → policy mapping', () => {
     assert.equal(calls[0]?.request.sessionId, 's-1');
     await run('claude', 'PreToolUse', JSON.stringify(HOOKS.PreToolUse), {}, { decide });
     assert.equal(calls[1]?.request.harness, 'claude-code');
+    const permission = {
+      ...HOOKS.PermissionRequest,
+      tool_name: 'Bash',
+      tool_input: { command: 'npm test' },
+    };
+    await run('claude', 'PermissionRequest', JSON.stringify(permission), {}, { decide });
+    assert.deepEqual(calls[2]?.request.workspace, { cwd: '/work/my-app' });
   });
 });
 

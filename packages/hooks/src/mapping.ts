@@ -4,7 +4,7 @@
  */
 import {
   commandOf,
-  permissionSubject,
+  canonicalSubject,
   PERMISSION_MODES,
   str,
   type DecideCall,
@@ -33,6 +33,7 @@ export const EVENT_POLICY: Readonly<Record<HookEvent, string>> = {
 export interface PolicyCall {
   readonly policy: string;
   readonly input: Readonly<Record<string, unknown>>;
+  readonly workspace?: { readonly cwd: string };
 }
 
 export type ReadTranscript = (path: string) => TranscriptSlice | null;
@@ -83,14 +84,21 @@ class Transcript {
 }
 
 function permissionHookInput(hook: HookInput, t: Transcript): Record<string, unknown> {
+  const tool = str(hook['tool_name']);
   return permissionInput({
     cwd: str(hook['cwd']),
-    tool: str(hook['tool_name']),
+    tool,
     request: hook['tool_input'],
-    subject: permissionSubject(hook),
+    subject:
+      tool === undefined ? undefined : canonicalSubject(tool, hook['tool_input'], str(hook['cwd'])),
     head: t.head(),
     tail: t.tail(),
   });
+}
+
+function workspaceOf(hook: HookInput): { readonly cwd: string } | undefined {
+  const cwd = str(hook['cwd']);
+  return cwd === undefined ? undefined : { cwd };
 }
 
 function commandRiskInput(hook: HookInput): Record<string, unknown> {
@@ -148,5 +156,10 @@ export function callOf(
 /** Build the gateway call for an event. Transcript reads happen only for policies that use them. */
 export function mapEvent(event: HookEvent, hook: HookInput, read: ReadTranscript): PolicyCall {
   const input = BUILDERS[event](hook, new Transcript(str(hook['transcript_path']), read));
-  return { policy: EVENT_POLICY[event], input: compact(input) };
+  const workspace = event === 'PermissionRequest' ? workspaceOf(hook) : undefined;
+  return {
+    policy: EVENT_POLICY[event],
+    input: compact(input),
+    ...(workspace === undefined ? {} : { workspace }),
+  };
 }

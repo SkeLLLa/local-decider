@@ -1,109 +1,54 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { relative, resolve } from 'node:path';
 import { describe, it } from 'node:test';
 
-import { canonicalJson } from '../src/canonical.ts';
-import { commandOf, isShellTool, permissionSubject, str, type HookInput } from '../src/subject.ts';
-
-const collapse = (v: string): string => v.replace(/\s+/g, ' ').trim();
-
-/** The pre-extraction implementation (mapping.ts, `node:path`), kept to prove parity. */
-function legacySubject(hook: HookInput): string | undefined {
-  const tool = str(hook['tool_name']);
-  if (tool === undefined) {
-    return undefined;
-  }
-  const input = hook['tool_input'];
-  const fields =
-    typeof input === 'object' && input !== null && !Array.isArray(input)
-      ? (input as Record<string, unknown>)
-      : undefined;
-  const first = (keys: string[]): string | undefined => {
-    for (const key of keys) {
-      const c = fields?.[key];
-      if (typeof c === 'string' && c !== '') {
-        return c;
-      }
-    }
-    return undefined;
-  };
-  const command = isShellTool(hook) ? commandOf(hook) : undefined;
-  const path = first(['file_path', 'filePath', 'path']);
-  const url = first(['url']);
-  const cwd = str(hook['cwd']) ?? '';
-  let stable: string;
-  if (fields === undefined) {
-    stable = canonicalJson(input) ?? '';
-  } else {
-    const copy = { ...fields };
-    delete copy['description'];
-    stable = canonicalJson(copy);
-  }
-  const strip = (c: string): string => {
-    const line = collapse(c);
-    const prefix = `cd ${collapse(cwd)} && `;
-    return line.startsWith(prefix) ? line.slice(prefix.length) : line;
-  };
-  const value =
-    command !== undefined
-      ? strip(command)
-      : path !== undefined
-        ? relative(cwd, resolve(cwd, path)).replaceAll('\\', '/')
-        : (url ?? stable);
-  return collapse(`${tool}: ${value}`);
-}
+import { canonicalSubject } from '../src/subject.ts';
 
 const CWD = '/work/my-app';
 
-const CASES: readonly HookInput[] = [
-  { tool_name: 'Bash', cwd: CWD, tool_input: { command: 'cd /work/my-app && npm test' } },
-  { tool_name: 'Bash', cwd: CWD, tool_input: { command: '  git   status\n --short ' } },
-  { tool_name: 'Bash', cwd: CWD, tool_input: { command: ['bash', '-lc', 'rm -rf /tmp/x'] } },
-  { tool_name: 'Bash', cwd: CWD, tool_input: { command: '' } },
-  { tool_name: 'apply_patch', cwd: CWD, tool_input: { command: '*** Begin Patch\n+x' } },
-  { tool_name: 'Read', cwd: CWD, tool_input: { file_path: '/work/my-app/src/a.ts' } },
-  { tool_name: 'Read', cwd: CWD, tool_input: { file_path: 'src/./b/../a.ts' } },
-  { tool_name: 'Edit', cwd: CWD, tool_input: { file_path: '/work/other/a.ts' } },
-  { tool_name: 'Edit', cwd: CWD, tool_input: { file_path: '../x/y.ts' } },
-  { tool_name: 'Edit', cwd: CWD, tool_input: { file_path: '/work/my-app' } },
-  { tool_name: 'Edit', cwd: CWD, tool_input: { file_path: '//work//my-app///z.ts' } },
-  { tool_name: 'Write', cwd: `${CWD}/`, tool_input: { filePath: '/work/my-app/n.ts' } },
-  { tool_name: 'Glob', cwd: CWD, tool_input: { path: '/etc/../etc/hosts' } },
-  { tool_name: 'Edit', cwd: '/', tool_input: { file_path: '/a/b' } },
-  { tool_name: 'Edit', cwd: CWD, tool_input: { file_path: '/' } },
-  { tool_name: 'Fetch', cwd: CWD, tool_input: { url: 'https://example.test/x' } },
-  { tool_name: 'mcp__x__y', cwd: CWD, tool_input: { z: 1, description: 'ignored', a: { b: 2 } } },
-  { tool_name: 'mcp__x__y', cwd: CWD, tool_input: 'plain' },
-  { tool_name: 'mcp__x__y', cwd: CWD, tool_input: null },
-  { tool_name: 'mcp__x__y', cwd: CWD, tool_input: [1, 2] },
-  { cwd: CWD, tool_input: { command: 'ls' } },
-];
-
-describe('permissionSubject', () => {
-  it('is identical to the node:path implementation it replaced', () => {
-    for (const hook of CASES) {
-      assert.equal(permissionSubject(hook), legacySubject(hook), JSON.stringify(hook));
-    }
+describe('canonicalSubject', () => {
+  it('normalizes tool names and path field aliases across harnesses', () => {
+    const subjects = [
+      canonicalSubject('Bash', { command: 'cd /work/my-app && npm test' }, CWD),
+      canonicalSubject('shell', { command: 'npm   test' }, CWD),
+      canonicalSubject('exec_command', { command: 'npm test' }, CWD),
+    ];
+    assert.deepEqual(subjects, ['shell: npm test', 'shell: npm test', 'shell: npm test']);
+    assert.equal(canonicalSubject('Edit', { file_path: 'src/a.ts' }, CWD), 'edit: src/a.ts');
+    assert.equal(canonicalSubject('Write', { filePath: 'src/a.ts' }, CWD), 'edit: src/a.ts');
+    assert.equal(
+      canonicalSubject('NotebookEdit', { notebook_path: 'n.ipynb' }, CWD),
+      'notebook: n.ipynb',
+    );
+    assert.equal(canonicalSubject('Glob', { path: 'src/../src/a.ts' }, CWD), 'Glob: src/a.ts');
+    assert.equal(canonicalSubject('mcp__server__tool', { q: 1 }, CWD), 'mcp:server:tool: {"q":1}');
+    assert.equal(canonicalSubject('mcp__s__a__b', { q: 1 }, CWD), 'mcp:s:a__b: {"q":1}');
+    assert.equal(canonicalSubject('mcp__x', { q: 1 }, CWD), 'mcp__x: {"q":1}');
+    assert.equal(canonicalSubject('mcp____y', { q: 1 }, CWD), 'mcp____y: {"q":1}');
   });
 
-  it('keeps the shapes the permission policy keys precedent on', () => {
+  it('parses long MCP tool names in linear time', () => {
+    const tool = `mcp__a__${'a__a'.repeat(50_000)}`;
+    const started = performance.now();
+    const subject = canonicalSubject(tool, { q: 1 }, CWD);
+    assert.ok(performance.now() - started < 1_000);
+    assert.equal(subject, `mcp:a:${'a__a'.repeat(50_000)}: {"q":1}`);
+  });
+
+  it('collapses whitespace only outside quotes', () => {
     assert.equal(
-      permissionSubject({
-        tool_name: 'Bash',
-        cwd: CWD,
-        tool_input: { command: 'cd /work/my-app && npm test' },
-      }),
-      'Bash: npm test',
+      canonicalSubject('Bash', { command: 'printf "a  b"   \'c  d\'' }, CWD),
+      'shell: printf "a  b" \'c  d\'',
     );
-    assert.equal(
-      permissionSubject({
-        tool_name: 'Read',
-        cwd: CWD,
-        tool_input: { file_path: '/work/my-app/src/a.ts' },
-      }),
-      'Read: src/a.ts',
-    );
+  });
+
+  it('omits missing and malformed tool metadata', () => {
+    assert.equal(canonicalSubject('Bash', { command: '' }, CWD), undefined);
+    assert.equal(canonicalSubject('Edit', { file_path: 4 }, CWD), undefined);
+    assert.equal(canonicalSubject('Read', { path: '' }, CWD), undefined);
+    assert.equal(canonicalSubject('Edit', {}, CWD), undefined);
+    assert.equal(canonicalSubject('Read', 'not an object', CWD), undefined);
+    assert.equal(canonicalSubject('Read', { filePath: 'a' }, undefined), undefined);
   });
 
   it('imports nothing from node:', () => {

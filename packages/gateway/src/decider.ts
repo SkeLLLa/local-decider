@@ -25,6 +25,7 @@ import {
   type ShadowRecord,
   type SystemOneRequest,
   type SystemOneResponse,
+  resolveSegments,
 } from '@ziptie-soft/local-decider-core';
 import { randomUUID } from 'node:crypto';
 
@@ -410,7 +411,7 @@ export class Decider {
       };
     }
     const input = redactDeep(request.input);
-    const precedent = this.#precedentFor(policy, input);
+    const precedent = this.#precedentFor(policy, input, request.workspace?.cwd);
     const modelInput = { ...input };
     delete modelInput['subject'];
     if (policy.precedent !== undefined) {
@@ -468,16 +469,17 @@ export class Decider {
   #precedentFor(
     policy: Policy,
     input: Readonly<Record<string, unknown>>,
+    cwd?: string,
   ): PrecedentDecision | undefined {
     const settings = policy.precedent;
-    if (settings === undefined) {
+    if (settings === undefined || cwd === undefined || cwd.trim() === '') {
       return undefined;
     }
-    const subject = renderValue(input[settings.from]).replace(/\s+/g, ' ').trim();
+    const subject = renderValue(input[settings.from]);
     if (subject === '') {
       return undefined;
     }
-    const key = inputHash([policy.id, input['project'], subject]);
+    const key = inputHash(['v2', policy.id, `/${resolveSegments('', cwd).join('/')}`, subject]);
     const tally = this.#precedent.tally(key);
     return {
       key,
