@@ -84,7 +84,12 @@ state:
   sections:               # least relevant first; the budget is spent from the end
     - { label: Recent conversation, from: history, keep: tail }
     - { label: Request, from: request, keep: middle }
-precedent: { from: subject, minAllows: 3, maxAgeDays: 14, sources: [user, supervised] }
+precedent:
+  from: subject
+  minAllows: 3
+  maxAgeDays: 14
+  sources: [user, supervised]
+  vetoSources: [classifier]
 questions:
   verdict:
     type: choice          # noul (yes/no) | choice (2..255 options) | score (ordered levels)
@@ -146,23 +151,41 @@ and never changes the config.
 Precedent lets the model's own lower-confidence allow count when you have allowed the exact same
 request before. ADR: [0006](adr/0006-outcome-precedent.md).
 
-- A policy names an input key as its subject (`precedent.from`). The adapter normalises it (for
-  example `Bash: git status`). The gateway redacts it and hashes it with the policy id and
-  project. The hash is logged; the subject is not, and it is never sent to the model.
-- Only `ask` decisions collect allow evidence; their first verified outcome counts. `deny` and
-  `unsafe` veto; `decline` and `interrupted` are neutral and can be corrected once to a veto.
-  An `unsafe` label on a keyed auto-allowed request also vetoes its subject. A veto blocks the
-  precedent rule only, for `maxAgeDays`; rules with a higher threshold can still allow.
-  The outcome's source must be in `precedent.sources`. Decision and outcome must be within
-  `maxAgeDays` (1–90, default 14). `minAllows` defaults to 3, `sources` to `[user]`.
+- A policy names an input key as its subject (`precedent.from`). The adapter builds it from native
+  tool metadata (for example `shell: git status`). The gateway hashes it with the policy id and
+  workspace cwd; only the hash is logged. The subject itself is not logged as precedent data.
+- Adapters pass `workspace.cwd` beside `input`; it is not rendered to the model. A workspace is
+  required for precedent; requests without one do not use it. The gateway stores one canonical
+  key from `inputHash(['v2', policy id, normalised cwd, canonical subject])`; the tag versions the
+  tuple format. It does not resolve symlinks or run commands. The subject is hashed before prompt
+  truncation. Matching requests can share precedent across harnesses while different working
+  directories stay separate. Existing precedent hashes are discarded because they cannot be
+  converted. Neither key nor workspace is an authentication boundary.
+- Only `ask` decisions collect allow evidence, and only report-token-verified `user` or
+  `supervised` outcomes add it. `deny` and `unsafe` veto; `decline` and `interrupted` are neutral
+  and can be corrected once to a veto. An `unsafe` label on a keyed auto-allowed request also
+  vetoes its subject. A veto blocks the precedent rule only, for `maxAgeDays`; rules with a higher
+  threshold can still allow. Verified outcomes must use a source in `precedent.sources`.
+- `vetoSources` optionally lists unverified claimed sources (`classifier`, `harness`, or
+  `heuristic`) whose `deny` or `unsafe` outcomes may veto. Their `allow` outcomes never add allow
+  evidence. The stored source remains `unverified`; the claim is kept in `claimed_source` for
+  stats. `vetoSources` defaults to `[]`; `sources` defaults to `[user]`. Decision and outcome must
+  be within `maxAgeDays` (1–90, default 14), and `minAllows` defaults to 3.
 - A `precedent: allow` rule matches when the subject has at least `minAllows` allows, no veto,
   and the current model still selects `allow` at the rule's threshold (0.6 in `permission`).
   Any veto blocks it. Precedent never bypasses the model.
 - It is exact-match and per project: it does not generalise to similar commands.
-- The gateway rebuilds it from the last 90 days of the decision log at start and on policy reload, and
-  keeps at most 10,000 keys in memory.
-- Only the Paseo plugin reports outcomes today. See
+- The gateway rebuilds it from the largest configured `maxAgeDays` window at start and when
+  precedent settings change, and keeps at most 10,000 keys in memory.
+- Paseo reports user outcomes. The Claude Code auto-mode mod reports classifier denials as
+  unverified vetoes; plain Claude Code and Codex hooks cannot see the user's answer. See
   [supervised-subagents.md](supervised-subagents.md) for parent answers as `supervised` outcomes.
+
+`local-decider calibrate [--json]` reports temperature fits and allow-threshold suggestions from
+verified outcomes in the retained log. It is report-only: it never changes policies or config.
+Groups with fewer than 50 samples report insufficient data. Suggestions use raw probabilities and
+need at least 30 selected decisions with a 95% Wilson lower precision bound of 0.98. See
+[fine-tuning.md](fine-tuning.md#3-stage-a-calibration-only) for details.
 
 ## Variants
 

@@ -85,10 +85,10 @@ See [docs/architecture.md](docs/architecture.md) for the full pipeline.
   threshold hints and estimated savings; `--days N` selects a window from 1 day through the
   configured retention period (30 days by default). Switch a policy to `act` when the numbers
   look right.
-- **Learns from your answers (Paseo).** Exact-match precedent: after three allows of the same
-  request in the same project, and no unsafe label, a lower threshold (p ≥ 0.6) applies. A
-  decline is neutral unless you mark it unsafe; "Mark unsafe" on an auto-allowed row stops your
-  past allows from lowering its threshold.
+- **Learns from your answers.** Exact-match precedent: after three verified allows of the same
+  request in the same working directory, and no veto, a lower threshold (p ≥ 0.6) applies across
+  supported harnesses. A decline is neutral unless you mark it unsafe; configured unverified
+  classifier denials can only veto, never add allow evidence.
 - **Supervised subagents in Paseo.** An orchestrator agent can answer its child's escalated
   permission request, and that answer counts as precedent. Paseo notifies the orchestrator
   before the decider has answered, so the orchestrator should wait and answer only what is still
@@ -113,8 +113,9 @@ Read [docs/security.md](docs/security.md) before you turn on `act`.
   layer runs first.
 - **Redaction is best-effort** pattern matching. Unusual secret formats can reach the local
   engine (never the log).
-- **Only Paseo reports outcomes.** The Claude Code and Codex hooks never see your answer, so
-  there they give no agreement stats and no precedent.
+- **User outcomes come from Paseo.** Plain Claude Code and Codex hooks cannot see your answer.
+  The Claude Code auto-mode mod reports classifier denials as unverified vetoes, which can only
+  add friction.
 - **Harness limits.** Claude Code auto mode ignores a hook `allow`
   ([anthropics/claude-code#94740](https://github.com/anthropics/claude-code/issues/94740)), so
   there the decider can only add `ask` or `deny`. Codex `PreToolUse` is deny-only. Paseo auto
@@ -314,8 +315,12 @@ highlighted in the chat row. In Claude Code and Codex it is logged only.
 ```sh
 local-decider policies eval permission policies/fixtures/permission.jsonl
 local-decider stats --days 30               # agreement, Brier, calibration, savings
+local-decider calibrate                     # report-only fit and allow-threshold suggestions
 local-decider policies mode permission act   # when the high-confidence buckets are accurate
 ```
+
+`calibrate` uses verified outcomes from the retained decision log, reports fits per policy,
+engine and model, and never writes configuration. Add `--json` for machine-readable output.
 
 `policies eval` prints the expected action, the returned action and the selected answer's
 probability for each `{"input": {...}, "expect": "allow"}` line. It reports differences; it does

@@ -166,12 +166,12 @@ flowchart LR
   PR --> R["Precedent rule in the next decision"]
 ```
 
-- **Records.** `decision` records hold the input hash, a precedent key (a hash of policy,
-  project and redacted subject), answers, action, model and latency. `outcome` and `usage`
-  records join them by `decisionId`. Only token-verified outcomes update precedent and
-  calibration hints; every outcome remains in agreement and reliability stats, except that
-  `decline` and `interrupted` are not labels of the model's answer. Corrections (a neutral
-  outcome upgraded to `unsafe`) are appended outcome rows. No state text is
+- **Records.** `decision` records hold the input hash, canonical precedent key, answers, action,
+  model and latency. `outcome` and `usage` records join them by `decisionId`. Only token-verified
+  `user` and `supervised` outcomes add allow evidence or feed calibration; configured unverified
+  veto sources can only add a veto. Every outcome remains in agreement and reliability stats,
+  except that `decline` and `interrupted` are not labels of the model's answer. Corrections (a
+  neutral outcome upgraded to `unsafe`) are appended outcome rows. No state text is
   logged. They live in a SQLite database at `~/.local/share/local-decider/decider.db`, pruned
   after `logs.retainDays` (default 365; range 90–3650 days). It is hash-only, uses WAL for
   concurrent reads, stores hashes and structured decision metadata rather than state text, and
@@ -182,12 +182,21 @@ flowchart LR
   `N` must be from 1 through `logs.retainDays`. The gateway computes statistics in a worker
   thread using its own read-only SQLite connection. A 30-second timeout returns HTTP 503.
 - **Precedent.** Startup rebuilds only the largest `precedent.maxAgeDays` window configured by
-  the policies. A policy reload skips rebuilding when precedent settings are unchanged.
-- **Who reports.** Only the Paseo plugin reports outcomes and usage today. The Claude Code and
-  Codex hooks cannot see the user's answer.
+  the policies. A workspace is required for precedent; requests without one do not use it. The
+  gateway stores one canonical key from the `v2` format tag, policy, lexically normalised cwd and
+  canonical subject. Existing precedent hashes are discarded because they cannot be converted. A
+  policy's `vetoSources` may allow unverified classifier, harness or heuristic denials to veto,
+  while those sources can never add allow evidence. A policy reload skips rebuilding when
+  precedent settings are unchanged.
+- **Who reports.** Paseo reports user outcomes and usage. The Claude Code auto-mode mod reports
+  classifier denials as unverified vetoes; plain Claude Code and Codex hooks cannot see the
+  user's answer.
 - **Calibration hints.** For probability-based allow rules, `stats` may suggest a lower threshold
   when at least 100 escalated, labelled decisions meet it and the Wilson 95% upper bound on the
   deny rate is at most 2%. It never changes the config.
+- **Calibration report.** `local-decider calibrate [--json]` fits a temperature per policy,
+  engine and model from verified outcomes and stored probabilities. It reports Brier and ECE
+  before and after, plus allow-threshold suggestions when data is sufficient. It writes no config.
 - **Savings.** A routing request may carry `models: {requested, routes, profiles}`. The gateway
   fills missing routes from `config.yaml` presets and resolves a `profile` preset through
   `profiles`. With usage reported, stats sum the tokens of tasks routed to another model, priced

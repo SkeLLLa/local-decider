@@ -1,6 +1,7 @@
 # ADR-0012: Cross-harness precedent and learning from answers
 
-Status: proposed (2026-11-14)
+Status: accepted (2026-11-14) for §§1, 2 and 4.1; §3 emitters beyond the mod and §§4.2–4.4
+remain proposed.
 
 Extends [ADR-0006](0006-outcome-precedent.md) and [ADR-0007](0007-claude-auto-mode-mod.md).
 
@@ -33,10 +34,10 @@ a classifier ran or that anyone approved anything. Only the report token path of
 ### 1. One canonical precedent key
 
 - Adapters send the working directory as `DecideRequest.workspace.cwd`, outside the model input.
-  The gateway normalises it lexically (no `realpath`, no command execution) into the key's
-  `projectKey`. Adapters keep sending their display `input.project` for the model. The key
-  groups decisions; it is not an authentication boundary. The execution cwd stays in the key,
-  so relative commands in different directories never share evidence.
+  The gateway normalises it lexically (no `realpath`, no command execution) before including it in
+  the key. Adapters keep sending their display `input.project` for the model. The key groups
+  decisions; it is not an authentication boundary. The execution cwd stays in the key, so
+  relative commands in different directories never share evidence.
 - `canonicalSubject(tool, toolInput, cwd)` in `packages/core/src/subject.ts` is the only subject
   builder. The hooks, the mod and Paseo call it on the native tool input (Paseo passes its
   structured tool metadata, not its rendered prompt) after mapping native tool names to a shared
@@ -44,17 +45,17 @@ a classifier ran or that anyone approved anything. Only the report token path of
   → `edit`; `NotebookEdit` → `notebook`; MCP tools → `mcp:<server>:<tool>`; anything else keeps
   its name. Path fields (`file_path`, `filePath`, `notebook_path`, `path`) are read the same way
   everywhere. A missing or malformed field yields no subject, so no precedent.
-- Key = `inputHash(['v2', policyId, projectKey, canonicalSubject])`. The harness is not in the
-  key, so a user's answer in Paseo counts for the same request in Claude Code and Codex, and a
-  veto anywhere vetoes everywhere.
+- Key = `inputHash(['v2', policyId, lexicallyNormalisedCwd, canonicalSubject])`. The `v2` tag
+  versions this tuple's format. The harness is not in the key, so a user's answer in Paseo counts
+  for the same request in Claude Code and Codex, and a veto anywhere vetoes everywhere.
 - Lossy steps must not merge distinct subjects: the key hashes the subject before truncation for
   the prompt, and whitespace is collapsed only outside quotes. Mutable execution context (an
   edited `./build.sh`, a different `PATH`) stays a documented limit; deterministic guards run on
   every call and precedent never bypasses them.
-- Migration: an append-only SQLite migration adds `precedent_key_v2`. Old hashes cannot be
-  converted. Decisions without a `workspace` keep the v1 key; decisions with one are counted
-  under v2 only, so no decision counts twice. v1 evidence ages out within `maxAgeDays`, and the
-  25-hour replay of keyed auto-allows covers both keys.
+- Existing precedent hashes are discarded because they cannot be converted to the canonical
+  key. A workspace is required for precedent; requests without one do not use precedent. New
+  decisions and verified outcomes rebuild it within `maxAgeDays`. The 25-hour replay covers
+  keyed auto-allows.
 
 ### 2. Model and harness outcomes are veto-only
 
@@ -83,14 +84,18 @@ a classifier ran or that anyone approved anything. Only the report token path of
   `(session, tool, input hash)` join is ambiguous across retries and identical calls. Both
   emitters wait until real payloads are captured and tested; a missing post-tool event is never
   read as a denial.
+- The Claude Code mod classifier veto is implemented. The other §3 emitters remain proposed.
 
 ### 4. Learning beyond exact match (staged)
 
-1. **Calibration.** `local-decider calibrate` fits a temperature per policy and model on the
-   stored `answers` probabilities and the effective verified outcome per decision (the
-   ADR-0006 fold), and prints the fit and suggested thresholds. It never writes configuration.
-   The default floor is the lowest configured allow-rule `minProbability` of the policy;
-   policies without a probability-based allow rule get no suggestion.
+1. **Calibration.** `local-decider calibrate [--json]` fits a temperature per policy, engine and
+   model on stored `answers` probabilities and the effective verified outcome per decision (the
+   ADR-0006 fold). It reports sample count, temperature, Brier and ECE before and after, and
+   suggested allow thresholds from raw probabilities; temperature is diagnostic only. A
+   suggestion needs at least 30 selected decisions and a 95% Wilson lower bound on allow precision
+   of at least 0.98. The fit requires 50 samples. It never writes configuration. The threshold
+   floor is the lowest configured allow-rule `minProbability`; policies without a
+   probability-based allow rule get no suggestion.
 2. **Opt-in label store.** `labels.keepText: true` would keep the redacted subject and state for
    verified-outcome decisions (0600, retention, purge). Off by default; its own ADR.
 3. **Near-duplicate precedent.** With the label store, a kNN over vetoed subjects may add `ask`
@@ -103,7 +108,8 @@ a classifier ran or that anyone approved anything. Only the report token path of
 - An answer to the same request in the same directory counts in Paseo, Claude Code and Codex.
 - Claude Code auto-mode denials veto the subject in every harness; its allows are recorded but
   never lower a threshold. Forged reports can only cause extra prompts.
-- Existing v1 precedent keeps counting until it ages out.
+- Existing precedent hashes are discarded. Requests without a workspace receive no precedent;
+  requests with one build evidence under the canonical key within `maxAgeDays`.
 - Hook outcome emitters are deferred until payloads are verified.
 
 ## Alternatives

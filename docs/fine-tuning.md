@@ -46,7 +46,7 @@ policy are dropped on export by default.
 | `source`, `weight` | Verified outcome source and its training weight |
 | `outcomeAt` | Outcome timestamp, used for the split |
 | `projectHash` | `HMAC(installSalt, projectKey)`, so exports carry no paths |
-| `subjectKey` | `precedent_key_v2`, used for dedup and grouping |
+| `subjectKey` | `precedent_key`, used for dedup and grouping |
 | `engine`, `model`, `modelRevision`, `answers` | What the engine said at decision time |
 | `mode` | Whether the policy was in `shadow` or `act` when the decision was made |
 | `redactionVersion` | Lets a redaction change trigger a re-check or purge |
@@ -90,31 +90,27 @@ the shadow share.
 
 | Stage | Minimum before running |
 |---|---|
-| A1, gateway calibration | 300 verified outcomes per policy and model, at least 50 per label (our choice) |
+| A1, calibration report | 50 verified outcomes per policy, engine and model to produce a report |
 | A2, engine calibration | 1,000 calibration rows per question kind (upstream guidance) |
 | B, LoRA | 1,000–3,000 clean train rows per policy, plus 1,000 test and 1,000 calibration rows (upstream gives the evaluation sizes; the training minimum is *unverified*) |
 
 ## 3. Stage A: calibration only
 
-There are two routes. Don't stack them on one model: A1 is keyed to the model revision, so it refits
-automatically after A2 changes the checkpoint.
+The report-only route is implemented. The engine-side route remains a plan and requires label text.
 
-**A1. `local-decider calibrate` (no text, no GPU).** It reads verified outcomes and the stored
-`answers` probabilities from the log. For each `(policy, engine, model, modelRevision)` it fits a
-temperature `T` by NLL. A temperature can be applied to probabilities after the fact: `p_i ∝
-p_i^(1/T)` is the same as dividing the logits by `T`.
+**A1. `local-decider calibrate [--json]` (report-only, no text, no GPU).** It reads verified
+outcomes and stored `answers` probabilities from the retained SQLite log. For each
+`(policy, engine, model)` group with at least 50 samples, it fits a temperature `T` by NLL using a
+one-dimensional search from 0.25 through 4. A temperature can be applied to probabilities after
+the fact: `p_i ∝ p_i^(1/T)` is the same as dividing the logits by `T`.
 
-- It writes `~/.local/share/local-decider/calibration/<policy>/<engine>__<model>.json` (0600). The
-  file holds `T`, `n`, the shadow share, Brier and ECE before and after, the revision stamp and
-  suggested thresholds.
-- The suggested thresholds target allow precision of at least 0.98. They never go below the policy
-  `floor`.
-- The gateway applies the file according to `calibration.apply: off | shadow | on`:
-  - `shadow` logs calibrated probabilities next to the raw ones.
-  - `on` makes the rules read the calibrated values.
-- Thresholds stay suggestions. `--write` puts them in a user override file, never in the shipped
-  policy.
-- If the revision changes, the file is ignored and `stats` reports it as stale.
+- It prints the sample count, `T`, Brier and ECE before and after, and allow-threshold suggestions.
+- Suggested thresholds use raw probabilities; `T` is diagnostic only. Each needs at least 30
+  selected decisions and a 95% Wilson lower bound on allow precision of at least 0.98. Suggestions
+  never go below the lowest configured probability-based allow-rule threshold. Policies without
+  such a rule get no suggestion.
+- It does not write a calibration file, change runtime probabilities or update policy config.
+  Persisting and applying calibration remains future work.
 
 **A2. Engine-side temperature.** This needs label text. The steps:
 
@@ -265,7 +261,7 @@ not an adapter path.
 
 | Phase | Surface |
 |---|---|
-| 0 | This document and report-only `local-decider calibrate` (current PR) |
+| 0 | This document and report-only `local-decider calibrate` |
 | 1 | Calibration files, `calibrate --write`, `calibration.apply`, stale-calibration report in `stats` |
 | 2 | Label store: `labels.keepText`, `labels.retainDays`, `label` table, `labels stats`, `labels purge` |
 | 3 | `labels export --format strands`, dedup and time split, `policies/golden/permission.jsonl` |
