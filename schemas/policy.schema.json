@@ -119,6 +119,14 @@
             "type": "string",
             "enum": ["user", "supervised", "harness", "heuristic", "classifier"]
           }
+        },
+        "vetoSources": {
+          "default": [],
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": ["classifier", "harness", "heuristic"]
+          }
         }
       },
       "required": ["from"],

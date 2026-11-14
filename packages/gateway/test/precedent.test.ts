@@ -10,6 +10,7 @@ const SETTINGS = {
   minAllows: 3,
   maxAgeDays: 14,
   sources: ['user', 'supervised'],
+  vetoSources: [],
 } satisfies NonNullable<Policy['precedent']>;
 
 const NOW = Date.parse('2026-11-10T00:00:00.000Z');
@@ -17,6 +18,65 @@ const NOW = Date.parse('2026-11-10T00:00:00.000Z');
 function makeStore(now: () => number = () => NOW): PrecedentStore {
   return new PrecedentStore((id) => (id === 'permission' ? SETTINGS : undefined), now);
 }
+
+describe('unverified vetoes', () => {
+  it('allows configured vetoes but never unverified allow evidence', () => {
+    const withClassifier = new PrecedentStore(
+      () => ({ ...SETTINGS, vetoSources: ['classifier'] }),
+      () => NOW,
+    );
+    withClassifier.noteDecision(decision('forged-allow'));
+    withClassifier.noteOutcome({
+      kind: 'outcome',
+      ts: new Date(NOW).toISOString(),
+      decisionId: 'forged-allow',
+      outcome: 'allow',
+      source: 'unverified',
+      claimedSource: 'classifier',
+      verified: false,
+    });
+    assert.deepEqual(withClassifier.tally('subject-hash'), { allows: 0, denies: 0 });
+
+    withClassifier.noteDecision(decision('verified-user-allow'));
+    withClassifier.noteOutcome({
+      kind: 'outcome',
+      ts: new Date(NOW).toISOString(),
+      decisionId: 'verified-user-allow',
+      outcome: 'allow',
+      source: 'user',
+      verified: true,
+    });
+    assert.deepEqual(withClassifier.tally('subject-hash'), { allows: 1, denies: 0 });
+    withClassifier.noteDecision(decision('classifier-veto'));
+    withClassifier.noteOutcome({
+      kind: 'outcome',
+      ts: new Date(NOW).toISOString(),
+      decisionId: 'classifier-veto',
+      outcome: 'deny',
+      source: 'unverified',
+      claimedSource: 'classifier',
+      verified: false,
+    });
+    assert.deepEqual(withClassifier.tally('subject-hash'), { allows: 1, denies: 1 });
+  });
+
+  it('does not accept verified allow labels from non-user sources', () => {
+    const broadSources = new PrecedentStore(
+      () => ({ ...SETTINGS, sources: ['harness', 'heuristic', 'classifier'] }),
+      () => NOW,
+    );
+    broadSources.noteDecision(decision('harness-allow'));
+    broadSources.noteOutcome({
+      kind: 'outcome',
+      ts: new Date(NOW).toISOString(),
+      decisionId: 'harness-allow',
+      outcome: 'allow',
+      source: 'harness',
+      verified: true,
+    });
+    assert.deepEqual(broadSources.tally('subject-hash'), { allows: 0, denies: 0 });
+  });
+});
 
 function decision(
   decisionId: string,

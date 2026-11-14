@@ -20,6 +20,7 @@ const SETTINGS = {
   minAllows: 3,
   maxAgeDays: 14,
   sources: ['user'],
+  vetoSources: [],
 } satisfies NonNullable<Policy['precedent']>;
 
 function store(): PrecedentStore {

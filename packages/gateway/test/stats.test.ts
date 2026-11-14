@@ -46,6 +46,35 @@ function decision(
 }
 
 describe('computeStats', () => {
+  it('splits unverified outcomes by their claimed source without labeling decisions', () => {
+    const [stats] = computeStats([
+      decision('classifier-call', 'allow', 0.99),
+      {
+        kind: 'outcome',
+        ts: 't',
+        decisionId: 'classifier-call',
+        outcome: 'deny',
+        source: 'unverified',
+        claimedSource: 'classifier',
+        verified: false,
+      },
+      {
+        kind: 'outcome',
+        ts: 't',
+        decisionId: 'classifier-call',
+        outcome: 'allow',
+        source: 'unverified',
+        claimedSource: 'user',
+        verified: false,
+      },
+    ]);
+    assert.deepEqual(stats?.unverifiedByClaimedSource, { classifier: 1, user: 1 });
+    assert.match(
+      formatStats(stats === undefined ? [] : [stats]),
+      /unverified outcomes classifier=1 user=1/,
+    );
+  });
+
   it('computes agreement, Brier and reliability from joined outcomes', () => {
     const records: LogRecord[] = [
       decision('a', 'allow', 0.99),

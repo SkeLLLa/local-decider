@@ -78,6 +78,7 @@ const precedentSchema = z.strictObject({
   sources: z
     .array(z.enum(['user', 'supervised', 'harness', 'heuristic', 'classifier']))
     .default(['user']),
+  vetoSources: z.array(z.enum(['classifier', 'harness', 'heuristic'])).default([]),
 });
 
 const ruleSchema = z.strictObject({

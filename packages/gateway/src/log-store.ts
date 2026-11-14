@@ -5,7 +5,7 @@ export interface LogStore {
   append(record: LogRecord): void;
   read(): LogRecord[];
   readRecent(maxAgeDays: number, now?: number): LogRecord[];
-  /** Precedent evidence: keyed ask decisions and recent keyed auto-allows, with verified outcomes. */
+  /** Precedent evidence: keyed decisions, verified labels and configured unverified vetoes. */
   readVerifiedPrecedent(maxAgeDays: number, now?: number): LogRecord[];
   prune(retainDays: number, now?: number): number;
   close(): void;

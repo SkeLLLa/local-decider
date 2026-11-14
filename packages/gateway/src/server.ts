@@ -208,7 +208,13 @@ function parseSystemOne(body: unknown): SystemOneRequest {
   return body as unknown as SystemOneRequest;
 }
 
-const OUTCOME_SOURCES = new Set<unknown>(['harness', 'heuristic', 'supervised', 'classifier']);
+const OUTCOME_SOURCES = new Set<unknown>([
+  'user',
+  'harness',
+  'heuristic',
+  'supervised',
+  'classifier',
+]);
 
 function parseOutcome(body: unknown): OutcomeRecord {
   if (
@@ -599,7 +605,12 @@ function route(method: string, path: string): Handler | undefined {
       const verified = validReportToken(req, reportToken);
       const outcome: OutcomeRecord = verified
         ? { ...parsed, verified: true }
-        : { ...parsed, source: 'unverified', verified: false };
+        : {
+            ...parsed,
+            source: 'unverified',
+            claimedSource: parsed.source,
+            verified: false,
+          };
       log.append(outcome);
       decider.noteOutcome(outcome);
       send(res, 200, { ok: true });

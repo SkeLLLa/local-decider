@@ -111,36 +111,46 @@ export class SqliteLog implements LogStore {
   }
 
   /**
-   * Startup query for precedent (ADR-0006 addendum): escalated decisions with all their verified
-   * outcomes (so a neutral outcome's correction replays); recent keyed auto-allows, with or
-   * without outcomes (so a first veto after a restart lands); and older keyed auto-allows that
-   * already have a verified veto. Each decision precedes its outcomes in `seq` order.
+   * Startup query for precedent: escalated decisions with verified outcomes and unverified veto
+   * candidates; recent keyed auto-allows; and older keyed auto-allows with a veto. Each decision
+   * precedes its outcomes in `seq` order so neutral corrections replay consistently.
    */
   readVerifiedPrecedent(maxAgeDays: number, now = Date.now()): LogRecord[] {
     const from = utcDateStart(now - maxAgeDays * DAY_MS);
     const recent = Math.max(from, now - ALLOW_VETO_REPLAY_MS);
     const rows = this.#statement(
-      `SELECT d.*, o.seq AS outcome_seq, o.ts AS outcome_ts, o.outcome, o.source, o.verified
+      `SELECT d.*, o.seq AS outcome_seq, o.ts AS outcome_ts, o.outcome, o.source, o.verified,
+         o.claimed_source AS outcome_claimed_source
        FROM decision d
        LEFT JOIN outcome o
-         ON o.decision_id = d.id AND o.verified = 1 AND o.source <> 'unverified'
+         ON o.decision_id = d.id AND ((o.verified = 1 AND o.source <> 'unverified')
+           OR (o.verified = 0 AND o.source = 'unverified'
+             AND o.outcome IN ('deny', 'unsafe')))
        WHERE d.action = 'ask' AND d.precedent_key IS NOT NULL AND d.ts >= ?
        UNION ALL
-       SELECT d.*, o.seq AS outcome_seq, o.ts AS outcome_ts, o.outcome, o.source, o.verified
+       SELECT d.*, o.seq AS outcome_seq, o.ts AS outcome_ts, o.outcome, o.source, o.verified,
+         o.claimed_source AS outcome_claimed_source
        FROM decision d
        LEFT JOIN outcome o
-         ON o.decision_id = d.id AND o.verified = 1 AND o.source <> 'unverified'
+         ON o.decision_id = d.id AND ((o.verified = 1 AND o.source <> 'unverified')
+           OR (o.verified = 0 AND o.source = 'unverified'
+             AND o.outcome IN ('deny', 'unsafe')))
        WHERE d.action = 'allow' AND d.precedent_key IS NOT NULL AND d.ts >= ?
        UNION ALL
-       SELECT d.*, o.seq AS outcome_seq, o.ts AS outcome_ts, o.outcome, o.source, o.verified
+       SELECT d.*, o.seq AS outcome_seq, o.ts AS outcome_ts, o.outcome, o.source, o.verified,
+         o.claimed_source AS outcome_claimed_source
        FROM decision d
        JOIN outcome o
-         ON o.decision_id = d.id AND o.verified = 1 AND o.source <> 'unverified'
+         ON o.decision_id = d.id AND ((o.verified = 1 AND o.source <> 'unverified')
+           OR (o.verified = 0 AND o.source = 'unverified'
+             AND o.outcome IN ('deny', 'unsafe')))
        WHERE d.action = 'allow' AND d.precedent_key IS NOT NULL AND d.ts >= ? AND d.ts < ?
          AND d.id IN (
            SELECT v.decision_id FROM outcome v
-           WHERE v.verified = 1 AND v.source <> 'unverified'
-             AND v.outcome IN ('deny', 'unsafe') AND v.ts >= ?
+           WHERE ((v.verified = 1 AND v.source <> 'unverified'
+               AND v.outcome IN ('deny', 'unsafe'))
+             OR (v.verified = 0 AND v.source = 'unverified'
+               AND v.outcome IN ('deny', 'unsafe'))) AND v.ts >= ?
          )
        ORDER BY ts, id, outcome_seq`,
     ).all(from, recent, from, recent, from);
@@ -296,14 +306,15 @@ export class SqliteLog implements LogStore {
 
   #insertOutcome(record: OutcomeRecord): void {
     this.#statement(
-      `INSERT INTO outcome (decision_id, ts, outcome, source, verified)
-       VALUES (?, ?, ?, ?, ?)`,
+      `INSERT INTO outcome (decision_id, ts, outcome, source, verified, claimed_source)
+       VALUES (?, ?, ?, ?, ?, ?)`,
     ).run(
       record.decisionId,
       epoch(record.ts),
       record.outcome,
       record.source,
       record.verified === true ? 1 : 0,
+      nullable(record.claimedSource),
     );
   }
 
@@ -443,6 +454,7 @@ CREATE INDEX usage_ts ON usage(ts);
 CREATE INDEX usage_decision ON usage(decision_id);
 `,
   'UPDATE decision SET precedent_key = NULL;',
+  'ALTER TABLE outcome ADD COLUMN claimed_source TEXT;',
 ];
 
 function loadDatabase(): DatabaseConstructor {
@@ -652,12 +664,16 @@ function decisionMetrics(row: Row): DecisionExtras {
 }
 
 function outcomeRecord(row: Row): OutcomeRecord {
+  const claimedSource = optionalText(row['outcome_claimed_source'] ?? row['claimed_source']);
   return {
     kind: 'outcome',
     ts: isoTime(row['outcome_ts'] ?? row['ts']),
     decisionId: text(row['decision_id'] ?? row['id']),
     outcome: text(row['outcome']),
     source: text(row['source']) as OutcomeRecord['source'],
+    ...(claimedSource === undefined
+      ? {}
+      : { claimedSource: claimedSource as OutcomeRecord['source'] }),
     verified: Number(row['verified']) === 1,
   };
 }
