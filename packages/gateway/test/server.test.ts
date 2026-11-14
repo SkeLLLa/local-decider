@@ -135,6 +135,8 @@ describe('gateway precedent', () => {
           headers: { 'content-type': 'application/json' },
           body: JSON.stringify({
             harness: 'paseo',
+            scope: 'claude-auto',
+            workspace: { cwd: '/project' },
             input: { project: '/project', subject: 'Bash: npm test', request: 'npm test' },
           }),
         }),
@@ -142,20 +144,17 @@ describe('gateway precedent', () => {
     try {
       const forged = await decide();
       assert.equal(forged['action'], 'ask');
-      assert.equal(
-        (
-          await fetch(`${gw.url}/v1/outcomes`, {
-            method: 'POST',
-            headers: { 'content-type': 'application/json' },
-            body: JSON.stringify({
-              decisionId: forged['decisionId'],
-              outcome: 'allow',
-              source: 'user',
-            }),
-          })
-        ).status,
-        200,
-      );
+      assert.deepEqual(forged['precedent'], { allows: 0, denies: 0 });
+      const forgedOutcome = await fetch(`${gw.url}/v1/outcomes`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          decisionId: forged['decisionId'],
+          outcome: 'allow',
+          source: 'user',
+        }),
+      });
+      assert.equal(forgedOutcome.status, 200);
       const forgedRecord = readLog(paths).findLast(
         (record) => record.kind === 'outcome' && record.decisionId === forged['decisionId'],
       );
@@ -164,6 +163,23 @@ describe('gateway precedent', () => {
         'unverified',
       );
       assert.equal(forgedRecord?.kind === 'outcome' ? forgedRecord.verified : undefined, false);
+      for (const source of ['classifier', 'harness', 'user'] as const) {
+        for (let index = 0; index < 20; index += 1) {
+          const result = await decide();
+          assert.equal(result['action'], 'ask');
+          assert.deepEqual(result['precedent'], { allows: 0, denies: 0 });
+          const outcome = await fetch(`${gw.url}/v1/outcomes`, {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({
+              decisionId: result['decisionId'],
+              outcome: 'allow',
+              source,
+            }),
+          });
+          assert.equal(outcome.status, 200);
+        }
+      }
       const unaffected = await decide();
       assert.equal(unaffected['action'], 'ask');
       assert.deepEqual(unaffected['precedent'], { allows: 0, denies: 0 });
@@ -196,6 +212,27 @@ describe('gateway precedent', () => {
       const learned = await decide();
       assert.equal(learned['action'], 'allow');
       assert.deepEqual(learned['precedent'], { allows: 3, denies: 0 });
+      await fetch(`${gw.url}/v1/outcomes`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          decisionId: learned['decisionId'],
+          outcome: 'deny',
+          source: 'classifier',
+        }),
+      });
+      const classifierRecord = readLog(paths).findLast(
+        (record) => record.kind === 'outcome' && record.decisionId === learned['decisionId'],
+      );
+      assert.deepEqual(
+        classifierRecord?.kind === 'outcome'
+          ? [classifierRecord.source, classifierRecord.claimedSource, classifierRecord.verified]
+          : [],
+        ['unverified', 'classifier', false],
+      );
+      const vetoed = await decide();
+      assert.equal(vetoed['action'], 'ask', JSON.stringify(vetoed));
+      assert.deepEqual(vetoed['precedent'], { allows: 3, denies: 1 });
       assert.equal(JSON.stringify(readLog(paths)).includes(reportToken), false);
     } finally {
       await gw.close();

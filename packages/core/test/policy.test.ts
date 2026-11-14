@@ -201,6 +201,7 @@ describe('evaluateRules', () => {
       minAllows: 3,
       maxAgeDays: 14,
       sources: ['user', 'supervised'],
+      vetoSources: ['classifier'],
     });
   });
 });

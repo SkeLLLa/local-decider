@@ -14,7 +14,12 @@ state:
     - { label: Task, from: task, keep: head }
     - { label: Tool, from: tool, keep: head }
     - { label: Request, from: request, keep: middle }
-precedent: { from: subject, minAllows: 3, maxAgeDays: 14, sources: [user, supervised] }
+precedent:
+  from: subject
+  minAllows: 3
+  maxAgeDays: 14
+  sources: [user, supervised]
+  vetoSources: [classifier]
 questions:
   verdict:
     type: choice

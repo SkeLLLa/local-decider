@@ -62,6 +62,7 @@ describe('SqliteLog', () => {
     old.exec(
       `CREATE TABLE decision(action TEXT, precedent_key TEXT, ts INTEGER);
        INSERT INTO decision VALUES ('ask', 'old-format-key', 1);
+       CREATE TABLE outcome(source TEXT, verified INTEGER);
        PRAGMA user_version = 1`,
     );
     old.close();
@@ -74,16 +75,19 @@ describe('SqliteLog', () => {
           .all()
           .map((row) => row['name']);
         assert.deepEqual(
-          columns.filter(
-            (name) => typeof name === 'string' && name.startsWith('precedent_key'),
-          ),
+          columns.filter((name) => typeof name === 'string' && name.startsWith('precedent_key')),
           ['precedent_key'],
         );
         assert.equal(
           db.prepare('SELECT precedent_key FROM decision').get()?.['precedent_key'],
           null,
         );
-        assert.equal(pragma(file, 'user_version'), 2);
+        const outcomeColumns = db
+          .prepare('PRAGMA table_info(outcome)')
+          .all()
+          .map((row) => row['name']);
+        assert.ok(outcomeColumns.includes('claimed_source'));
+        assert.equal(pragma(file, 'user_version'), 3);
       } finally {
         db.close();
       }
@@ -137,7 +141,7 @@ describe('SqliteLog', () => {
     }
   });
 
-  it('stores verified state, enforces private file modes, and only queries verified precedent', () => {
+  it('stores outcome source state and replays verified plus veto candidates', () => {
     const dir = tempDir();
     const file = join(dir, 'data', 'decider.db');
     const log = SqliteLog.open(file);
@@ -157,8 +161,9 @@ describe('SqliteLog', () => {
         [false, true],
       );
       const precedent = log.readVerifiedPrecedent(90, Date.parse('2026-11-11T00:00:00.000Z'));
-      assert.equal(precedent.length, 2);
-      assert.equal(precedent[1]?.kind === 'outcome' && precedent[1].verified, true);
+      assert.equal(precedent.length, 3);
+      assert.equal(precedent[1]?.kind === 'outcome' && precedent[1].verified, false);
+      assert.equal(precedent[2]?.kind === 'outcome' && precedent[2].verified, true);
       assert.equal(statSync(file).mode & 0o777, 0o600);
       assert.equal(statSync(join(dir, 'data')).mode & 0o777, 0o700);
     } finally {
@@ -200,6 +205,7 @@ describe('SqliteLog', () => {
         minAllows: 3,
         maxAgeDays: 14,
         sources: ['user'],
+        vetoSources: [],
       } satisfies NonNullable<Policy['precedent']>;
       const precedent = new PrecedentStore(
         (policy) => (policy === 'permission' ? settings : undefined),
@@ -210,6 +216,47 @@ describe('SqliteLog', () => {
         outcome(decision.decisionId, { ts: '2026-11-10T13:00:00.000Z' }) as never,
       );
       assert.deepEqual(precedent.tally('pending-key'), { allows: 1, denies: 0 });
+    } finally {
+      log.close();
+    }
+  });
+
+  it('rebuilds a classifier veto after verified user allow evidence', () => {
+    const log = tempLog();
+    try {
+      const now = Date.parse('2026-11-10T12:00:00.000Z');
+      log.append(
+        makeShadowRecord('ask-1', { precedentKey: 'key', ts: new Date(now).toISOString() }),
+      );
+      log.append(outcome('ask-1'));
+      log.append(
+        makeShadowRecord('auto-1', {
+          action: 'allow',
+          precedentKey: 'key',
+          ts: new Date(now).toISOString(),
+        }),
+      );
+      log.append(
+        outcome('auto-1', {
+          outcome: 'deny',
+          source: 'unverified',
+          claimedSource: 'classifier',
+          verified: false,
+        }),
+      );
+      const settings = {
+        from: 'subject',
+        minAllows: 3,
+        maxAgeDays: 14,
+        sources: ['user'],
+        vetoSources: ['classifier'],
+      } satisfies NonNullable<Policy['precedent']>;
+      const precedent = new PrecedentStore(
+        () => settings,
+        () => now,
+      );
+      precedent.rebuild(log.readVerifiedPrecedent(14, now));
+      assert.deepEqual(precedent.tally('key'), { allows: 1, denies: 1 });
     } finally {
       log.close();
     }
@@ -251,7 +298,13 @@ describe('SqliteLog', () => {
         const records = log.readVerifiedPrecedent(14, now);
         assert.deepEqual(ids(records), ['a', 'a:decline', 'a:unsafe']);
         const store = new PrecedentStore(
-          () => ({ from: 'subject', minAllows: 3, maxAgeDays: 14, sources: ['user'] }),
+          () => ({
+            from: 'subject',
+            minAllows: 3,
+            maxAgeDays: 14,
+            sources: ['user'],
+            vetoSources: [],
+          }),
           () => now,
         );
         store.rebuild(records);
@@ -292,14 +345,26 @@ describe('SqliteLog', () => {
       }
     });
 
-    it('excludes unkeyed allows and unverified outcomes', () => {
+    it('replays configured unverified vetoes, retaining their claimed source', () => {
       const log = tempLog();
       try {
         log.append(keyed('unkeyed', 'allow', hour, null));
         log.append(keyed('a', 'ask', hour));
-        log.append(outcome('a', { outcome: 'unsafe', verified: false }));
-        log.append(outcome('a', { outcome: 'unsafe', source: 'unverified' }));
-        assert.deepEqual(ids(log.readVerifiedPrecedent(14, now)), ['a']);
+        log.append(outcome('a', { outcome: 'allow', verified: false }));
+        log.append(
+          outcome('a', {
+            outcome: 'unsafe',
+            source: 'unverified',
+            claimedSource: 'classifier',
+            verified: false,
+          }),
+        );
+        const records = log.readVerifiedPrecedent(14, now);
+        assert.deepEqual(ids(records), ['a', 'a:unsafe']);
+        assert.equal(
+          records[1]?.kind === 'outcome' ? records[1].claimedSource : undefined,
+          'classifier',
+        );
       } finally {
         log.close();
       }
@@ -432,9 +497,9 @@ describe('SqliteLog', () => {
     new (sqlite().DatabaseSync)(file, { allowExtension: false }).close();
     assert.equal(pragma(file, 'user_version'), 0);
     SqliteLog.open(file).close();
-    assert.equal(pragma(file, 'user_version'), 2);
+    assert.equal(pragma(file, 'user_version'), 3);
     SqliteLog.open(file).close();
-    assert.equal(pragma(file, 'user_version'), 2);
+    assert.equal(pragma(file, 'user_version'), 3);
     const database = new (sqlite().DatabaseSync)(file, { allowExtension: false, readOnly: true });
     try {
       const names = database

@@ -87,6 +87,7 @@ export class PrecedentStore {
    */
   noteOutcome(outcome: OutcomeRecord): void {
     if (!isVerifiedOutcome(outcome)) {
+      this.#noteUnverifiedVeto(outcome);
       return;
     }
     const decision =
@@ -98,7 +99,7 @@ export class PrecedentStore {
     if (next === undefined) {
       return;
     }
-    const answer = evidenceFor(decision, next);
+    const answer = evidenceFor(decision, next, outcome.source);
     const settings = answer === undefined ? undefined : this.#eligible(decision, outcome);
     if (answer === undefined || settings === undefined) {
       return;
@@ -106,6 +107,47 @@ export class PrecedentStore {
     const expiresAt =
       Math.min(Date.parse(decision.ts), Date.parse(outcome.ts)) + settings.maxAgeDays * DAY_MS;
     this.#add(decision.key, answer, expiresAt);
+  }
+
+  /** Unverified deny reports from configured sources may only tighten precedence. */
+  #noteUnverifiedVeto(outcome: OutcomeRecord): void {
+    const source = outcome.claimedSource;
+    if (
+      outcome.source !== 'unverified' ||
+      source === undefined ||
+      outcomeClass(outcome.outcome) !== 'veto'
+    ) {
+      return;
+    }
+    const decision =
+      this.#decisions.get(outcome.decisionId) ?? this.#allowed.get(outcome.decisionId);
+    const settings =
+      decision === undefined ? undefined : this.#unverifiedVetoSettings(decision, outcome);
+    if (decision === undefined || settings === undefined) return;
+    const next = this.#nextLabel(decision, outcome);
+    if (next === undefined || outcomeClass(next) !== 'veto') return;
+    const expiresAt =
+      Math.min(Date.parse(decision.ts), Date.parse(outcome.ts)) + settings.maxAgeDays * DAY_MS;
+    this.#add(decision.key, 'deny', expiresAt);
+  }
+
+  #unverifiedVetoSettings(
+    decision: DecisionRef,
+    outcome: OutcomeRecord,
+  ): PrecedentSettings | undefined {
+    const settings = this.#settingsFor(decision.policyId);
+    const source = outcome.claimedSource;
+    const now = this.#now();
+    if (
+      settings === undefined ||
+      source === undefined ||
+      !(settings.vetoSources as readonly string[]).includes(source) ||
+      !isRecent(decision.ts, settings.maxAgeDays, now) ||
+      !isRecent(outcome.ts, settings.maxAgeDays, now)
+    ) {
+      return undefined;
+    }
+    return settings;
   }
 
   /** A keyed auto-allow only reacts to an eligible veto; anything else leaves it untouched. */
@@ -190,12 +232,22 @@ function setLru<V>(map: Map<string, V>, key: string, value: V): void {
   }
 }
 
-function evidenceFor(decision: DecisionRef, outcome: string): 'allow' | 'deny' | undefined {
+function evidenceFor(
+  decision: DecisionRef,
+  outcome: string,
+  source: OutcomeRecord['source'],
+): 'allow' | 'deny' | undefined {
   const cls = outcomeClass(outcome);
   if (cls === 'veto') {
     return 'deny';
   }
-  return cls === 'allow' && decision.action === 'ask' ? 'allow' : undefined;
+  return cls === 'allow' && decision.action === 'ask' && isAllowSource(source)
+    ? 'allow'
+    : undefined;
+}
+
+function isAllowSource(source: OutcomeRecord['source']): boolean {
+  return source === 'user' || source === 'supervised';
 }
 
 function isRecent(timestamp: string, maxAgeDays: number, now: number): boolean {

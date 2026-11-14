@@ -144,6 +144,8 @@ export interface OutcomeRecord {
   /** The ground-truth answer for the policy's primary question, in its answer space. */
   readonly outcome: string;
   readonly source: OutcomeSource;
+  /** Caller supplied source retained when the report token did not verify it. */
+  readonly claimedSource?: OutcomeSource;
   /** True only when the gateway's private report token authenticated the reporter. */
   readonly verified?: boolean;
 }
