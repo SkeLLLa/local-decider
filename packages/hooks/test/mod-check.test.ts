@@ -140,6 +140,13 @@ describe('classifierVerdict', () => {
     );
   });
 
+  it('knows nothing when the classifier gave no verdict on a hook-rewritten input', () => {
+    const text =
+      "The server-side auto mode classifier gave no verdict for Bash: a hook changed this call's input after auto mode reviewed it, so the review does not cover what would run.";
+    assert.equal(classifierVerdict(refused(text)), null);
+    assert.equal(classifierVerdict(refused('Auto mode: the classifier gave no verdict.')), null);
+  });
+
   it('treats a successful or otherwise failed tool as a granted permission', () => {
     assert.equal(classifierVerdict({ ref: 1, result: { stdout: 'ok' }, text: 'ok' }), 'allow');
     assert.equal(classifierVerdict({ result: { stdout: 'ok' }, isError: false }), 'allow');
