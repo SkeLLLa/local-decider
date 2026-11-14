@@ -1,5 +1,13 @@
 # Changelog
 
+## [2.1.0](https://github.com/ziptie-soft/local-decider/compare/core-v2.0.0...core-v2.1.0) (2026-11-14)
+
+
+### Features
+
+* **precedent:** add cross-harness v2 keys ([95f8a1b](https://github.com/ziptie-soft/local-decider/commit/95f8a1b89e83622cf2b2396fc0eb517ea69aaf8b))
+* **precedent:** add veto-only unverified outcomes ([a45585c](https://github.com/ziptie-soft/local-decider/commit/a45585c38d37786bc8d59171409d4d85ac4f808d))
+
 ## [2.0.0](https://github.com/ziptie-soft/local-decider/compare/core-v1.1.0...core-v2.0.0) (2026-11-12)
 
 

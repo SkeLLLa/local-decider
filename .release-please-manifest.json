@@ -1,6 +1,6 @@
 {
-  "packages/core": "2.0.0",
-  "packages/gateway": "2.0.0",
-  "packages/paseo-plugin": "2.0.0",
+  "packages/core": "2.1.0",
+  "packages/gateway": "2.1.0",
+  "packages/paseo-plugin": "2.1.0",
   "plugins/local-decider": "2.0.0"
 }
