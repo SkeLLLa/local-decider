@@ -88,15 +88,22 @@ export const CLASSIFIER_DENIAL_PREFIXES: readonly string[] = [
   'Permission for this action was denied by the Claude Code auto mode classifier',
 ];
 
-/** Refusals that say nothing about the classifier's verdict: its fallback and plain permission asks. */
+/**
+ * Refusals that say nothing about the classifier's verdict: its fallback, plain permission asks,
+ * and the classifier giving no verdict (a PreToolUse hook rewrote the input after its review).
+ */
 export const UNDECIDED_PREFIXES: readonly string[] = [
   'This command requires approval',
   'Claude requested permissions to use',
   'Permission to use',
+  'The server-side auto mode classifier gave no verdict',
 ];
 
 /** Phrases that mark an undecided refusal wherever they sit in the first part of the text. */
-const UNDECIDED_PHRASES: readonly string[] = ["you haven't granted it yet"];
+const UNDECIDED_PHRASES: readonly string[] = [
+  "you haven't granted it yet",
+  'classifier gave no verdict',
+];
 
 const PHRASE_WINDOW = 300;
 
