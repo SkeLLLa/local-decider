@@ -19,122 +19,103 @@ only:
   precedent store ignores them. The original source is overwritten, so even stats lose it.
 - **Plain Claude Code and Codex hooks report no outcomes.** They see only `PreToolUse`,
   `PermissionRequest`, `Stop` and `UserPromptSubmit`; nothing after a prompt resolves.
-- **First verified outcome wins.** An early low-trust outcome would block a later user answer.
 - **The log is hash-only.** Nothing can be retrained or calibrated per request from it beyond the
   stored answer probabilities.
 
 ## Decision
 
+Invariant: **no number of calls to the public `/v1/decide` and `/v1/outcomes` endpoints may lower
+an allow threshold.** A same-user process can read every 0600 file and call the gateway, so
+neither a request's shape (`scope`, harness, call id) nor a gateway-issued capability proves that
+a classifier ran or that anyone approved anything. Only the report token path of ADR-0006
+(`user`, `supervised`) adds allow evidence, as today. Everything new here can only tighten.
+
 ### 1. One canonical precedent key
 
-- The gateway, not the adapters, derives the key's project from a `cwd` input:
-  `realpath`-free lexical normalisation, then the git work-tree root when the adapter supplies it
-  (`input.repoRoot`), else the cwd. Adapters keep sending their display `project` for the model;
-  the key uses `projectKey`.
-- One `canonicalSubject(tool, toolInput, cwd)` in `packages/core/src/subject.ts` is the only
-  subject builder. The hooks, the mod and Paseo call it with their native tool names mapped to a
-  shared vocabulary (`Bash`/`shell`/`exec_command` → `shell`; `Edit`/`Write`/`MultiEdit`/
-  `apply_patch` → `edit`; `NotebookEdit` → `notebook`; MCP tools keep `mcp:<server>:<tool>`).
-- Key = `sha256(keyVersion, policyId, projectKey, canonicalSubject)`, `keyVersion = 2`. The
-  harness is not in the key, so an answer in one harness counts in the others for the same
-  project and request.
-- Migration: decisions keep their v1 `precedent_key`; a new `precedent_key_v2` column is written
-  from now on. The store reads only v2. Old evidence ages out within `maxAgeDays` (14 days);
-  that is acceptable and keeps the migration trivial.
+- Adapters send the working directory as `DecideRequest.workspace.cwd`, outside the model input.
+  The gateway normalises it lexically (no `realpath`, no command execution) into the key's
+  `projectKey`. Adapters keep sending their display `input.project` for the model. The key
+  groups decisions; it is not an authentication boundary. The execution cwd stays in the key,
+  so relative commands in different directories never share evidence.
+- `canonicalSubject(tool, toolInput, cwd)` in `packages/core/src/subject.ts` is the only subject
+  builder. The hooks, the mod and Paseo call it on the native tool input (Paseo passes its
+  structured tool metadata, not its rendered prompt) after mapping native tool names to a shared
+  vocabulary: `Bash`/`shell`/`exec_command` → `shell`; `Edit`/`Write`/`MultiEdit`/`apply_patch`
+  → `edit`; `NotebookEdit` → `notebook`; MCP tools → `mcp:<server>:<tool>`; anything else keeps
+  its name. Path fields (`file_path`, `filePath`, `notebook_path`, `path`) are read the same way
+  everywhere. A missing or malformed field yields no subject, so no precedent.
+- Key = `inputHash(['v2', policyId, projectKey, canonicalSubject])`. The harness is not in the
+  key, so a user's answer in Paseo counts for the same request in Claude Code and Codex, and a
+  veto anywhere vetoes everywhere.
+- Lossy steps must not merge distinct subjects: the key hashes the subject before truncation for
+  the prompt, and whitespace is collapsed only outside quotes. Mutable execution context (an
+  edited `./build.sh`, a different `PATH`) stays a documented limit; deterministic guards run on
+  every call and precedent never bypasses them.
+- Migration: an append-only SQLite migration adds `precedent_key_v2`. Old hashes cannot be
+  converted. Decisions without a `workspace` keep the v1 key; decisions with one are counted
+  under v2 only, so no decision counts twice. v1 evidence ages out within `maxAgeDays`, and the
+  25-hour replay of keyed auto-allows covers both keys.
 
-### 2. Decision receipts: verified outcomes without the global token
+### 2. Model and harness outcomes are veto-only
 
-- `POST /v1/decide/*` returns a `receipt`: `base64url(HMAC(receiptKey, decisionId ‖ sources ‖
-  expiry))`, where `sources` is the set the caller may later claim, and `receiptKey` is a 0600
-  file next to the report token.
-- The gateway grants `sources` by request shape, never by request content:
-  - mod requests (`scope: claude-auto`): `[classifier]`;
-  - hook requests: `[harness]`;
-  - Paseo requests keep using the report token for `user` and `supervised`.
-- `POST /v1/outcomes` accepts `{decisionId, outcome, source, receipt}`. A valid, unexpired
-  (24 h) receipt for that decision and source marks the outcome `verified: true` with its real
-  source. A receipt is bound to one decision, so a leaked receipt can label only that decision,
-  only as a low-trust source.
-- Unverified outcomes keep their claimed source in a new `claimed_source` column, so stats can
-  still split them.
+- The mod's classifier outcomes and future harness observations stay unverified. The gateway
+  keeps their claimed source in a new `claimed_source` column, so stats can split them, while
+  `source` stays `unverified` as today.
+- A policy may list `precedent.vetoSources` (default for `permission.yaml`: `[classifier]`). A
+  `deny` outcome whose claimed source is listed vetoes the decision's subject for `maxAgeDays`,
+  exactly as a verified veto does. Their `allow` outcomes never add allow evidence and never
+  satisfy `minAllows`. Forging one can only add prompts, never remove one.
+- No receipts, no source weights, no `allowModelOnly`. Positive learning from classifier or
+  harness signals needs an isolation boundary the gateway does not have; that is future work
+  with its own ADR.
 
-### 3. Weighted, per-source evidence
+### 3. Outcome emitters per harness
 
-- `precedent.sources` also accepts a map of weights; the list form means weight 1:
-
-  ```yaml
-  precedent:
-    from: subject
-    minAllows: 3          # minimum evidence weight
-    maxAgeDays: 14
-    sources: { user: 1, supervised: 1, classifier: 0.5, harness: 0.25 }
-  ```
-
-- Each decision keeps one outcome per source. Its evidence is the outcome of its highest-weight
-  verified source, so a later user answer overrides an earlier classifier verdict. A veto from
-  any listed source still vetoes the subject for `maxAgeDays`.
-- Evidence weight per subject is the sum over decisions; the `precedent: allow` rule needs
-  `weight ≥ minAllows`, zero vetoes, at least one non-`classifier`/`harness` outcome unless the
-  policy sets `precedent.allowModelOnly: true`, and the model must still select `allow` at the
-  rule threshold (0.6). Default `permission.yaml` ships with `classifier: 0.5` and
-  `allowModelOnly: true`, so six classifier allows of the same request lower its threshold.
-- Only `ask` decisions collect allow evidence, as before. For the mod this is the shadowed or
-  acted `claude-auto` permission decision that returned `ask`.
-
-### 4. Outcome emitters per harness
-
-| Harness | Signal | Joins by | Outcome, source |
+| Harness | Signal | Joins by | Effect |
 | --- | --- | --- | --- |
-| Paseo | `agent.permission.after` | `agentId:requestId` | `allow`/`decline`/`interrupted`, `user` or `supervised` (unchanged) |
-| Claude Code, auto mode | mod `tool.call` result | `tool_use_id` | `allow`/`deny`, `classifier` |
-| Claude Code, auto mode | `PermissionDenied` hook | `tool_use_id` | `deny`, `classifier` (works without the mod) |
-| Claude Code, default modes | `PermissionRequest` then `PostToolUse`/`PostToolUseFailure` | gateway join on session + tool + input hash | `allow`, `harness` |
-| Codex | `PermissionRequest` then `PostToolUse` | gateway join on session/turn + tool + input hash | `allow`, `harness` |
+| Paseo | `agent.permission.after` | `agentId:requestId` | allow evidence or veto (unchanged) |
+| Claude Code, auto mode | mod `tool.call` result | `tool_use_id` | classifier veto on `deny` |
+| Claude Code, auto mode | `PermissionDenied` hook | `tool_use_id`, only to an existing decision | classifier veto (deferred) |
+| Claude Code, Codex | `PermissionRequest` then `PostToolUse` | none reliable | telemetry only (deferred) |
 
-- `PermissionRequest` carries no `tool_use_id` in either harness. The gateway keeps a short-lived
-  (10 min, 1,000 entries) pending map from `(session, tool, sha256(tool_input))` to the
-  decision id and receipt; the new `PostToolUse` hook posts the tool input hash and the gateway
-  resolves it. Hook processes stay stateless.
-- A prompt with no later `PostToolUse` is **not** a denial (a crash, interrupt or decline look
-  the same) and records nothing.
-- `PostToolUse` approval cannot say who approved (user or a rule) in Claude Code's default
-  modes, nor user vs auto-reviewer in Codex, hence the low `harness` weight.
-- Claude Code `classifierVerdict` text matching stays the mod's verdict source; the
-  `PermissionDenied` hook is the version-stable cross-check for denials.
+- `PermissionDenied` may report a veto only when it joins an existing permission decision; it
+  never creates a decision. `PermissionRequest` has no `tool_use_id` in either harness, and a
+  `(session, tool, input hash)` join is ambiguous across retries and identical calls. Both
+  emitters wait until real payloads are captured and tested; a missing post-tool event is never
+  read as a denial.
 
-### 5. Learning beyond exact match (staged, opt-in)
+### 4. Learning beyond exact match (staged)
 
-1. **Calibration (no text needed).** `local-decider calibrate` fits a per-policy, per-model
-   temperature on verified outcomes and the stored `answers` probabilities, and suggests
-   thresholds. It never lowers an allow threshold below the policy `floor`.
-2. **Opt-in label store.** `labels.keepText: true` stores the redacted canonical subject and
-   policy input for verified-outcome decisions in a `label` table (0600 database file,
-   `labels.retainDays`, `local-decider labels purge`). Off by default.
-3. **Near-duplicate precedent (tighten-only first).** With the label store on, an embedding kNN
-   over labelled subjects can add `ask` to similar requests that were vetoed. It never allows on
-   similarity alone until stats show its agreement.
-4. **Fine-tuning.** Only the `strands-decider` adapter has a published recipe and loads local
-   LoRA adapters; train off-box after 1–3k clean labels, gate on a golden set, serve through
-   `strands-decider` or a merged GGUF on `llama-vulkan`. d3 models (no training code) and
-   FastFlowLM (no custom adapters) are out of scope.
+1. **Calibration.** `local-decider calibrate` fits a temperature per policy and model on the
+   stored `answers` probabilities and the effective verified outcome per decision (the
+   ADR-0006 fold), and prints the fit and suggested thresholds. It never writes configuration.
+   The default floor is the lowest configured allow-rule `minProbability` of the policy;
+   policies without a probability-based allow rule get no suggestion.
+2. **Opt-in label store.** `labels.keepText: true` would keep the redacted subject and state for
+   verified-outcome decisions (0600, retention, purge). Off by default; its own ADR.
+3. **Near-duplicate precedent.** With the label store, a kNN over vetoed subjects may add `ask`
+   to similar requests. Tighten-only.
+4. **Fine-tuning.** Only `strands-decider` has a published recipe and loads local checkpoints;
+   the plan is [docs/fine-tuning.md](../fine-tuning.md). d3 and FastFlowLM are out of scope.
 
 ## Consequences
 
-- An answer to the same request in the same project counts in Paseo, Claude Code and Codex.
-- Claude Code auto-mode verdicts become precedent evidence at half weight, and denials veto.
-  This is a second model's judgment feeding the first; the veto rule, the 0.6 model floor, the
-  mod's deterministic blocks and the `allowModelOnly` switch bound it.
-- Receipts add a second trust path. It is per decision and per low-trust source; the report
-  token stays the only path to `user` and `supervised`.
-- Existing v1 precedent stops counting after the switch and is rebuilt from new answers within
-  `maxAgeDays`.
-- New hook: `PostToolUse` for Claude Code and Codex (fail-open, log only, no output).
+- An answer to the same request in the same directory counts in Paseo, Claude Code and Codex.
+- Claude Code auto-mode denials veto the subject in every harness; its allows are recorded but
+  never lower a threshold. Forged reports can only cause extra prompts.
+- Existing v1 precedent keeps counting until it ages out.
+- Hook outcome emitters are deferred until payloads are verified.
 
 ## Alternatives
 
-- **Give the mod the report token.** It would let any mod-scoped code claim `user`; rejected.
-- **Put the harness in the key.** Safer separation but defeats sharing; vetoes would not carry.
+- **Decision receipts (HMAC per decision, granted by request shape).** Rejected: `/v1/decide`
+  is open and `scope` is caller-supplied, so any same-user process could mint receipts and post
+  six classifier allows to lower a threshold of its choosing.
+- **Weighted sources with `allowModelOnly`.** Rejected: repeated classifier verdicts are
+  correlated judgments, not independent approvals, and without authentication they are forgeable.
+- **Give the mod the report token.** Any mod-scoped code could claim `user`; rejected.
+- **Put the harness in the key.** Safer separation but vetoes would not carry; since only
+  report-token sources allow, sharing adds no new allow path.
 - **Treat a prompt with no later tool run as a denial.** Indistinguishable from crashes and
-  declines; ADR-0006 already treats declines as neutral.
-- **Fine-tune first.** Needs text the log does not keep, thousands of labels, and works on one
-  engine only; calibration and the label store come first.
+  declines.
+- **Fine-tune first.** Needs text the log does not keep and thousands of labels.
