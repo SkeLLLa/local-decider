@@ -83,6 +83,7 @@ async function ask(
     harness: 'claude-code',
     sessionId: await $.session.id(),
     input: buildInput(e, cwd, messages),
+    workspace: { cwd },
     scope: 'claude-auto',
     call: { id, agent: subagent },
   });

@@ -38,6 +38,8 @@ export interface DecideRequest {
   readonly sessionId?: string;
   /** Structured, untrusted input; the policy's `state.sections` say which keys become state. */
   readonly input: Readonly<Record<string, unknown>>;
+  /** Execution working directory for precedent grouping; kept outside model state. */
+  readonly workspace?: { readonly cwd: string };
   /** The tool call this decision is about; the gateway keeps it for `GET /v1/calls/:id`. */
   readonly call?: DecideCall;
   /** Caps the effective mode at `policies.<id>.scopes.<scope>.mode` (default shadow). */
@@ -94,7 +96,7 @@ export interface DecideResponse {
   readonly cached: boolean;
   /** Exact-match precedent count used to evaluate this decision, when configured. */
   readonly precedent?: PrecedentTally;
-  /** SHA-256 of policy id, project and redacted subject; never the subject itself. */
+  /** SHA-256 of the format tag, policy id, normalized workspace cwd and subject. */
   readonly precedentKey?: string;
   /** Set when the engine failed; the action is then the policy default and never enforced. */
   readonly error?: string;

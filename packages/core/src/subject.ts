@@ -43,21 +43,78 @@ export function isShellTool(hook: HookInput): boolean {
   return tool !== 'apply_patch' && !/^(?:Edit|Write|MultiEdit|NotebookEdit)$/.test(tool);
 }
 
-export function permissionSubject(hook: HookInput): string | undefined {
-  const tool = str(hook['tool_name']);
-  if (tool === undefined) {
+/** Build the shared, cross-harness subject from native tool metadata. */
+export function canonicalSubject(
+  tool: string,
+  toolInput: unknown,
+  cwd: string | undefined,
+): string | undefined {
+  const fields = validSubjectFields(tool, toolInput, cwd);
+  if (fields === undefined || cwd === undefined) return undefined;
+  const mapped = canonicalTool(tool);
+  const command = subjectCommand(mapped, toolInput);
+  const rawPath = firstString(fields, SUBJECT_PATH_FIELDS);
+  if (!hasRequiredSubject(mapped, tool, fields, rawPath, command)) return undefined;
+  return subjectLine({
+    tool: mapped,
+    cwd,
+    input: toolInput,
+    command,
+    path: rawPath,
+    url: firstString(fields, SUBJECT_URL_FIELDS),
+  });
+}
+
+const SUBJECT_PATH_FIELDS = ['file_path', 'filePath', 'notebook_path', 'path'] as const;
+const SUBJECT_URL_FIELDS = ['url'] as const;
+
+function validSubjectFields(
+  tool: string,
+  toolInput: unknown,
+  cwd: string | undefined,
+): Record<string, unknown> | undefined {
+  if (tool.trim() !== tool || tool === '' || cwd === undefined || cwd.trim() === '') {
     return undefined;
   }
-  const input = hook['tool_input'];
-  const fields = asRecord(input);
-  return subjectLine({
-    tool,
-    cwd: str(hook['cwd']) ?? '',
-    input,
-    command: isShellTool(hook) ? commandOf(hook) : undefined,
-    path: firstString(fields, ['file_path', 'filePath', 'path']),
-    url: firstString(fields, ['url']),
+  const fields = asRecord(toolInput);
+  return fields !== undefined && validPathFields(fields) ? fields : undefined;
+}
+
+function validPathFields(fields: Record<string, unknown>): boolean {
+  return SUBJECT_PATH_FIELDS.every((key) => {
+    const value = fields[key];
+    return value === undefined || (typeof value === 'string' && value !== '');
   });
+}
+
+function subjectCommand(mapped: string, toolInput: unknown): string | undefined {
+  if (mapped !== 'shell') return undefined;
+  const command = commandOf({ tool_input: toolInput });
+  return command === undefined || command.trim() === '' ? undefined : command;
+}
+
+function hasRequiredSubject(
+  mapped: string,
+  tool: string,
+  fields: Record<string, unknown>,
+  path: string | undefined,
+  command: string | undefined,
+): boolean {
+  if (mapped === 'shell') return command !== undefined;
+  if (mapped !== 'edit' && mapped !== 'notebook') return true;
+  return path !== undefined || (tool === 'apply_patch' && typeof fields['command'] === 'string');
+}
+
+function canonicalTool(tool: string): string {
+  if (['Bash', 'shell', 'exec_command'].includes(tool)) return 'shell';
+  if (['Edit', 'Write', 'MultiEdit', 'apply_patch'].includes(tool)) return 'edit';
+  if (tool === 'NotebookEdit') return 'notebook';
+  if (!tool.startsWith('mcp__')) return tool;
+  const rest = tool.slice(5);
+  const separator = rest.indexOf('__', 1);
+  return separator > 0 && separator + 2 < rest.length
+    ? `mcp:${rest.slice(0, separator)}:${rest.slice(separator + 2)}`
+    : tool;
 }
 
 export interface SubjectParts {
@@ -117,8 +174,44 @@ function stripCwd(command: string, cwd: string): string {
   return line.startsWith(prefix) ? line.slice(prefix.length) : line;
 }
 
+type Quote = '' | "'" | '"' | '`';
+
+interface CollapseState {
+  out: string;
+  quote: Quote;
+  escaped: boolean;
+  pendingSpace: boolean;
+}
+
 function collapse(value: string): string {
-  return value.replace(/\s+/g, ' ').trim();
+  const state: CollapseState = { out: '', quote: '', escaped: false, pendingSpace: false };
+  for (const char of value) {
+    if (state.quote === '') appendUnquoted(char, state);
+    else appendQuoted(char, state);
+  }
+  return state.out.trim();
+}
+
+function appendUnquoted(char: string, state: CollapseState): void {
+  if (/\s/.test(char)) {
+    state.pendingSpace = state.out !== '';
+    return;
+  }
+  if (state.pendingSpace) state.out += ' ';
+  state.pendingSpace = false;
+  if (isQuote(char)) state.quote = char;
+  state.out += char;
+}
+
+function appendQuoted(char: string, state: CollapseState): void {
+  state.out += char;
+  if (state.escaped) state.escaped = false;
+  else if (char === '\\' && state.quote !== "'") state.escaped = true;
+  else if (char === state.quote) state.quote = '';
+}
+
+function isQuote(char: string): char is Exclude<Quote, ''> {
+  return char === "'" || char === '"' || char === '`';
 }
 
 /** Collapse `.`, `..` and repeated slashes of an absolute path's segments. */

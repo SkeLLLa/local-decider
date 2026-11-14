@@ -3,7 +3,7 @@
  * itself. Subagent calls get the tool and request only: `messages()` is the main conversation,
  * which is not the subagent's task.
  */
-import { asRecord, firstString, subjectLine } from '@ziptie-soft/local-decider-core';
+import { canonicalSubject } from '@ziptie-soft/local-decider-core';
 
 import { permissionInput } from '../permission-input.ts';
 import type { Turn } from '../turns.ts';
@@ -26,18 +26,6 @@ function turnsOf(messages: readonly SessionMessage[]): Turn[] {
   return turns;
 }
 
-function subjectOf(e: ToolCheckEvent, cwd: string): string {
-  const fields = asRecord(e.input);
-  return subjectLine({
-    tool: e.tool,
-    cwd,
-    input: e.input,
-    command: e.tool === 'Bash' ? firstString(fields, ['command']) : undefined,
-    path: firstString(fields, ['file_path', 'notebook_path', 'path']),
-    url: firstString(fields, ['url']),
-  });
-}
-
 /** Messages are `undefined` for subagent calls, which never read the main conversation. */
 export function buildInput(
   e: ToolCheckEvent,
@@ -49,7 +37,7 @@ export function buildInput(
     cwd,
     tool: e.tool,
     request: e.input,
-    subject: subjectOf(e, cwd),
+    subject: canonicalSubject(e.tool, e.input, cwd),
     head: turns.slice(0, HEAD_TURNS),
     tail: turns.slice(-TAIL_TURNS),
   });

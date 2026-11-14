@@ -55,6 +55,43 @@ function ids(records: LogRecord[]): string[] {
 }
 
 describe('SqliteLog', () => {
+  it('discards old-format precedent keys when upgrading the existing schema', () => {
+    const dir = tempDir();
+    const file = join(dir, 'legacy.db');
+    const old = new (sqlite().DatabaseSync)(file, { allowExtension: false });
+    old.exec(
+      `CREATE TABLE decision(action TEXT, precedent_key TEXT, ts INTEGER);
+       INSERT INTO decision VALUES ('ask', 'old-format-key', 1);
+       PRAGMA user_version = 1`,
+    );
+    old.close();
+    const log = SqliteLog.open(file);
+    try {
+      const db = new (sqlite().DatabaseSync)(file, { allowExtension: false, readOnly: true });
+      try {
+        const columns = db
+          .prepare('PRAGMA table_info(decision)')
+          .all()
+          .map((row) => row['name']);
+        assert.deepEqual(
+          columns.filter(
+            (name) => typeof name === 'string' && name.startsWith('precedent_key'),
+          ),
+          ['precedent_key'],
+        );
+        assert.equal(
+          db.prepare('SELECT precedent_key FROM decision').get()?.['precedent_key'],
+          null,
+        );
+        assert.equal(pragma(file, 'user_version'), 2);
+      } finally {
+        db.close();
+      }
+    } finally {
+      log.close();
+    }
+  });
+
   it('appends and reads decisions, verified outcomes and usage', () => {
     const log = tempLog();
     try {
@@ -395,9 +432,9 @@ describe('SqliteLog', () => {
     new (sqlite().DatabaseSync)(file, { allowExtension: false }).close();
     assert.equal(pragma(file, 'user_version'), 0);
     SqliteLog.open(file).close();
-    assert.equal(pragma(file, 'user_version'), 1);
+    assert.equal(pragma(file, 'user_version'), 2);
     SqliteLog.open(file).close();
-    assert.equal(pragma(file, 'user_version'), 1);
+    assert.equal(pragma(file, 'user_version'), 2);
     const database = new (sqlite().DatabaseSync)(file, { allowExtension: false, readOnly: true });
     try {
       const names = database

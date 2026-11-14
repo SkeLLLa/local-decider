@@ -3,6 +3,7 @@ import type {
   AgentTimelineItem,
   ToolCallDetail,
 } from '@getpaseo/protocol/agent-types';
+import { canonicalSubject } from '@ziptie-soft/local-decider-core';
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
@@ -251,7 +252,7 @@ describe('buildPermissionInput', () => {
     assert.equal(input.tool, 'Bash · tool · Run ls');
     assert.deepEqual(JSON.parse(input.request), { title: 'Run ls', input: { command: 'ls -la' } });
     assert.equal(input.history, 'user: list files');
-    assert.equal(input.subject, 'Bash: ls -la');
+    assert.equal(input.subject, 'shell: ls -la');
   });
 
   it('normalizes shell prefixes, relative file paths, URLs, and stable fallback input', () => {
@@ -262,7 +263,7 @@ describe('buildPermissionInput', () => {
         '',
         toolRequest('Bash', { command: 'cd /home/u/project && npm test' }),
       ).subject,
-      'Bash: npm test',
+      'shell: npm test',
     );
     assert.equal(
       buildPermissionInput(
@@ -291,6 +292,24 @@ describe('buildPermissionInput', () => {
       ).subject,
       'tool: {"a":{"b":2},"z":1}',
     );
+  });
+
+  it('matches hook subjects for argv commands and aliased path fields', () => {
+    const cwd = '/home/u/project';
+    const argv = ['bash', '-lc', 'npm test'];
+    const paseoCommand = buildPermissionInput(cwd, '', '', toolRequest('Bash', { argv })).subject;
+    const hookCommand = canonicalSubject('Bash', { command: argv }, cwd);
+    assert.equal(paseoCommand, hookCommand);
+
+    const path = '/home/u/project/src/a.ts';
+    const paseoPath = buildPermissionInput(
+      cwd,
+      '',
+      '',
+      toolRequest('Write', { filePath: path }),
+    ).subject;
+    const hookPath = canonicalSubject('Write', { file_path: path }, cwd);
+    assert.equal(paseoPath, hookPath);
   });
 });
 

@@ -442,6 +442,7 @@ CREATE TABLE usage(
 CREATE INDEX usage_ts ON usage(ts);
 CREATE INDEX usage_decision ON usage(decision_id);
 `,
+  'UPDATE decision SET precedent_key = NULL;',
 ];
 
 function loadDatabase(): DatabaseConstructor {

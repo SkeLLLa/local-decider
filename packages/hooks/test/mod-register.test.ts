@@ -129,11 +129,12 @@ describe('check in act mode', () => {
     const post = api.posts[0];
     assert.match(post?.url ?? '', /\/v1\/decide\/permission$/);
     assert.equal(post?.body?.['scope'], 'claude-auto');
+    assert.deepEqual(post?.body?.['workspace'], { cwd: '/work/repo' });
     assert.deepEqual(post?.body?.['call'], { id: ID, agent: false });
     assert.equal(post?.body?.['harness'], 'claude-code');
     const input = post?.body?.['input'] as Record<string, string>;
     assert.match(input['history'] ?? '', /Fix the failing test/);
-    assert.match(input['subject'] ?? '', /^Bash: pnpm add left-pad/);
+    assert.match(input['subject'] ?? '', /^shell: pnpm add left-pad/);
   });
 
   it('returns the ask when the decider says ask, deny or is not enforced', async () => {

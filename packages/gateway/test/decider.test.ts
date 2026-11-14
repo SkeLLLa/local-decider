@@ -1,4 +1,9 @@
-import { parsePolicy, type LogRecord, type Mode } from '@ziptie-soft/local-decider-core';
+import {
+  canonicalSubject,
+  parsePolicy,
+  type LogRecord,
+  type Mode,
+} from '@ziptie-soft/local-decider-core';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -146,7 +151,8 @@ describe('Decider precedent rebuilds', () => {
     const log = precedentLog();
     const decider = createPrecedentDecider(initial, log);
     const input = { ...INPUT, subject: 'Bash: npm test' };
-    const first = await decider.decide('permission', { harness: 'cli', input }, signal());
+    const request = { harness: 'cli' as const, input, workspace: { cwd: '/p' } };
+    const first = await decider.decide('permission', request, signal());
     assert.equal(first.action, 'ask');
     decider.noteOutcome({
       kind: 'outcome',
@@ -172,7 +178,7 @@ describe('Decider precedent rebuilds', () => {
         ],
       ]),
     );
-    const afterReload = await decider.decide('permission', { harness: 'cli', input }, signal());
+    const afterReload = await decider.decide('permission', request, signal());
 
     assert.deepEqual(log.windows, []);
     assert.deepEqual(afterReload.precedent, { allows: 1, denies: 0 });
@@ -192,15 +198,72 @@ describe('Decider precedent rebuilds', () => {
 });
 
 describe('Decider', () => {
+  it('shares a v2 key across hook, mod and Paseo metadata with lexical cwd normalization', async () => {
+    const { decider } = setup('act');
+    const cases = [
+      {
+        harness: 'claude-code' as const,
+        tool: 'Bash',
+        input: { command: 'npm   test' },
+        cwd: '/work/project/./src/..',
+      },
+      {
+        harness: 'claude-code' as const,
+        tool: 'exec_command',
+        input: { command: 'npm test' },
+        cwd: '/work/project',
+      },
+      {
+        harness: 'paseo' as const,
+        tool: 'shell',
+        input: { command: 'npm test' },
+        cwd: '/work/project',
+      },
+    ];
+    const keys = [];
+    for (const entry of cases) {
+      const subject = canonicalSubject(entry.tool, entry.input, entry.cwd);
+      assert.ok(subject);
+      const response = await decider.decide(
+        'permission',
+        {
+          harness: entry.harness,
+          workspace: { cwd: entry.cwd },
+          input: { ...INPUT, project: entry.cwd, subject },
+        },
+        signal(),
+      );
+      keys.push(response.precedentKey);
+    }
+    assert.equal(new Set(keys).size, 1);
+  });
+
+  it('does not use precedent when the request has no workspace', async () => {
+    const { decider } = setup('act', new FakeEngine({ allow: 0.7, ask: 0.2, deny: 0.1 }));
+    const response = await decider.decide(
+      'permission',
+      { harness: 'cli', input: { ...INPUT, subject: 'Bash: npm test' } },
+      signal(),
+    );
+    assert.equal(response.action, 'ask');
+    assert.equal(response.precedent, undefined);
+    assert.equal(response.precedentKey, undefined);
+  });
+
   it('uses precedent only to lower the allow threshold for an exact subject', async () => {
     const { decider, engine, log } = setup(
       'act',
       new FakeEngine({ allow: 0.7, ask: 0.2, deny: 0.1 }),
     );
     const input = { ...INPUT, subject: 'Bash: npm test' };
+    const workspace = { cwd: '/p' };
     let firstKey: string | undefined;
     for (let index = 0; index < 3; index += 1) {
-      const response = await decider.decide('permission', { harness: 'cli', input }, signal());
+      const response = await decider.decide(
+        'permission',
+        { harness: 'cli', input, workspace },
+        signal(),
+      );
       assert.equal(response.action, 'ask');
       firstKey ??= response.precedentKey;
       assert.equal(response.precedentKey, firstKey);
@@ -228,20 +291,24 @@ describe('Decider', () => {
         ],
       ]),
     );
-    const learned = await decider.decide('permission', { harness: 'cli', input }, signal());
+    const learned = await decider.decide(
+      'permission',
+      { harness: 'cli', input, workspace },
+      signal(),
+    );
     assert.equal(learned.action, 'allow', JSON.stringify(learned));
     assert.deepEqual(learned.precedent, { allows: 3, denies: 0 });
     assert.equal(learned.precedentKey, firstKey);
     assert.equal(engine.requests.length, 4);
     assert.ok(!JSON.stringify(engine.requests).includes('Bash: npm test'));
     assert.ok(!JSON.stringify(log.read()).includes('Bash: npm test'));
-    const otherProject = await decider.decide(
+    const otherWorkspace = await decider.decide(
       'permission',
-      { harness: 'cli', input: { ...input, project: '/another-project' } },
+      { harness: 'cli', input, workspace: { cwd: '/another-project' } },
       signal(),
     );
-    assert.equal(otherProject.action, 'ask');
-    assert.notEqual(otherProject.precedentKey, firstKey);
+    assert.equal(otherWorkspace.action, 'ask');
+    assert.notEqual(otherWorkspace.precedentKey, firstKey);
   });
 
   it('enforces only in act mode', async () => {

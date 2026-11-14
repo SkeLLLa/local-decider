@@ -119,6 +119,7 @@ function parseDecideRequest(body: unknown): DecideRequest {
   const models = parseModels(body['models']);
   const call = parseCall(body['call']);
   const scope = parseScope(body['scope']);
+  const workspace = parseWorkspace(body['workspace']);
   return {
     harness: harness as DecideRequest['harness'],
     input: body['input'],
@@ -126,7 +127,14 @@ function parseDecideRequest(body: unknown): DecideRequest {
     ...(scope === undefined ? {} : { scope }),
     ...(sessionId === undefined ? {} : { sessionId }),
     ...(models === undefined ? {} : { models }),
+    ...(workspace === undefined ? {} : { workspace }),
   };
+}
+
+function parseWorkspace(value: unknown): DecideRequest['workspace'] {
+  return isRecord(value) && typeof value['cwd'] === 'string' && value['cwd'].trim() !== ''
+    ? { cwd: value['cwd'].slice(0, 4096) }
+    : undefined;
 }
 
 /** Tool-use and call ids: also the `GET /v1/calls/:id` path segment. */
