@@ -7,7 +7,6 @@ import type {
 import {
   chmodSync,
   closeSync,
-  existsSync,
   linkSync,
   mkdirSync,
   mkdtempSync,
@@ -354,11 +353,7 @@ function openDatabase(Db: DatabaseConstructor, file: string, options: OpenLogOpt
   let lock: Lock | undefined;
   let database: Database | undefined;
   try {
-    if (readOnly) {
-      if (!existsSync(file)) {
-        throw new Error(`SQLite log does not exist: ${file}`);
-      }
-    } else {
+    if (!readOnly) {
       mkdirSync(dirname(file), { recursive: true, mode: 0o700 });
       chmodSync(dirname(file), 0o700);
       lock = options.lockPath === undefined ? undefined : acquireLock(options.lockPath);
@@ -371,14 +366,45 @@ function openDatabase(Db: DatabaseConstructor, file: string, options: OpenLogOpt
     }
     return new SqliteLog(database, lock);
   } catch (error) {
+    const failure = readOnly ? (missingReadOnlyDatabaseError(file, error) ?? error) : error;
     try {
       database?.close();
     } catch {
       // Preserve the startup failure and still release the process lock.
     }
     releaseLock(lock);
-    throw error;
+    throw failure;
   }
+}
+
+function missingReadOnlyDatabaseError(file: string, cause: unknown): Error | undefined {
+  if (errorCode(cause) === 'ENOENT') return missingLogError(file, cause);
+  if (!isSqliteCantOpen(cause)) return undefined;
+  try {
+    lstatSync(file);
+    return undefined;
+  } catch (error) {
+    return errorCode(error) === 'ENOENT' ? missingLogError(file, error) : undefined;
+  }
+}
+
+function isSqliteCantOpen(error: unknown): boolean {
+  return (
+    error instanceof Error &&
+    errorCode(error) === 'ERR_SQLITE_ERROR' &&
+    error.message === 'unable to open database file'
+  );
+}
+
+function errorCode(error: unknown): string | undefined {
+  if (typeof error !== 'object' || error === null || !('code' in error)) return undefined;
+  return typeof error.code === 'string' ? error.code : undefined;
+}
+
+function missingLogError(file: string, cause: unknown): Error & { readonly code: string } {
+  return Object.assign(new Error(`SQLite log does not exist: ${file}`, { cause }), {
+    code: 'ENOENT',
+  });
 }
 
 function configureDatabase(database: Database): void {
