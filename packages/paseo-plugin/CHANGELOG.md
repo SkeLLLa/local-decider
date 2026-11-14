@@ -1,5 +1,29 @@
 # Changelog
 
+## [2.1.0](https://github.com/ziptie-soft/local-decider/compare/paseo-plugin-v2.0.0...paseo-plugin-v2.1.0) (2026-11-14)
+
+
+### Features
+
+* **paseo-plugin:** add benchmark gateway calls and RPCs ([a92027d](https://github.com/ziptie-soft/local-decider/commit/a92027dacdf495317b8205020fb3cdc9743d1d5d))
+* **paseo-plugin:** add the benchmark card to the engine section ([6d0200b](https://github.com/ziptie-soft/local-decider/commit/6d0200bc5465459cb2f84415cb5ed805f4167dc5))
+* **paseo-plugin:** add the benchmark card view model ([caf8506](https://github.com/ziptie-soft/local-decider/commit/caf8506faea0aef1ccbf57931f0dfa049e12bbae))
+* **paseo-plugin:** add the recommended card view model ([95d871f](https://github.com/ziptie-soft/local-decider/commit/95d871f2c7e43d3627e2409a87e6ad29892acb06))
+* **paseo-plugin:** fold the engine controls into an Advanced disclosure ([9f4f95b](https://github.com/ziptie-soft/local-decider/commit/9f4f95bec53a41b59cee66759cde3a5c25467004))
+* **paseo-plugin:** parse engine family, measurements and machine recommendation ([80af9d3](https://github.com/ziptie-soft/local-decider/commit/80af9d3dc6e1e45763dc1c8c557dae802297c688))
+* **paseo-plugin:** parse the benchmark job view ([2b24089](https://github.com/ziptie-soft/local-decider/commit/2b2408910b4f6a1d2fdc805193525c716d3bc46c))
+* **paseo-plugin:** show benchmark progress in the status views and drop the cross-family suggestion ([3243146](https://github.com/ziptie-soft/local-decider/commit/32431465c4e6c3046f1cb638f35f621d272f15f9))
+* **paseo-plugin:** show the recommended card at the top of the engine section ([2153a4c](https://github.com/ziptie-soft/local-decider/commit/2153a4c7e2bc30f58661e542b41a4e1370df91f2))
+* **paseo-plugin:** show what is running and download progress on the recommended card ([abf8ffc](https://github.com/ziptie-soft/local-decider/commit/abf8ffc9bf6e51909a5a41f78b463fb20efa148f))
+* **precedent:** add cross-harness v2 keys ([95f8a1b](https://github.com/ziptie-soft/local-decider/commit/95f8a1b89e83622cf2b2396fc0eb517ea69aaf8b))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @ziptie-soft/local-decider-core bumped to 2.1.0
+
 ## [2.0.0](https://github.com/ziptie-soft/local-decider/compare/paseo-plugin-v1.1.0...paseo-plugin-v2.0.0) (2026-11-12)
 
 
