@@ -15,6 +15,7 @@ import { join } from 'node:path';
 import { parseArgs } from 'node:util';
 
 import { authoringPrompt } from './authoring.ts';
+import { calibrateFromFile, formatCalibration } from './calibrate.ts';
 import { runBench } from './cli-bench-run.ts';
 import {
   configIsExplicit,
@@ -80,6 +81,7 @@ Usage:
   local-decider engine use <engine> <model> [--device D]  select an engine and model
   local-decider decide <policy> [--input JSON] [key=value ...]
   local-decider stats [--json] [--days N] [--scope claude-auto]  agreement and calibration from the shadow log
+  local-decider calibrate [--json]   report temperature fit and allow thresholds
   local-decider logs backup <file> | export [--since YYYY-MM-DD] <dir>
   local-decider policies [check <file>]             list policies, or validate a policy file
   local-decider policies eval <policy> <file>       report decisions on JSONL fixtures
@@ -491,6 +493,13 @@ async function stats(ctx: Context): Promise<void> {
   console.log(values.json === true ? JSON.stringify(result, null, 2) : formatStats(result));
 }
 
+async function calibrateCommand(ctx: Context): Promise<void> {
+  const { values } = parseArgs({ args: [...ctx.args], options: { json: { type: 'boolean' } } });
+  const loadedPolicies = loadPolicies(ctx.config, policyDirs(ctx.config, ctx.paths));
+  const results = calibrateFromFile(ctx.paths, loadedPolicies);
+  console.log(values.json === true ? JSON.stringify(results, null, 2) : formatCalibration(results));
+}
+
 function checkPolicy(file: string): void {
   const policy = parsePolicy(readFileSync(file, 'utf8'), file);
   const variant = policy.variantOf === undefined ? '' : `, variant of ${policy.variantOf}`;
@@ -637,6 +646,7 @@ async function dispatch(command: string, ctx: Context): Promise<void> {
     engine,
     decide,
     stats,
+    calibrate: calibrateCommand,
     logs: async (c) => logsCommand(c.paths, c.args),
     policies,
     bench: benchCmd,
