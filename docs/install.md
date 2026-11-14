@@ -320,12 +320,17 @@ local-decider gateway status      # service active, gateway "status":"ok"
 local-decider decide turn-outcome lastMessage="All tests pass; the PR is open."
 local-decider stats
 local-decider stats --days 7
+local-decider calibrate
 ```
 
 - `decide` prints the answers, the action and `"enforced": false` (shadow).
 - `stats` shows one block per policy once a harness has sent decisions. It defaults to 30 days;
   `--days N` accepts 1 through `logs.retainDays`. Use a harness for a few minutes and run it
   again.
+- `calibrate` reports temperature fits and allow-threshold suggestions from verified outcomes.
+  It requires at least 50 samples per policy, engine and model and never changes config.
+  Suggestions use raw probabilities and require 30 selected decisions with a 95% Wilson lower
+  precision bound of 0.98. Add `--json` for machine-readable output.
 
 In Paseo, a decision row appears in the chat after each agent turn. If nothing happens, check
 `local-decider gateway status` and `paseo plugin logs local-decider`.
